@@ -41,8 +41,8 @@ export function PatternView() {
     return str.split('\n').map(d => d.trim()).filter(d => d.length > 0);
   };
 
-  const [localWhitelist, setLocalWhitelist] = useState<string[]>([]);
-  const [localBlacklist, setLocalBlacklist] = useState<string[]>([]);
+  const [localWhitelist, setLocalWhitelist] = useState<string[]>(() => getArrayFromStore(whitelistDomains));
+  const [localBlacklist, setLocalBlacklist] = useState<string[]>(() => getArrayFromStore(blacklistDomains));
   const [newDomain, setNewDomain] = useState('');
   
   const [showToast, setShowToast] = useState(false);
@@ -51,12 +51,15 @@ export function PatternView() {
 
   const isEngineRunning = status.variant === 'running';
 
-  // Sync state when store loads/changes
+  // Sadece store ilk hydrate olduğunda (boşken) local state'i doldur.
+  // Kullanıcının düzenlediği listeyi asla silme.
   useEffect(() => {
+    setLocalWhitelist(prev => prev.length > 0 ? prev : getArrayFromStore(whitelistDomains));
+    setLocalBlacklist(prev => prev.length > 0 ? prev : getArrayFromStore(blacklistDomains));
+    // localMode'u sadece dışarıdan değişirse güncelle (bileşen zaten dirty değilse)
     setLocalMode(bypassMode);
-    setLocalWhitelist(getArrayFromStore(whitelistDomains));
-    setLocalBlacklist(getArrayFromStore(blacklistDomains));
-  }, [bypassMode, whitelistDomains, blacklistDomains]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const cleanDomains = (domains: string[]) => {
     const resultSet = new Set<string>(domains);
@@ -146,8 +149,8 @@ export function PatternView() {
   const storeBlacklistArr = getArrayFromStore(blacklistDomains);
 
   const hasChanges = localMode !== bypassMode ||
-    (localMode === 'whitelist' && JSON.stringify(localWhitelist) !== JSON.stringify(storeWhitelistArr)) ||
-    (localMode === 'blacklist' && JSON.stringify(localBlacklist) !== JSON.stringify(storeBlacklistArr));
+    JSON.stringify(localWhitelist) !== JSON.stringify(storeWhitelistArr) ||
+    JSON.stringify(localBlacklist) !== JSON.stringify(storeBlacklistArr);
 
   const activeDomains = localMode === 'whitelist' ? localWhitelist : localBlacklist;
 
