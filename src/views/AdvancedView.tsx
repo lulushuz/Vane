@@ -237,26 +237,27 @@ export function AdvancedView() {
         <div className={styles.titleArea}>
           <h2 className={styles.title}>{t.advancedTitle}</h2>
         </div>
-        <div className={styles.headerActions}>
-          {/* Import / Export Buttons */}
-          <button 
-            className={styles.actionBtn} 
-            onClick={() => fileInputRef.current?.click()} 
-            title={language === 'tr' ? 'Profil İçe Aktar' : 'Import Profile'}
-          >
-            <HardDriveUpload size={16} />
-            <span>{language === 'tr' ? 'İçe Aktar' : 'Import'}</span>
-          </button>
-          
-          <button 
-            className={styles.actionBtn} 
-            onClick={handleExport} 
-            disabled={!profileName.trim()} 
-            title={language === 'tr' ? 'Profili Dışa Aktar' : 'Export Profile'}
-          >
-            <HardDriveDownload size={16} />
-            <span>{language === 'tr' ? 'Dışa Aktar' : 'Export'}</span>
-          </button>
+        <div className={styles.headerControls}>
+          <div className={styles.leftActions}>
+            <button 
+              className={styles.actionBtn} 
+              onClick={() => fileInputRef.current?.click()} 
+              title={language === 'tr' ? 'Profil İçe Aktar' : 'Import Profile'}
+            >
+              <HardDriveUpload size={16} />
+              <span>{language === 'tr' ? 'İçe Aktar' : 'Import'}</span>
+            </button>
+            
+            <button 
+              className={styles.actionBtn} 
+              onClick={handleExport} 
+              disabled={!profileName.trim()} 
+              title={language === 'tr' ? 'Profili Dışa Aktar' : 'Export Profile'}
+            >
+              <HardDriveDownload size={16} />
+              <span>{language === 'tr' ? 'Dışa Aktar' : 'Export'}</span>
+            </button>
+          </div>
 
           <input 
             type="file" 
@@ -269,19 +270,18 @@ export function AdvancedView() {
             }} 
           />
 
-          <PresetDropdown activePresetId={activePresetId} presets={presets} onSelect={handlePresetSelect} />
-
-          {isApplying && <RefreshCw size={18} className={styles.spin} color="#5c7cfa" />}
-          
-          {activePreset?.isCustom && activePreset.id !== 'default' && !isDirty && (
-            <button className={styles.actionBtn} onClick={handleDelete} title={language === 'tr' ? 'Bu profili sil' : 'Delete this profile'} style={{ color: '#ff6b6b', borderColor: 'rgba(255, 107, 107, 0.2)' }}>
-              <Trash2 size={16} />
+          <div className={styles.rightActions}>
+            {isApplying && <RefreshCw size={18} className={styles.spin} color="#5c7cfa" />}
+            <PresetDropdown activePresetId={activePresetId} presets={presets} onSelect={handlePresetSelect} />
+            {activePreset?.isCustom && activePreset.id !== 'default' && !isDirty && (
+              <button className={styles.actionBtn} onClick={handleDelete} title={language === 'tr' ? 'Bu profili sil' : 'Delete this profile'} style={{ color: '#ff6b6b', borderColor: 'rgba(255, 107, 107, 0.2)' }}>
+                <Trash2 size={16} />
+              </button>
+            )}
+            <button className={styles.actionBtn} onClick={handleReset} title={t.resetDefault}>
+              <RotateCcw size={16} />
             </button>
-          )}
-          
-          <button className={styles.actionBtn} onClick={handleReset} title={t.resetDefault}>
-            <RotateCcw size={16} />
-          </button>
+          </div>
         </div>
       </div>
 

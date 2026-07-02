@@ -409,7 +409,14 @@ export function HomeView() {
             {t.healthCheckDesc}
           </p>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: 6, 
+            maxHeight: '90px', 
+            overflowY: 'auto',
+            paddingRight: '4px'
+          }}>
             {healthCheckTargets.map((target, idx) => (
               <div key={idx} style={{ 
                 display: 'flex', 
@@ -444,47 +451,46 @@ export function HomeView() {
                 </button>
               </div>
             ))}
+          </div>
 
-            {healthCheckTargets.length < 3 && (
-              <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                <input
-                  type="text"
-                  placeholder={language === 'tr' ? 'örn. youtube.com' : 'e.g. youtube.com'}
-                  value={newTarget}
-                  onChange={(e) => setNewTarget(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleAddTarget();
-                  }}
-                  style={{
-                    flex: 1,
-                    background: 'rgba(0,0,0,0.2)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 4,
-                    color: '#fff',
-                    padding: '4px 8px',
-                    fontSize: 11,
-                    outline: 'none'
-                  }}
-                />
-                <button
-                  onClick={handleAddTarget}
-                  disabled={!newTarget.trim()}
-                  style={{
-                    background: 'rgba(59,130,246,0.25)',
-                    color: '#60a5fa',
-                    border: 'none',
-                    borderRadius: 4,
-                    padding: '0 8px',
-                    cursor: newTarget.trim() ? 'pointer' : 'not-allowed',
-                    opacity: newTarget.trim() ? 1 : 0.5,
-                    display: 'flex',
-                    alignItems: 'center'
-                  }}
-                >
-                  <Plus size={12} />
-                </button>
-              </div>
-            )}
+          <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+            <input
+              type="text"
+              placeholder={language === 'tr' ? 'örn. youtube.com' : 'e.g. youtube.com'}
+              value={newTarget}
+              onChange={(e) => setNewTarget(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleAddTarget();
+              }}
+              style={{
+                flex: 1,
+                background: 'rgba(0,0,0,0.2)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 4,
+                color: '#fff',
+                padding: '4px 8px',
+                fontSize: 11,
+                outline: 'none'
+              }}
+            />
+            <button
+              onClick={handleAddTarget}
+              disabled={!newTarget.trim()}
+              style={{
+                background: 'rgba(59,130,246,0.25)',
+                color: '#60a5fa',
+                border: 'none',
+                borderRadius: 4,
+                padding: '0 8px',
+                cursor: newTarget.trim() ? 'pointer' : 'not-allowed',
+                opacity: newTarget.trim() ? 1 : 0.5,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              <Plus size={12} />
+            </button>
           </div>
         </div>
 

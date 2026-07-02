@@ -95,15 +95,29 @@ fn cleanup_stale_windivert() {
     }
 }
 
-/// Reads the last active preset ID from the persisted Zustand store file.
-/// Zustand writes JSON like: `{"vane-settings": "{\"state\":{\"activePresetId\":\"...\"}}"}` 
+/// Reads the last active preset ID from the persisted Zustand store file safely with retries.
 fn read_last_preset_id(app: &AppHandle) -> Option<String> {
     let app_data = app.path().app_data_dir().ok()?;
-    let content = std::fs::read_to_string(app_data.join("settings.json")).ok()?;
-    let file_json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let settings_path = app_data.join("settings.json");
+    if !settings_path.exists() {
+        return None;
+    }
 
+    let mut content = String::new();
+    for _ in 0..3 {
+        if let Ok(c) = std::fs::read_to_string(&settings_path) {
+            content = c;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    if content.is_empty() {
+        return None;
+    }
+
+    let file_json: serde_json::Value = serde_json::from_str(&content).ok()?;
     let zustand_raw = file_json.get("vane-settings")?;
-    // Value is stored as an escaped JSON string; fall back to treating it as an object.
     let zustand_json: serde_json::Value = match zustand_raw {
         serde_json::Value::String(s) => serde_json::from_str(s).ok()?,
         obj => obj.clone(),

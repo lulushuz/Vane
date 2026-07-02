@@ -2,7 +2,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 16px; /* General/Advanced ile aynı w genişliği */
+  padding: 16px;
   box-sizing: border-box;
   overflow-y: auto;
   gap: 16px;
@@ -32,97 +32,54 @@
   line-height: 1.4;
 }
 
-/* Cards Grid (Side-by-Side) */
-.cardsGrid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+/* Select Wrapper */
+.selectWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 18px;
+.selectLabel {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.select {
   background: var(--color-bg-card);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  user-select: none;
-}
-
-.card:hover {
-  background: var(--color-bg-card-hover);
-  border-color: rgba(255, 255, 255, 0.1);
-  transform: translateY(-1px);
-}
-
-.activeCard {
-  background: rgba(92, 124, 250, 0.12) !important;
-  border-color: #5c7cfa !important;
-  box-shadow: 0 4px 20px -2px rgba(92, 124, 250, 0.25);
-}
-
-.iconWrapper {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  flex-shrink: 0;
-}
-
-.blueIcon {
-  background: rgba(92, 124, 250, 0.15);
-  color: #7fa0fa;
-}
-
-.greenIcon {
-  background: rgba(16, 185, 129, 0.12);
-  color: #34d399;
-}
-
-.redIcon {
-  background: rgba(239, 68, 68, 0.12);
-  color: #f87171;
-}
-
-.cardContent {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.cardTitle {
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px 14px;
   font-size: 0.9rem;
   font-weight: 600;
-  color: #ffffff;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
 }
 
-.cardDesc {
-  font-size: 0.78rem;
-  color: var(--color-text-secondary);
-  line-height: 1.3;
+.select:focus {
+  border-color: #5c7cfa;
 }
 
-/* Editor Section */
-.editorSection {
+/* Manager Section */
+.managerSection {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  overflow: hidden;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
 }
 
-.editorHeader {
+.managerHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 4px;
 }
 
-.editorLabel {
+.managerLabel {
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--color-text-muted);
@@ -139,25 +96,132 @@
   color: var(--color-text-secondary);
 }
 
-.textarea {
-  min-height: 120px;
-  max-height: 220px;
-  resize: vertical;
+/* Input Row */
+.inputRow {
+  display: flex;
+  gap: 8px;
+}
+
+.input {
+  flex: 1;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.input:focus {
+  border-color: #5c7cfa;
+}
+
+.addBtn {
+  background: #5c7cfa;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 0 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.addBtn:hover {
+  background: #4c6ef5;
+}
+
+/* List Container (Scrollable) */
+.listContainer {
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   border-radius: 10px;
-  padding: 12px;
-  color: var(--color-text-primary);
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  line-height: 1.5;
-  transition: all 0.15s ease;
-  outline: none;
+  padding: 8px;
+  max-height: 250px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.textarea:focus {
-  border-color: #5c7cfa;
-  box-shadow: 0 0 0 2px rgba(92, 124, 250, 0.25);
+.emptyList {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 80px;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.listItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.listItem:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.domainInfo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.statusBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.statusBadge.valid {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+}
+
+.statusBadge.invalid {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+
+.domainName {
+  font-size: 0.85rem;
+  color: #fff;
+  font-family: var(--font-mono);
+}
+
+.removeBtn {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.removeBtn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
 }
 
 .helperText {
@@ -169,7 +233,7 @@
 /* Save / Cancel Action Banner (Floating) */
 .actionBanner {
   position: fixed;
-  left: 80px; /* Sidebar Genişliği */
+  left: 80px;
   right: 0;
   margin: 0 auto;
   bottom: 24px;

@@ -299,11 +299,24 @@ fn read_bypass_config(app: &AppHandle) -> (String, String, String, bool) {
     if !settings_path.exists() {
         return default_res;
     }
-    let Ok(content) = std::fs::read_to_string(settings_path) else { return default_res; };
+
+    let mut content = String::new();
+    for _ in 0..3 {
+        if let Ok(c) = std::fs::read_to_string(&settings_path) {
+            content = c;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    if content.is_empty() {
+        return default_res;
+    }
+
     let Ok(file_json) = serde_json::from_str::<serde_json::Value>(&content) else { return default_res; };
     let Some(zustand_raw) = file_json.get("vane-settings") else { return default_res; };
     let Ok(zustand_json) = (match zustand_raw {
-        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s),
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(&s),
         obj => Ok(obj.clone()),
     }) else { return default_res; };
 

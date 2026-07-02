@@ -240,11 +240,24 @@ pub fn read_dns_settings(app: &AppHandle) -> DnsSettings {
     if !settings_path.exists() {
         return default_settings;
     }
-    let Ok(content) = std::fs::read_to_string(settings_path) else { return default_settings; };
+
+    let mut content = String::new();
+    for _ in 0..3 {
+        if let Ok(c) = std::fs::read_to_string(&settings_path) {
+            content = c;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    if content.is_empty() {
+        return default_settings;
+    }
+
     let Ok(file_json) = serde_json::from_str::<serde_json::Value>(&content) else { return default_settings; };
     let Some(zustand_raw) = file_json.get("vane-settings") else { return default_settings; };
     let Ok(zustand_json) = (match zustand_raw {
-        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s),
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(&s),
         obj => Ok(obj.clone()),
     }) else { return default_settings; };
 

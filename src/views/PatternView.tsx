@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useEngineStore } from '../store/engineStore';
-import { Globe, Shield, Ban, Save, X } from 'lucide-react';
+import { Save, X, Plus, CheckCircle, AlertTriangle } from 'lucide-react';
 import { Toast } from '../components/Toast/Toast';
 import { translations } from '../utils/translations';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -10,6 +10,11 @@ const DOMAIN_ALIASES: Record<string, string[]> = {
   'discord.com': ['discordapp.com', 'discordapp.net', 'discord.gg'],
   'roblox.com': ['robloxlabs.com', 'rbxcdn.com'],
   'youtube.com': ['youtu.be', 'ytimg.com', 'ggpht.com']
+};
+
+const isDomainValid = (domain: string): boolean => {
+  const regex = /^(?:\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(?:\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})+$/;
+  return regex.test(domain);
 };
 
 export function PatternView() {
@@ -30,8 +35,15 @@ export function PatternView() {
   const t = translations[language];
 
   const [localMode, setLocalMode] = useState<'all' | 'whitelist' | 'blacklist'>(bypassMode);
-  const [localWhitelist, setLocalWhitelist] = useState<string>(whitelistDomains);
-  const [localBlacklist, setLocalBlacklist] = useState<string>(blacklistDomains);
+  
+  // Convert newline-separated strings from store to arrays
+  const getArrayFromStore = (str: string) => {
+    return str.split('\n').map(d => d.trim()).filter(d => d.length > 0);
+  };
+
+  const [localWhitelist, setLocalWhitelist] = useState<string[]>([]);
+  const [localBlacklist, setLocalBlacklist] = useState<string[]>([]);
+  const [newDomain, setNewDomain] = useState('');
   
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -39,24 +51,18 @@ export function PatternView() {
 
   const isEngineRunning = status.variant === 'running';
 
-  // Sync local state when store state changes (e.g., loaded from disk)
+  // Sync state when store loads/changes
   useEffect(() => {
     setLocalMode(bypassMode);
-    setLocalWhitelist(whitelistDomains);
-    setLocalBlacklist(blacklistDomains);
+    setLocalWhitelist(getArrayFromStore(whitelistDomains));
+    setLocalBlacklist(getArrayFromStore(blacklistDomains));
   }, [bypassMode, whitelistDomains, blacklistDomains]);
 
-  const cleanDomains = (text: string) => {
-    const lines = text
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
+  const cleanDomains = (domains: string[]) => {
+    const resultSet = new Set<string>(domains);
 
-    const resultSet = new Set<string>(lines);
-
-    for (const line of lines) {
-      // Clean wildcard prefix (*.example.com -> example.com) to match database aliases
-      const cleanDomain = line.replace(/^\*\./, '');
+    for (const domain of domains) {
+      const cleanDomain = domain.replace(/^\*\./, '');
       if (DOMAIN_ALIASES[cleanDomain]) {
         for (const alias of DOMAIN_ALIASES[cleanDomain]) {
           resultSet.add(alias);
@@ -69,22 +75,22 @@ export function PatternView() {
   };
 
   const handleSave = async () => {
+    const whitelistString = localWhitelist.join('\n');
+    const blacklistString = localBlacklist.join('\n');
+    
     const cleanedWhitelist = cleanDomains(localWhitelist);
     const cleanedBlacklist = cleanDomains(localBlacklist);
 
-    // Save to store
+    // Save separately to store
     setBypassMode(localMode);
-    setWhitelistDomains(cleanedWhitelist);
-    setBlacklistDomains(cleanedBlacklist);
+    setWhitelistDomains(whitelistString);
+    setBlacklistDomains(blacklistString);
     
-    // Sync with the backend's expected single domainList
+    // Sync with the backend's expected single active domainList
     let activeList = '';
     if (localMode === 'whitelist') activeList = cleanedWhitelist;
     else if (localMode === 'blacklist') activeList = cleanedBlacklist;
     setDomainList(activeList);
-
-    setLocalWhitelist(cleanedWhitelist);
-    setLocalBlacklist(cleanedBlacklist);
 
     if (isEngineRunning) {
       setToastType('warning');
@@ -109,27 +115,41 @@ export function PatternView() {
 
   const handleCancel = () => {
     setLocalMode(bypassMode);
-    setLocalWhitelist(whitelistDomains);
-    setLocalBlacklist(blacklistDomains);
+    setLocalWhitelist(getArrayFromStore(whitelistDomains));
+    setLocalBlacklist(getArrayFromStore(blacklistDomains));
+    setNewDomain('');
   };
 
-  const hasChanges = localMode !== bypassMode ||
-    (localMode === 'whitelist' && localWhitelist !== whitelistDomains) ||
-    (localMode === 'blacklist' && localBlacklist !== blacklistDomains);
-
-  const activeTextareaValue = localMode === 'whitelist' ? localWhitelist : localBlacklist;
-  const handleTextareaChange = (val: string) => {
+  const addDomain = () => {
+    const trimmed = newDomain.trim().toLowerCase();
+    if (!trimmed) return;
+    
     if (localMode === 'whitelist') {
-      setLocalWhitelist(val);
+      if (localWhitelist.includes(trimmed)) return;
+      setLocalWhitelist([...localWhitelist, trimmed]);
     } else {
-      setLocalBlacklist(val);
+      if (localBlacklist.includes(trimmed)) return;
+      setLocalBlacklist([...localBlacklist, trimmed]);
+    }
+    setNewDomain('');
+  };
+
+  const removeDomain = (idx: number) => {
+    if (localMode === 'whitelist') {
+      setLocalWhitelist(localWhitelist.filter((_, i) => i !== idx));
+    } else {
+      setLocalBlacklist(localBlacklist.filter((_, i) => i !== idx));
     }
   };
 
-  const domainCount = activeTextareaValue
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0).length;
+  const storeWhitelistArr = getArrayFromStore(whitelistDomains);
+  const storeBlacklistArr = getArrayFromStore(blacklistDomains);
+
+  const hasChanges = localMode !== bypassMode ||
+    (localMode === 'whitelist' && JSON.stringify(localWhitelist) !== JSON.stringify(storeWhitelistArr)) ||
+    (localMode === 'blacklist' && JSON.stringify(localBlacklist) !== JSON.stringify(storeBlacklistArr));
+
+  const activeDomains = localMode === 'whitelist' ? localWhitelist : localBlacklist;
 
   return (
     <div className={styles.container}>
@@ -140,78 +160,90 @@ export function PatternView() {
         </p>
       </header>
 
-      {/* Mode Selection Cards */}
-      <div className={styles.cardsGrid}>
-        {/* Bypass All */}
-        <div
-          className={`${styles.card} ${localMode === 'all' ? styles.activeCard : ''}`}
-          onClick={() => setLocalMode('all')}
+      {/* Mode Selection Dropdown */}
+      <div className={styles.selectWrapper}>
+        <label className={styles.selectLabel}>{language === 'tr' ? 'Bypass Modu Seçin' : 'Select Bypass Mode'}</label>
+        <select
+          className={styles.select}
+          value={localMode}
+          onChange={(e) => setLocalMode(e.target.value as any)}
         >
-          <div className={`${styles.iconWrapper} ${styles.blueIcon}`}>
-            <Globe size={20} />
-          </div>
-          <div className={styles.cardContent}>
-            <span className={styles.cardTitle}>{t.bypassAll}</span>
-            <span className={styles.cardDesc}>{t.bypassAllDesc}</span>
-          </div>
-        </div>
-
-        {/* Whitelist */}
-        <div
-          className={`${styles.card} ${localMode === 'whitelist' ? styles.activeCard : ''}`}
-          onClick={() => setLocalMode('whitelist')}
-        >
-          <div className={`${styles.iconWrapper} ${styles.greenIcon}`}>
-            <Shield size={20} />
-          </div>
-          <div className={styles.cardContent}>
-            <span className={styles.cardTitle}>{t.onlyWhitelist}</span>
-            <span className={styles.cardDesc}>{t.onlyWhitelistDesc}</span>
-          </div>
-        </div>
-
-        {/* Blacklist */}
-        <div
-          className={`${styles.card} ${localMode === 'blacklist' ? styles.activeCard : ''}`}
-          onClick={() => setLocalMode('blacklist')}
-        >
-          <div className={`${styles.iconWrapper} ${styles.redIcon}`}>
-            <Ban size={20} />
-          </div>
-          <div className={styles.cardContent}>
-            <span className={styles.cardTitle}>{t.excludeBlacklist}</span>
-            <span className={styles.cardDesc}>{t.excludeBlacklistDesc}</span>
-          </div>
-        </div>
+          <option value="all">{t.bypassAll}</option>
+          <option value="whitelist">{t.onlyWhitelist}</option>
+          <option value="blacklist">{t.excludeBlacklist}</option>
+        </select>
       </div>
 
-      {/* Domain Editor Section */}
+      {/* Domain List Manager Section */}
       <AnimatePresence mode="wait">
         {localMode !== 'all' && (
           <motion.div 
             key={localMode}
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
-            className={styles.editorSection}
+            className={styles.managerSection}
           >
-            <div className={styles.editorHeader}>
-              <span className={styles.editorLabel}>
+            <div className={styles.managerHeader}>
+              <span className={styles.managerLabel}>
                 {localMode === 'whitelist' ? t.whitelistDomains : t.blacklistDomains}
               </span>
               <span className={styles.badge}>
-                {domainCount} {language === 'tr' ? 'alan adı listelendi' : `domain${domainCount !== 1 ? 's' : ''} listed`}
+                {activeDomains.length} {language === 'tr' ? 'alan adı listelendi' : `domain${activeDomains.length !== 1 ? 's' : ''} listed`}
               </span>
             </div>
 
-            <textarea
-              className={styles.textarea}
-              value={activeTextareaValue}
-              onChange={(e) => handleTextareaChange(e.target.value)}
-              placeholder="example.com&#10;*.google.com&#10;youtube.com"
-              spellCheck={false}
-            />
+            {/* Input to add domain */}
+            <div className={styles.inputRow}>
+              <input
+                type="text"
+                className={styles.input}
+                value={newDomain}
+                onChange={(e) => setNewDomain(e.target.value)}
+                placeholder="example.com"
+                onKeyDown={(e) => { if (e.key === 'Enter') addDomain(); }}
+              />
+              <button className={styles.addBtn} onClick={addDomain}>
+                <Plus size={16} />
+                <span>{language === 'tr' ? 'Ekle' : 'Add'}</span>
+              </button>
+            </div>
+
+            {/* Domains List View (Scrollable) */}
+            <div className={styles.listContainer}>
+              {activeDomains.length === 0 ? (
+                <div className={styles.emptyList}>
+                  {language === 'tr' ? 'Henüz hiçbir alan adı eklenmemiş.' : 'No domains added yet.'}
+                </div>
+              ) : (
+                activeDomains.map((domain, idx) => {
+                  const isValid = isDomainValid(domain);
+                  return (
+                    <div key={`${domain}-${idx}`} className={styles.listItem}>
+                      <div className={styles.domainInfo}>
+                        {isValid ? (
+                          <div className={`${styles.statusBadge} ${styles.valid}`}>
+                            <CheckCircle size={12} />
+                            <span>{language === 'tr' ? 'Geçerli' : 'Valid'}</span>
+                          </div>
+                        ) : (
+                          <div className={`${styles.statusBadge} ${styles.invalid}`}>
+                            <AlertTriangle size={12} />
+                            <span>{language === 'tr' ? 'Geçersiz' : 'Invalid'}</span>
+                          </div>
+                        )}
+                        <span className={styles.domainName}>{domain}</span>
+                      </div>
+                      <button className={styles.removeBtn} onClick={() => removeDomain(idx)}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            
             <span className={styles.helperText}>
               {t.wildcardHelper}
             </span>

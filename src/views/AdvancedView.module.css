@@ -131,12 +131,25 @@
   margin-bottom: 12px;
 }
 
-.headerActions {
+.headerControls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.leftActions {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  width: 100%;
+}
+
+.rightActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .titleArea {
