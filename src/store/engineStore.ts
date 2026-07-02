@@ -207,6 +207,8 @@ interface EngineStore {
   setKillSwitch: (enabled: boolean) => void;
   setWatchdog: (enabled: boolean) => void;
   setLanguage: (lang: 'tr' | 'en') => void;
+  syncBypassToBackend: () => void;
+  syncDnsToBackend: () => void;
 
   refreshPresets: () => Promise<void>;
   deletePreset: (presetId: string) => Promise<void>;
@@ -279,21 +281,61 @@ export const useEngineStore = create<EngineStore>()(
       setActiveTab: (tab) => set({ activeTab: tab }),
       setHealthCheckTargets: (targets) => set({ healthCheckTargets: targets }),
       clearLogs: () => set({ logs: [] }),
-      setBypassMode: (bypassMode) => set({ bypassMode }),
-      setDomainList: (domainList) => set({ domainList }),
+      setBypassMode: (bypassMode) => {
+        set({ bypassMode });
+        get().syncBypassToBackend();
+      },
+      setDomainList: (domainList) => {
+        set({ domainList });
+        get().syncBypassToBackend();
+      },
       setWhitelistDomains: (whitelistDomains) => set({ whitelistDomains }),
       setBlacklistDomains: (blacklistDomains) => set({ blacklistDomains }),
-      setDnsProtocol: (dnsProtocol) => set({ dnsProtocol }),
-      setDnsAdBlock: (dnsAdBlock) => set({ dnsAdBlock }),
-      setDnsCache: (dnsCache) => set({ dnsCache }),
-      setProxySocks5: (proxySocks5) => set({ proxySocks5 }),
-      setKillSwitch: (killSwitch) => set({ killSwitch }),
+      setDnsProtocol: (dnsProtocol) => {
+        set({ dnsProtocol });
+        get().syncDnsToBackend();
+      },
+      setDnsAdBlock: (dnsAdBlock) => {
+        set({ dnsAdBlock });
+        get().syncDnsToBackend();
+      },
+      setDnsCache: (dnsCache) => {
+        set({ dnsCache });
+        get().syncDnsToBackend();
+      },
+      setProxySocks5: (proxySocks5) => {
+        set({ proxySocks5 });
+        get().syncBypassToBackend();
+        get().syncDnsToBackend();
+      },
+      setKillSwitch: (killSwitch) => {
+        set({ killSwitch });
+        get().syncBypassToBackend();
+      },
       setWatchdog: (watchdog) => set({ watchdog }),
       setLanguage: async (language) => {
         set({ language });
         try {
           await emit('sync_language', language);
         } catch (err) { /* ignore */ }
+      },
+      syncBypassToBackend: () => {
+        const state = get();
+        invoke('sync_bypass_config', {
+          mode: state.bypassMode,
+          list: state.domainList,
+          proxy: state.proxySocks5,
+          killSwitch: state.killSwitch,
+        }).catch(err => console.error("sync_bypass_config error:", err));
+      },
+      syncDnsToBackend: () => {
+        const state = get();
+        invoke('sync_dns_settings', {
+          protocol: state.dnsProtocol,
+          adblock: state.dnsAdBlock,
+          cache: state.dnsCache,
+          socks5Proxy: state.proxySocks5,
+        }).catch(err => console.error("sync_dns_settings error:", err));
       },
 
       appendLog: (content, level = 'info') => set((state) => {
@@ -415,6 +457,12 @@ export const useEngineStore = create<EngineStore>()(
     {
       name: 'vane-settings',           // Tauri Store'daki anahtar adı
       storage: createJSONStorage(createTauriStorage), // Depolama motoru
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.syncBypassToBackend();
+          state.syncDnsToBackend();
+        }
+      },
       // Sadece bu alanlar diske yazılır; session verileri (logs, status vb.) yazılmaz.
       partialize: (state) => ({
         activePresetId: state.activePresetId,

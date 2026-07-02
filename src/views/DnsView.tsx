@@ -170,7 +170,12 @@ export function DnsView() {
   };
 
   return (
-    <div className={styles.view}>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      className={styles.view}
+    >
       <header className={styles.header}>
         <div className={styles.titleRow}>
           <h2 className={styles.title}>{t.dnsProvider}</h2>
@@ -337,6 +342,6 @@ export function DnsView() {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   );
 }

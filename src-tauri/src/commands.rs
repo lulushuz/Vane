@@ -540,6 +540,28 @@ pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_network_stats() -> (u64, u64) {
     crate::network::get_total_network_bytes()
+}#[tauri::command]
+pub fn sync_dns_settings(
+    protocol: String,
+    adblock: bool,
+    cache: bool,
+    socks5_proxy: String,
+) {
+    let settings = crate::dns::forwarder::DnsSettings {
+        protocol,
+        adblock,
+        cache,
+        socks5_proxy,
+    };
+    crate::dns::forwarder::update_dns_settings_cache(settings);
 }
 
-
+#[tauri::command]
+pub fn sync_bypass_config(
+    mode: String,
+    list: String,
+    proxy: String,
+    kill_switch: bool,
+) {
+    crate::engine::manager::update_bypass_config_cache(mode, list, proxy, kill_switch);
+}

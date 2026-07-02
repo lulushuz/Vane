@@ -70,6 +70,10 @@ export function HomeView() {
     let t = newTarget.trim().toLowerCase();
     if (!t) return;
     
+    if (healthCheckTargets.length >= 5) {
+      return;
+    }
+    
     // Automatically strip extra spaces and common bad inputs
     t = t.replace(/^(https?:\/\/)/, '').replace(/\/$/, '');
 
@@ -456,34 +460,40 @@ export function HomeView() {
           <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
             <input
               type="text"
-              placeholder={language === 'tr' ? 'örn. youtube.com' : 'e.g. youtube.com'}
+              placeholder={
+                healthCheckTargets.length >= 5
+                  ? (language === 'tr' ? 'Limit doldu (Maks 5)' : 'Limit reached (Max 5)')
+                  : (language === 'tr' ? 'örn. youtube.com' : 'e.g. youtube.com')
+              }
               value={newTarget}
+              disabled={healthCheckTargets.length >= 5}
               onChange={(e) => setNewTarget(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleAddTarget();
               }}
               style={{
                 flex: 1,
-                background: 'rgba(0,0,0,0.2)',
+                background: healthCheckTargets.length >= 5 ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.2)',
                 border: '1px solid rgba(255,255,255,0.1)',
                 borderRadius: 4,
-                color: '#fff',
+                color: healthCheckTargets.length >= 5 ? 'rgba(255,255,255,0.3)' : '#fff',
                 padding: '4px 8px',
                 fontSize: 11,
-                outline: 'none'
+                outline: 'none',
+                cursor: healthCheckTargets.length >= 5 ? 'not-allowed' : 'text'
               }}
             />
             <button
               onClick={handleAddTarget}
-              disabled={!newTarget.trim()}
+              disabled={!newTarget.trim() || healthCheckTargets.length >= 5}
               style={{
                 background: 'rgba(59,130,246,0.25)',
                 color: '#60a5fa',
                 border: 'none',
                 borderRadius: 4,
                 padding: '0 8px',
-                cursor: newTarget.trim() ? 'pointer' : 'not-allowed',
-                opacity: newTarget.trim() ? 1 : 0.5,
+                cursor: (newTarget.trim() && healthCheckTargets.length < 5) ? 'pointer' : 'not-allowed',
+                opacity: (newTarget.trim() && healthCheckTargets.length < 5) ? 1 : 0.5,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'

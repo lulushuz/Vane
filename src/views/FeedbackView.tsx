@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { motion } from 'framer-motion';
 import { MessageSquare, Server, Code, ExternalLink } from 'lucide-react';
 import { useEngineStore } from '../store/engineStore';
 import styles from './FeedbackView.module.css';
@@ -9,7 +10,12 @@ export function FeedbackView() {
   const { language } = useEngineStore();
 
   return (
-    <div className={styles.container}>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      className={styles.container}
+    >
       <header className={styles.header}>
         <h2 className={styles.title}>
           {language === 'tr' ? 'Geri Bildirim & Topluluk' : 'Feedback & Community'}
@@ -77,6 +83,6 @@ export function FeedbackView() {
           </button>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }

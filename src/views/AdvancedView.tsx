@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { Trash2, RotateCcw, RefreshCw, HardDriveDownload, HardDriveUpload } from 'lucide-react';
@@ -232,7 +233,12 @@ export function AdvancedView() {
   const c = advancedConfig;
 
   return (
-    <div className={styles.view}>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      className={styles.view}
+    >
       <div className={styles.headerRow}>
         <div className={styles.titleArea}>
           <h2 className={styles.title}>{t.advancedTitle}</h2>
@@ -305,6 +311,6 @@ export function AdvancedView() {
         onCancel={handleCancel} 
         onSave={handleSave} 
       />
-    </div>
+    </motion.div>
   );
 }

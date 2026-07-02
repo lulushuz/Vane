@@ -152,7 +152,12 @@ export function PatternView() {
   const activeDomains = localMode === 'whitelist' ? localWhitelist : localBlacklist;
 
   return (
-    <div className={styles.container}>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      className={styles.container}
+    >
       <header className={styles.header}>
         <h2 className={styles.title}>{t.bypassPatternControl}</h2>
         <p className={styles.subtitle}>
@@ -287,6 +292,6 @@ export function PatternView() {
           />
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

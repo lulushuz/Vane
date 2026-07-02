@@ -220,7 +220,8 @@ fn get_or_create_dot_resolver(endpoint: DoHEndpoint) -> Option<TokioAsyncResolve
     Some(resolver)
 }
 
-// ─── SETTINGS READING ───
+// ─── SETTINGS READING & CACHING ───
+#[derive(Debug, Clone)]
 pub struct DnsSettings {
     pub protocol: String,
     pub adblock: bool,
@@ -228,7 +229,21 @@ pub struct DnsSettings {
     pub socks5_proxy: String,
 }
 
+static DNS_SETTINGS_CACHE: RwLock<Option<DnsSettings>> = RwLock::new(None);
+
+pub fn update_dns_settings_cache(settings: DnsSettings) {
+    if let Ok(mut guard) = DNS_SETTINGS_CACHE.write() {
+        *guard = Some(settings);
+    }
+}
+
 pub fn read_dns_settings(app: &AppHandle) -> DnsSettings {
+    if let Ok(guard) = DNS_SETTINGS_CACHE.read() {
+        if let Some(ref cached) = *guard {
+            return cached.clone();
+        }
+    }
+
     let default_settings = DnsSettings {
         protocol: "doh".to_string(),
         adblock: false,
@@ -281,7 +296,11 @@ pub fn read_dns_settings(app: &AppHandle) -> DnsSettings {
         .unwrap_or("")
         .to_string();
 
-    DnsSettings { protocol, adblock, cache, socks5_proxy }
+    let res = DnsSettings { protocol, adblock, cache, socks5_proxy };
+    if let Ok(mut guard) = DNS_SETTINGS_CACHE.write() {
+        *guard = Some(res.clone());
+    }
+    res
 }
 
 pub struct ForwarderHandle {

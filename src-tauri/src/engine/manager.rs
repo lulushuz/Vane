@@ -292,7 +292,23 @@ impl EngineManager {
     }
 }
 
+use std::sync::RwLock;
+
+static BYPASS_CONFIG_CACHE: RwLock<Option<(String, String, String, bool)>> = RwLock::new(None);
+
+pub fn update_bypass_config_cache(mode: String, list: String, proxy: String, kill_switch: bool) {
+    if let Ok(mut guard) = BYPASS_CONFIG_CACHE.write() {
+        *guard = Some((mode, list, proxy, kill_switch));
+    }
+}
+
 fn read_bypass_config(app: &AppHandle) -> (String, String, String, bool) {
+    if let Ok(guard) = BYPASS_CONFIG_CACHE.read() {
+        if let Some(ref cached) = *guard {
+            return cached.clone();
+        }
+    }
+
     let default_res = ("all".to_string(), "".to_string(), "".to_string(), false);
     let Ok(app_data) = app.path().app_data_dir() else { return default_res; };
     let settings_path = app_data.join("settings.json");
@@ -341,7 +357,11 @@ fn read_bypass_config(app: &AppHandle) -> (String, String, String, bool) {
         .and_then(|k| k.as_bool())
         .unwrap_or(false);
 
-    (mode, list, proxy, kill_switch)
+    let res = (mode, list, proxy, kill_switch);
+    if let Ok(mut guard) = BYPASS_CONFIG_CACHE.write() {
+        *guard = Some(res.clone());
+    }
+    res
 }
 
 fn apply_kill_switch(enabled: bool) {

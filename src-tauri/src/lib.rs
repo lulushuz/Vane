@@ -407,6 +407,8 @@ pub fn run() {
             commands::open_url,
             commands::get_geoip_data,
             commands::get_network_stats,
+            commands::sync_dns_settings,
+            commands::sync_bypass_config,
         ]);
 
     let app = builder
