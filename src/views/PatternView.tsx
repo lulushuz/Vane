@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useEngineStore } from '../store/engineStore';
 import { invoke } from '@tauri-apps/api/core';
-import { Save, X, Plus, CheckCircle, AlertTriangle } from 'lucide-react';
-import { Toast } from '../components/Toast/Toast';
+import { X, Plus, CheckCircle, AlertTriangle } from 'lucide-react';
 import { translations } from '../utils/translations';
 import { motion, AnimatePresence } from 'framer-motion';
 import styles from './PatternView.module.css';
@@ -27,9 +26,6 @@ export function PatternView() {
     setWhitelistDomains,
     setBlacklistDomains,
     setDomainList,
-    status,
-    startEngine,
-    stopEngine,
     language,
     hasHydrated,
   } = useEngineStore();
@@ -47,11 +43,7 @@ export function PatternView() {
   const [localBlacklist, setLocalBlacklist] = useState<string[]>(() => getArrayFromStore(blacklistDomains));
   const [newDomain, setNewDomain] = useState('');
   
-  const [showToast, setShowToast] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
-  const [toastType, setToastType] = useState<'success' | 'error' | 'warning'>('success');
 
-  const isEngineRunning = status.variant === 'running';
 
   // Sync state only when store rehydration completes
   useEffect(() => {
@@ -79,28 +71,28 @@ export function PatternView() {
     return Array.from(resultSet).join('\n');
   };
 
-  const handleSave = async () => {
-    const whitelistString = localWhitelist.join('\n');
-    const blacklistString = localBlacklist.join('\n');
+  const saveAndSync = async (mode: 'all' | 'whitelist' | 'blacklist', whitelist: string[], blacklist: string[]) => {
+    const whitelistString = whitelist.join('\n');
+    const blacklistString = blacklist.join('\n');
     
-    const cleanedWhitelist = cleanDomains(localWhitelist);
-    const cleanedBlacklist = cleanDomains(localBlacklist);
+    const cleanedWhitelist = cleanDomains(whitelist);
+    const cleanedBlacklist = cleanDomains(blacklist);
 
     // Save separately to store
-    setBypassMode(localMode);
+    setBypassMode(mode);
     setWhitelistDomains(whitelistString);
     setBlacklistDomains(blacklistString);
     
     // Sync with the backend's expected single active domainList
     let activeList = '';
-    if (localMode === 'whitelist') activeList = cleanedWhitelist;
-    else if (localMode === 'blacklist') activeList = cleanedBlacklist;
+    if (mode === 'whitelist') activeList = cleanedWhitelist;
+    else if (mode === 'blacklist') activeList = cleanedBlacklist;
     setDomainList(activeList);
 
-    // Force immediate sync to Rust memory cache before engine restart
+    // Force immediate sync to Rust memory cache
     try {
       await invoke('sync_bypass_config', {
-        mode: localMode,
+        mode,
         list: activeList,
         proxy: useEngineStore.getState().proxySocks5,
         killSwitch: useEngineStore.getState().killSwitch,
@@ -108,63 +100,48 @@ export function PatternView() {
     } catch (e) {
       console.error("Direct sync_bypass_config failed:", e);
     }
-
-    if (isEngineRunning) {
-      setToastType('warning');
-      setToastMessage(t.restartingEngine);
-      setShowToast(true);
-      try {
-        await stopEngine();
-        await new Promise(r => setTimeout(r, 600)); // wait for process cleanup
-        await startEngine();
-        setToastType('success');
-        setToastMessage(t.savedAndRestarted);
-      } catch (err) {
-        setToastType('error');
-        setToastMessage(language === 'tr' ? `Motor yeniden başlatılamadı: ${err}` : `Failed to restart engine: ${err}`);
-      }
-    } else {
-      setToastType('success');
-      setToastMessage(t.savedSuccessfully);
-      setShowToast(true);
-    }
   };
 
-  const handleCancel = () => {
-    setLocalMode(bypassMode);
-    setLocalWhitelist(getArrayFromStore(whitelistDomains));
-    setLocalBlacklist(getArrayFromStore(blacklistDomains));
-    setNewDomain('');
-  };
-
-  const addDomain = () => {
+  const addDomain = async () => {
     const trimmed = newDomain.trim().toLowerCase();
     if (!trimmed) return;
     
+    let updatedWhitelist = [...localWhitelist];
+    let updatedBlacklist = [...localBlacklist];
+
     if (localMode === 'whitelist') {
       if (localWhitelist.includes(trimmed)) return;
-      setLocalWhitelist([...localWhitelist, trimmed]);
+      updatedWhitelist = [...localWhitelist, trimmed];
+      setLocalWhitelist(updatedWhitelist);
     } else {
       if (localBlacklist.includes(trimmed)) return;
-      setLocalBlacklist([...localBlacklist, trimmed]);
+      updatedBlacklist = [...localBlacklist, trimmed];
+      setLocalBlacklist(updatedBlacklist);
     }
     setNewDomain('');
+
+    await saveAndSync(localMode, updatedWhitelist, updatedBlacklist);
   };
 
-  const removeDomain = (idx: number) => {
+  const removeDomain = async (idx: number) => {
+    let updatedWhitelist = [...localWhitelist];
+    let updatedBlacklist = [...localBlacklist];
+
     if (localMode === 'whitelist') {
-      setLocalWhitelist(localWhitelist.filter((_, i) => i !== idx));
+      updatedWhitelist = localWhitelist.filter((_, i) => i !== idx);
+      setLocalWhitelist(updatedWhitelist);
     } else {
-      setLocalBlacklist(localBlacklist.filter((_, i) => i !== idx));
+      updatedBlacklist = localBlacklist.filter((_, i) => i !== idx);
+      setLocalBlacklist(updatedBlacklist);
     }
+
+    await saveAndSync(localMode, updatedWhitelist, updatedBlacklist);
   };
 
-  const storeWhitelistArr = getArrayFromStore(whitelistDomains);
-  const storeBlacklistArr = getArrayFromStore(blacklistDomains);
-
-  const hasChanges = localMode !== bypassMode ||
-    JSON.stringify(localWhitelist) !== JSON.stringify(storeWhitelistArr) ||
-    JSON.stringify(localBlacklist) !== JSON.stringify(storeBlacklistArr);
+  const handleModeChange = async (newMode: 'all' | 'whitelist' | 'blacklist') => {
+    setLocalMode(newMode);
+    await saveAndSync(newMode, localWhitelist, localBlacklist);
+  };
 
   const activeDomains = localMode === 'whitelist' ? localWhitelist : localBlacklist;
 
@@ -188,7 +165,7 @@ export function PatternView() {
         <select
           className={styles.select}
           value={localMode}
-          onChange={(e) => setLocalMode(e.target.value as any)}
+          onChange={(e) => handleModeChange(e.target.value as any)}
         >
           <option value="all">{t.bypassAll}</option>
           <option value="whitelist">{t.onlyWhitelist}</option>
@@ -273,42 +250,8 @@ export function PatternView() {
         )}
       </AnimatePresence>
 
-      {/* Action Banner (Save / Cancel) */}
-      <AnimatePresence>
-        {hasChanges && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            transition={{ type: 'spring', stiffness: 400, damping: 28 }}
-            className={styles.actionBanner}
-          >
-            <div className={styles.bannerLeft}>
-              <div className={styles.bannerDot} />
-              <span className={styles.bannerText}>{t.unsavedChanges}</span>
-            </div>
-            <div className={styles.bannerActions}>
-              <button className={styles.cancelBtn} onClick={handleCancel}>
-                <X size={14} /> {t.cancel}
-              </button>
-              <button className={styles.saveBtn} onClick={handleSave}>
-                <Save size={14} /> {t.saveChanges}
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
-      {/* Toast Feedback */}
-      {showToast && (
-        <div className={styles.toastWrapper}>
-          <Toast
-            message={toastMessage}
-            type={toastType}
-            onDismiss={() => setShowToast(false)}
-          />
-        </div>
-      )}
+
     </motion.div>
   );
 }
