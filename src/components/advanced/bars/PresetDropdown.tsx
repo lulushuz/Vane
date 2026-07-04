@@ -36,7 +36,7 @@ export function PresetDropdown({ activePresetId, presets, onSelect }: PresetDrop
   };
 
   return (
-    <div className={styles.dropdownContainer} ref={dropdownRef} style={{ width: 220, marginTop: 0 }}>
+    <div className={styles.dropdownContainer} ref={dropdownRef} style={{ width: 280, marginTop: 0 }}>
       <button
         className={styles.presetDropdownBtn}
         onClick={() => setIsOpen(!isOpen)}
@@ -46,8 +46,8 @@ export function PresetDropdown({ activePresetId, presets, onSelect }: PresetDrop
           <ActiveIcon size={16} className={styles.presetIconActive} />
           <span>
             {activePreset
-              ? activePreset.label.length > 15
-                ? activePreset.label.slice(0, 15) + '…'
+              ? activePreset.label.length > 25
+                ? activePreset.label.slice(0, 25) + '…'
                 : activePreset.label
               : 'Select...'}
           </span>
@@ -75,7 +75,7 @@ export function PresetDropdown({ activePresetId, presets, onSelect }: PresetDrop
                   <IconComp size={15} className={styles.dropdownItemIcon} />
                   <div className={styles.dropdownItemTexts}>
                     <span className={styles.dropdownItemLabel}>
-                      {p.label.length > 12 ? p.label.slice(0, 12) + '…' : p.label}
+                      {p.label.length > 20 ? p.label.slice(0, 20) + '…' : p.label}
                     </span>
                   </div>
                 </div>

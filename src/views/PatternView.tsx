@@ -1,16 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useEngineStore } from '../store/engineStore';
-import { invoke } from '@tauri-apps/api/core';
 import { X, Plus, CheckCircle, AlertTriangle } from 'lucide-react';
 import { translations } from '../utils/translations';
 import { motion, AnimatePresence } from 'framer-motion';
 import styles from './PatternView.module.css';
-
-const DOMAIN_ALIASES: Record<string, string[]> = {
-  'discord.com': ['discordapp.com', 'discordapp.net', 'discord.gg'],
-  'roblox.com': ['robloxlabs.com', 'rbxcdn.com'],
-  'youtube.com': ['youtu.be', 'ytimg.com', 'ggpht.com']
-};
 
 const isDomainValid = (domain: string): boolean => {
   const regex = /^(?:\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(?:\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})+$/;
@@ -25,125 +18,36 @@ export function PatternView() {
     setBypassMode,
     setWhitelistDomains,
     setBlacklistDomains,
-    setDomainList,
     language,
-    hasHydrated,
   } = useEngineStore();
 
   const t = translations[language];
 
-  const [localMode, setLocalMode] = useState<'all' | 'whitelist' | 'blacklist'>(bypassMode);
-  
-  // Convert newline-separated strings from store to arrays
-  const getArrayFromStore = (str: string) => {
-    return str.split('\n').map(d => d.trim()).filter(d => d.length > 0);
-  };
-
-  const [localWhitelist, setLocalWhitelist] = useState<string[]>(() => getArrayFromStore(whitelistDomains));
-  const [localBlacklist, setLocalBlacklist] = useState<string[]>(() => getArrayFromStore(blacklistDomains));
   const [newDomain, setNewDomain] = useState('');
-  
 
-
-  // Sync state only when store rehydration completes
-  useEffect(() => {
-    if (hasHydrated) {
-      setLocalWhitelist(getArrayFromStore(whitelistDomains));
-      setLocalBlacklist(getArrayFromStore(blacklistDomains));
-      setLocalMode(bypassMode);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasHydrated]);
-
-  const cleanDomains = (domains: string[]) => {
-    const resultSet = new Set<string>(domains);
-
-    for (const domain of domains) {
-      const cleanDomain = domain.replace(/^\*\./, '');
-      if (DOMAIN_ALIASES[cleanDomain]) {
-        for (const alias of DOMAIN_ALIASES[cleanDomain]) {
-          resultSet.add(alias);
-          resultSet.add(`*.${alias}`);
-        }
-      }
-    }
-
-    return Array.from(resultSet).join('\n');
-  };
-
-  const saveAndSync = async (mode: 'all' | 'whitelist' | 'blacklist', whitelist: string[], blacklist: string[]) => {
-    const whitelistString = whitelist.join('\n');
-    const blacklistString = blacklist.join('\n');
-    
-    const cleanedWhitelist = cleanDomains(whitelist);
-    const cleanedBlacklist = cleanDomains(blacklist);
-
-    // Save separately to store
-    setBypassMode(mode);
-    setWhitelistDomains(whitelistString);
-    setBlacklistDomains(blacklistString);
-    
-    // Sync with the backend's expected single active domainList
-    let activeList = '';
-    if (mode === 'whitelist') activeList = cleanedWhitelist;
-    else if (mode === 'blacklist') activeList = cleanedBlacklist;
-    setDomainList(activeList);
-
-    // Force immediate sync to Rust memory cache
-    try {
-      await invoke('sync_bypass_config', {
-        mode,
-        list: activeList,
-        proxy: useEngineStore.getState().proxySocks5,
-        killSwitch: useEngineStore.getState().killSwitch,
-      });
-    } catch (e) {
-      console.error("Direct sync_bypass_config failed:", e);
-    }
-  };
-
-  const addDomain = async () => {
+  const addDomain = () => {
     const trimmed = newDomain.trim().toLowerCase();
     if (!trimmed) return;
-    
-    let updatedWhitelist = [...localWhitelist];
-    let updatedBlacklist = [...localBlacklist];
 
-    if (localMode === 'whitelist') {
-      if (localWhitelist.includes(trimmed)) return;
-      updatedWhitelist = [...localWhitelist, trimmed];
-      setLocalWhitelist(updatedWhitelist);
+    if (bypassMode === 'whitelist') {
+      if (whitelistDomains.includes(trimmed)) return;
+      setWhitelistDomains([...whitelistDomains, trimmed]);
     } else {
-      if (localBlacklist.includes(trimmed)) return;
-      updatedBlacklist = [...localBlacklist, trimmed];
-      setLocalBlacklist(updatedBlacklist);
+      if (blacklistDomains.includes(trimmed)) return;
+      setBlacklistDomains([...blacklistDomains, trimmed]);
     }
     setNewDomain('');
-
-    await saveAndSync(localMode, updatedWhitelist, updatedBlacklist);
   };
 
-  const removeDomain = async (idx: number) => {
-    let updatedWhitelist = [...localWhitelist];
-    let updatedBlacklist = [...localBlacklist];
-
-    if (localMode === 'whitelist') {
-      updatedWhitelist = localWhitelist.filter((_, i) => i !== idx);
-      setLocalWhitelist(updatedWhitelist);
+  const removeDomain = (idx: number) => {
+    if (bypassMode === 'whitelist') {
+      setWhitelistDomains(whitelistDomains.filter((_, i) => i !== idx));
     } else {
-      updatedBlacklist = localBlacklist.filter((_, i) => i !== idx);
-      setLocalBlacklist(updatedBlacklist);
+      setBlacklistDomains(blacklistDomains.filter((_, i) => i !== idx));
     }
-
-    await saveAndSync(localMode, updatedWhitelist, updatedBlacklist);
   };
 
-  const handleModeChange = async (newMode: 'all' | 'whitelist' | 'blacklist') => {
-    setLocalMode(newMode);
-    await saveAndSync(newMode, localWhitelist, localBlacklist);
-  };
-
-  const activeDomains = localMode === 'whitelist' ? localWhitelist : localBlacklist;
+  const activeDomains = bypassMode === 'whitelist' ? whitelistDomains : blacklistDomains;
 
   return (
     <motion.div
@@ -164,8 +68,8 @@ export function PatternView() {
         <label className={styles.selectLabel}>{language === 'tr' ? 'Bypass Modu Seçin' : 'Select Bypass Mode'}</label>
         <select
           className={styles.select}
-          value={localMode}
-          onChange={(e) => handleModeChange(e.target.value as any)}
+          value={bypassMode}
+          onChange={(e) => setBypassMode(e.target.value as any)}
         >
           <option value="all">{t.bypassAll}</option>
           <option value="whitelist">{t.onlyWhitelist}</option>
@@ -175,9 +79,9 @@ export function PatternView() {
 
       {/* Domain List Manager Section */}
       <AnimatePresence mode="wait">
-        {localMode !== 'all' && (
+        {bypassMode !== 'all' && (
           <motion.div 
-            key={localMode}
+            key={bypassMode}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
@@ -186,7 +90,7 @@ export function PatternView() {
           >
             <div className={styles.managerHeader}>
               <span className={styles.managerLabel}>
-                {localMode === 'whitelist' ? t.whitelistDomains : t.blacklistDomains}
+                {bypassMode === 'whitelist' ? t.whitelistDomains : t.blacklistDomains}
               </span>
               <span className={styles.badge}>
                 {activeDomains.length} {language === 'tr' ? 'alan adı listelendi' : `domain${activeDomains.length !== 1 ? 's' : ''} listed`}
@@ -249,9 +153,6 @@ export function PatternView() {
           </motion.div>
         )}
       </AnimatePresence>
-
-
-
     </motion.div>
   );
 }

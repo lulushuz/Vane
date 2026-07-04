@@ -165,8 +165,8 @@ interface EngineStore {
   healthCheckTargets: string[];
   bypassMode: 'all' | 'whitelist' | 'blacklist';
   domainList: string;
-  whitelistDomains: string;
-  blacklistDomains: string;
+  whitelistDomains: string[];
+  blacklistDomains: string[];
   dnsProtocol: 'doh' | 'dot' | 'doq';
   dnsAdBlock: boolean;
   dnsCache: boolean;
@@ -198,8 +198,8 @@ interface EngineStore {
   setHealthCheckTargets: (targets: string[]) => void;
   setBypassMode: (mode: 'all' | 'whitelist' | 'blacklist') => void;
   setDomainList: (list: string) => void;
-  setWhitelistDomains: (list: string) => void;
-  setBlacklistDomains: (list: string) => void;
+  setWhitelistDomains: (list: string[]) => void;
+  setBlacklistDomains: (list: string[]) => void;
   setDnsProtocol: (protocol: 'doh' | 'dot' | 'doq') => void;
   setDnsAdBlock: (enabled: boolean) => void;
   setDnsCache: (enabled: boolean) => void;
@@ -228,6 +228,26 @@ let logCounter = 0;
 let bypassSyncTimeout: any = null;
 let dnsSyncTimeout: any = null;
 
+const DOMAIN_ALIASES: Record<string, string[]> = {
+  'discord.com': ['discordapp.com', 'discordapp.net', 'discord.gg'],
+  'roblox.com': ['robloxlabs.com', 'rbxcdn.com'],
+  'youtube.com': ['youtu.be', 'ytimg.com', 'ggpht.com']
+};
+
+const cleanDomainsHelper = (domains: string[]): string => {
+  const resultSet = new Set<string>(domains);
+  for (const domain of domains) {
+    const cleanDomain = domain.replace(/^\*\./, '');
+    if (DOMAIN_ALIASES[cleanDomain]) {
+      for (const alias of DOMAIN_ALIASES[cleanDomain]) {
+        resultSet.add(alias);
+        resultSet.add(`*.${alias}`);
+      }
+    }
+  }
+  return Array.from(resultSet).join('\n');
+};
+
 export const useEngineStore = create<EngineStore>()(
   persist(
     (set, get) => ({
@@ -239,8 +259,8 @@ export const useEngineStore = create<EngineStore>()(
       advancedConfig: DEFAULT_ADVANCED_CONFIG,
       bypassMode: 'all',
       domainList: '',
-      whitelistDomains: '',
-      blacklistDomains: '',
+      whitelistDomains: [],
+      blacklistDomains: [],
       dnsProtocol: 'doh',
       dnsAdBlock: false,
       dnsCache: true,
@@ -294,8 +314,14 @@ export const useEngineStore = create<EngineStore>()(
         set({ domainList });
         get().syncBypassToBackend();
       },
-      setWhitelistDomains: (whitelistDomains) => set({ whitelistDomains }),
-      setBlacklistDomains: (blacklistDomains) => set({ blacklistDomains }),
+      setWhitelistDomains: (whitelistDomains) => {
+        set({ whitelistDomains });
+        get().syncBypassToBackend();
+      },
+      setBlacklistDomains: (blacklistDomains) => {
+        set({ blacklistDomains });
+        get().syncBypassToBackend();
+      },
       setDnsProtocol: (dnsProtocol) => {
         set({ dnsProtocol });
         get().syncDnsToBackend();
@@ -329,9 +355,15 @@ export const useEngineStore = create<EngineStore>()(
         if (bypassSyncTimeout) clearTimeout(bypassSyncTimeout);
         bypassSyncTimeout = setTimeout(() => {
           const state = get();
+          
+          const activeDomains = state.bypassMode === 'whitelist' ? state.whitelistDomains : state.blacklistDomains;
+          const cleanedList = cleanDomainsHelper(activeDomains);
+          
+          set({ domainList: cleanedList });
+
           invoke('sync_bypass_config', {
             mode: state.bypassMode,
-            list: state.domainList,
+            list: cleanedList,
             proxy: state.proxySocks5,
             killSwitch: state.killSwitch,
           }).catch(err => console.error("sync_bypass_config error:", err));
