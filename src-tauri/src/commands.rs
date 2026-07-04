@@ -541,19 +541,62 @@ pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
 pub fn get_network_stats() -> (u64, u64) {
     crate::network::get_total_network_bytes()
 }#[tauri::command]
+fn save_settings_to_disk(app: &AppHandle, update_fn: impl FnOnce(&mut serde_json::Value)) -> Result<(), String> {
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let settings_path = app_data.join("settings.json");
+    
+    let mut file_json = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
+        serde_json::from_str::<serde_json::Value>(&content).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let mut vane_settings = if let Some(serde_json::Value::String(s)) = file_json.get("vane-settings") {
+        serde_json::from_str::<serde_json::Value>(s).unwrap_or_else(|_| serde_json::json!({"state": {}, "version": 0}))
+    } else {
+        serde_json::json!({"state": {}, "version": 0})
+    };
+
+    if let Some(state) = vane_settings.get_mut("state") {
+        update_fn(state);
+    } else {
+        let mut state_obj = serde_json::json!({});
+        update_fn(&mut state_obj);
+        vane_settings["state"] = state_obj;
+    }
+
+    let serialized = serde_json::to_string(&vane_settings).map_err(|e| e.to_string())?;
+    file_json["vane-settings"] = serde_json::Value::String(serialized);
+
+    let final_content = serde_json::to_string_pretty(&file_json).map_err(|e| e.to_string())?;
+    std::fs::write(&settings_path, final_content).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+#[tauri::command]
 pub fn sync_dns_settings(
     protocol: String,
     adblock: bool,
     cache: bool,
     socks5_proxy: String,
+    app: AppHandle,
 ) {
     let settings = crate::dns::forwarder::DnsSettings {
-        protocol,
+        protocol: protocol.clone(),
         adblock,
         cache,
-        socks5_proxy,
+        socks5_proxy: socks5_proxy.clone(),
     };
     crate::dns::forwarder::update_dns_settings_cache(settings);
+
+    let _ = save_settings_to_disk(&app, move |state| {
+        state["dnsProtocol"] = serde_json::Value::String(protocol);
+        state["dnsAdBlock"] = serde_json::Value::Bool(adblock);
+        state["dnsCache"] = serde_json::Value::Bool(cache);
+        state["proxySocks5"] = serde_json::Value::String(socks5_proxy);
+    });
 }
 
 #[tauri::command]
@@ -562,10 +605,27 @@ pub async fn sync_bypass_config(
     list: String,
     proxy: String,
     kill_switch: bool,
+    whitelist_domains: Vec<String>,
+    blacklist_domains: Vec<String>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     crate::engine::manager::update_bypass_config_cache(mode.clone(), list.clone(), proxy.clone(), kill_switch);
+
+    let whitelist_clone = whitelist_domains.clone();
+    let blacklist_clone = blacklist_domains.clone();
+    let mode_clone = mode.clone();
+    let list_clone = list.clone();
+    let proxy_clone = proxy.clone();
+    
+    let _ = save_settings_to_disk(&app, move |state| {
+        state["bypassMode"] = serde_json::Value::String(mode_clone);
+        state["domainList"] = serde_json::Value::String(list_clone);
+        state["proxySocks5"] = serde_json::Value::String(proxy_clone);
+        state["killSwitch"] = serde_json::Value::Bool(kill_switch);
+        state["whitelistDomains"] = serde_json::to_value(whitelist_clone).unwrap_or(serde_json::Value::Array(vec![]));
+        state["blacklistDomains"] = serde_json::to_value(blacklist_clone).unwrap_or(serde_json::Value::Array(vec![]));
+    });
 
     let status = state.engine_manager.current_status();
     if let crate::engine::EngineStatus::Running { .. } = status {
@@ -573,7 +633,7 @@ pub async fn sync_bypass_config(
         let active_preset_id = crate::read_last_preset_id(&app).unwrap_or_else(|| "default".to_string());
         
         let preset_opt = if let Ok(loader) = state.config_loader.lock() {
-            loader.find_preset(&active_preset_id)
+            preset_opt_guard(loader.find_preset(&active_preset_id))
         } else {
             None
         };
@@ -587,4 +647,8 @@ pub async fn sync_bypass_config(
         }
     }
     Ok(())
+}
+
+fn preset_opt_guard<T>(val: Option<T>) -> Option<T> {
+    val
 }

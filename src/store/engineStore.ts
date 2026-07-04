@@ -366,6 +366,8 @@ export const useEngineStore = create<EngineStore>()(
             list: cleanedList,
             proxy: state.proxySocks5,
             killSwitch: state.killSwitch,
+            whitelistDomains: state.whitelistDomains,
+            blacklistDomains: state.blacklistDomains,
           }).catch(err => console.error("sync_bypass_config error:", err));
         }, 100);
       },
