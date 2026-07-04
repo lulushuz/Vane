@@ -557,11 +557,34 @@ pub fn sync_dns_settings(
 }
 
 #[tauri::command]
-pub fn sync_bypass_config(
+pub async fn sync_bypass_config(
     mode: String,
     list: String,
     proxy: String,
     kill_switch: bool,
-) {
-    crate::engine::manager::update_bypass_config_cache(mode, list, proxy, kill_switch);
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::engine::manager::update_bypass_config_cache(mode.clone(), list.clone(), proxy.clone(), kill_switch);
+
+    let status = state.engine_manager.current_status();
+    if let crate::engine::EngineStatus::Running { .. } = status {
+        tracing::info!("Bypass config changed while engine is running. Restarting engine silently...");
+        let active_preset_id = crate::read_last_preset_id(&app).unwrap_or_else(|| "default".to_string());
+        
+        let preset_opt = if let Ok(loader) = state.config_loader.lock() {
+            loader.find_preset(&active_preset_id)
+        } else {
+            None
+        };
+
+        if let Some(preset) = preset_opt {
+            let _ = state.engine_manager.stop(&app);
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            if let Err(e) = state.engine_manager.start(&preset, &app).await {
+                return Err(format!("Failed to restart engine: {:?}", e));
+            }
+        }
+    }
+    Ok(())
 }

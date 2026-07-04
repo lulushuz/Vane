@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useEngineStore } from '../store/engineStore';
+import { invoke } from '@tauri-apps/api/core';
 import { Save, X, Plus, CheckCircle, AlertTriangle } from 'lucide-react';
 import { Toast } from '../components/Toast/Toast';
 import { translations } from '../utils/translations';
@@ -30,6 +31,7 @@ export function PatternView() {
     startEngine,
     stopEngine,
     language,
+    hasHydrated,
   } = useEngineStore();
 
   const t = translations[language];
@@ -51,15 +53,15 @@ export function PatternView() {
 
   const isEngineRunning = status.variant === 'running';
 
-  // Sadece store ilk hydrate olduğunda (boşken) local state'i doldur.
-  // Kullanıcının düzenlediği listeyi asla silme.
+  // Sync state only when store rehydration completes
   useEffect(() => {
-    setLocalWhitelist(prev => prev.length > 0 ? prev : getArrayFromStore(whitelistDomains));
-    setLocalBlacklist(prev => prev.length > 0 ? prev : getArrayFromStore(blacklistDomains));
-    // localMode'u sadece dışarıdan değişirse güncelle (bileşen zaten dirty değilse)
-    setLocalMode(bypassMode);
+    if (hasHydrated) {
+      setLocalWhitelist(getArrayFromStore(whitelistDomains));
+      setLocalBlacklist(getArrayFromStore(blacklistDomains));
+      setLocalMode(bypassMode);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hasHydrated]);
 
   const cleanDomains = (domains: string[]) => {
     const resultSet = new Set<string>(domains);
@@ -94,6 +96,18 @@ export function PatternView() {
     if (localMode === 'whitelist') activeList = cleanedWhitelist;
     else if (localMode === 'blacklist') activeList = cleanedBlacklist;
     setDomainList(activeList);
+
+    // Force immediate sync to Rust memory cache before engine restart
+    try {
+      await invoke('sync_bypass_config', {
+        mode: localMode,
+        list: activeList,
+        proxy: useEngineStore.getState().proxySocks5,
+        killSwitch: useEngineStore.getState().killSwitch,
+      });
+    } catch (e) {
+      console.error("Direct sync_bypass_config failed:", e);
+    }
 
     if (isEngineRunning) {
       setToastType('warning');

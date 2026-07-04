@@ -1,6 +1,6 @@
 [package]
 name = "vane-dpi"
-version = "2.0.1"
+version = "2.0.3"
 description = "Vane — Minimal DPI Bypass Application"
 authors = ["Archey Inc"]
 edition = "2021"

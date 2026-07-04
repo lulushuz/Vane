@@ -220,9 +220,13 @@ interface EngineStore {
   setSelectedDnsId: (id: string) => void;
   setDnsCustom: (primary: string, secondary: string) => void;
   setDnsSynced: (synced: boolean) => void;
+  hasHydrated: boolean;
+  setHasHydrated: (val: boolean) => void;
 }
 
 let logCounter = 0;
+let bypassSyncTimeout: any = null;
+let dnsSyncTimeout: any = null;
 
 export const useEngineStore = create<EngineStore>()(
   persist(
@@ -254,6 +258,7 @@ export const useEngineStore = create<EngineStore>()(
       dnsSynced: false,
       advancedDirty: false,
       healthCheckTargets: ['discord.com'],
+      hasHydrated: false,
 
       setStatus: (status) => set({ status }),
       setActivePreset: async (presetId) => {
@@ -313,6 +318,7 @@ export const useEngineStore = create<EngineStore>()(
         get().syncBypassToBackend();
       },
       setWatchdog: (watchdog) => set({ watchdog }),
+      setHasHydrated: (hasHydrated) => set({ hasHydrated }),
       setLanguage: async (language) => {
         set({ language });
         try {
@@ -320,22 +326,28 @@ export const useEngineStore = create<EngineStore>()(
         } catch (err) { /* ignore */ }
       },
       syncBypassToBackend: () => {
-        const state = get();
-        invoke('sync_bypass_config', {
-          mode: state.bypassMode,
-          list: state.domainList,
-          proxy: state.proxySocks5,
-          killSwitch: state.killSwitch,
-        }).catch(err => console.error("sync_bypass_config error:", err));
+        if (bypassSyncTimeout) clearTimeout(bypassSyncTimeout);
+        bypassSyncTimeout = setTimeout(() => {
+          const state = get();
+          invoke('sync_bypass_config', {
+            mode: state.bypassMode,
+            list: state.domainList,
+            proxy: state.proxySocks5,
+            killSwitch: state.killSwitch,
+          }).catch(err => console.error("sync_bypass_config error:", err));
+        }, 100);
       },
       syncDnsToBackend: () => {
-        const state = get();
-        invoke('sync_dns_settings', {
-          protocol: state.dnsProtocol,
-          adblock: state.dnsAdBlock,
-          cache: state.dnsCache,
-          socks5Proxy: state.proxySocks5,
-        }).catch(err => console.error("sync_dns_settings error:", err));
+        if (dnsSyncTimeout) clearTimeout(dnsSyncTimeout);
+        dnsSyncTimeout = setTimeout(() => {
+          const state = get();
+          invoke('sync_dns_settings', {
+            protocol: state.dnsProtocol,
+            adblock: state.dnsAdBlock,
+            cache: state.dnsCache,
+            socks5Proxy: state.proxySocks5,
+          }).catch(err => console.error("sync_dns_settings error:", err));
+        }, 100);
       },
 
       appendLog: (content, level = 'info') => set((state) => {
@@ -459,6 +471,7 @@ export const useEngineStore = create<EngineStore>()(
       storage: createJSONStorage(createTauriStorage), // Depolama motoru
       onRehydrateStorage: () => (state) => {
         if (state) {
+          state.setHasHydrated(true);
           state.syncBypassToBackend();
           state.syncDnsToBackend();
         }
