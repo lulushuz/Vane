@@ -376,23 +376,26 @@ export const useEngineStore = create<EngineStore>()(
         bypassSyncTimeout = setTimeout(() => {
           const state = get();
           
-          const activeDomains = state.bypassMode === 'whitelist' ? state.whitelistDomains : state.blacklistDomains;
+          const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
+          const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
+          const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
           const cleanedList = cleanDomainsHelper(activeDomains);
           
           set({ domainList: cleanedList });
 
-          invoke<BypassConfigStatus>('sync_bypass_config', {
+          invoke('sync_bypass_config', {
             mode: state.bypassMode,
             list: cleanedList,
             proxy: state.proxySocks5,
             killSwitch: state.killSwitch,
-            whitelistDomains: state.whitelistDomains,
-            blacklistDomains: state.blacklistDomains,
-          }).then((verified) => {
+            whitelistDomains: wl,
+            blacklistDomains: bl,
+          }).then((verified: any) => {
             const tr = get().language === 'tr';
+            const modeKey = (verified.mode || 'all') as 'all' | 'whitelist' | 'blacklist';
             const modeText = tr
-              ? ({ all: 'tüm siteler', whitelist: 'yalnızca beyaz liste', blacklist: 'kara liste hariç' } as const)[verified.mode]
-              : ({ all: 'all sites', whitelist: 'whitelist only', blacklist: 'except blacklist' } as const)[verified.mode];
+              ? ({ all: 'tüm siteler', whitelist: 'yalnızca beyaz liste', blacklist: 'kara liste hariç' } as const)[modeKey]
+              : ({ all: 'all sites', whitelist: 'whitelist only', blacklist: 'except blacklist' } as const)[modeKey];
             const applyText = verified.engineRestarted
               ? (tr ? 'Çalışan motor yeni kurallarla yeniden başlatıldı.' : 'The running engine was restarted with the new rules.')
               : (tr ? 'Kural bir sonraki motor başlangıcında uygulanacak.' : 'The rule will be applied on the next engine start.');
@@ -496,14 +499,16 @@ export const useEngineStore = create<EngineStore>()(
           if (bypassSyncTimeout) clearTimeout(bypassSyncTimeout);
           if (dnsSyncTimeout) clearTimeout(dnsSyncTimeout);
           const current = get();
-          const activeDomains = current.bypassMode === 'whitelist' ? current.whitelistDomains : current.blacklistDomains;
+          const wl = Array.isArray(current.whitelistDomains) ? current.whitelistDomains : [];
+          const bl = Array.isArray(current.blacklistDomains) ? current.blacklistDomains : [];
+          const activeDomains = current.bypassMode === 'whitelist' ? wl : bl;
           await invoke<BypassConfigStatus>('sync_bypass_config', {
             mode: current.bypassMode,
             list: cleanDomainsHelper(activeDomains),
             proxy: current.proxySocks5,
             killSwitch: current.killSwitch,
-            whitelistDomains: current.whitelistDomains,
-            blacklistDomains: current.blacklistDomains,
+            whitelistDomains: wl,
+            blacklistDomains: bl,
           });
           await invoke<DnsConfigStatus>('sync_dns_settings', {
             protocol: current.dnsProtocol === 'doq' ? 'doh' : current.dnsProtocol,
@@ -576,6 +581,31 @@ export const useEngineStore = create<EngineStore>()(
       storage: createJSONStorage(createTauriStorage), // Depolama motoru
       onRehydrateStorage: () => (state) => {
         if (state) {
+          let dirty = false;
+          let wl = state.whitelistDomains;
+          let bl = state.blacklistDomains;
+          
+          if (typeof wl === 'string') {
+            wl = (wl as string).split('\n').map(d => d.trim()).filter(d => d.length > 0);
+            dirty = true;
+          } else if (!Array.isArray(wl)) {
+            wl = [];
+            dirty = true;
+          }
+
+          if (typeof bl === 'string') {
+            bl = (bl as string).split('\n').map(d => d.trim()).filter(d => d.length > 0);
+            dirty = true;
+          } else if (!Array.isArray(bl)) {
+            bl = [];
+            dirty = true;
+          }
+
+          if (dirty) {
+            state.whitelistDomains = wl;
+            state.blacklistDomains = bl;
+          }
+
           state.setHasHydrated(true);
           state.syncBypassToBackend();
           state.syncDnsToBackend();
