@@ -547,8 +547,8 @@ pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     if !url.starts_with("https://") && !url.starts_with("http://") {
         return Err("Güvenlik ihlali: Yalnızca HTTP veya HTTPS şemalarına izin verilir.".into());
     }
-    use tauri_plugin_shell::ShellExt;
-    app.shell().open(url, None).map_err(|e| e.to_string())
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_path(url, None::<String>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
