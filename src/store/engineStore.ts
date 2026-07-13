@@ -38,6 +38,23 @@ export interface DnsProvider {
   secondary: string;
 }
 
+interface BypassConfigStatus {
+  mode: 'all' | 'whitelist' | 'blacklist';
+  domainCount: number;
+  engineRestarted: boolean;
+  engineRunning: boolean;
+  whitelistDomains: string[];
+  blacklistDomains: string[];
+}
+
+export interface DnsConfigStatus {
+  protocol: 'doh' | 'dot';
+  adblock: boolean;
+  cache: boolean;
+  socks5Proxy: string;
+  forwarderActive: boolean;
+}
+
 /* 
    Advanced Config
    Gelişmiş ayarların tek obje olarak tutulduğu şema.
@@ -234,9 +251,12 @@ const DOMAIN_ALIASES: Record<string, string[]> = {
   'youtube.com': ['youtu.be', 'ytimg.com', 'ggpht.com']
 };
 
+const VALID_DOMAIN = /^(?:\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(?:\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})+$/;
+
 const cleanDomainsHelper = (domains: string[]): string => {
-  const resultSet = new Set<string>(domains);
-  for (const domain of domains) {
+  const validDomains = domains.map((domain) => domain.trim().toLowerCase()).filter((domain) => VALID_DOMAIN.test(domain));
+  const resultSet = new Set<string>(validDomains);
+  for (const domain of validDomains) {
     const cleanDomain = domain.replace(/^\*\./, '');
     if (DOMAIN_ALIASES[cleanDomain]) {
       for (const alias of DOMAIN_ALIASES[cleanDomain]) {
@@ -361,26 +381,59 @@ export const useEngineStore = create<EngineStore>()(
           
           set({ domainList: cleanedList });
 
-          invoke('sync_bypass_config', {
+          invoke<BypassConfigStatus>('sync_bypass_config', {
             mode: state.bypassMode,
             list: cleanedList,
             proxy: state.proxySocks5,
             killSwitch: state.killSwitch,
             whitelistDomains: state.whitelistDomains,
             blacklistDomains: state.blacklistDomains,
-          }).catch(err => console.error("sync_bypass_config error:", err));
+          }).then((verified) => {
+            const tr = get().language === 'tr';
+            const modeText = tr
+              ? ({ all: 'tüm siteler', whitelist: 'yalnızca beyaz liste', blacklist: 'kara liste hariç' } as const)[verified.mode]
+              : ({ all: 'all sites', whitelist: 'whitelist only', blacklist: 'except blacklist' } as const)[verified.mode];
+            const applyText = verified.engineRestarted
+              ? (tr ? 'Çalışan motor yeni kurallarla yeniden başlatıldı.' : 'The running engine was restarted with the new rules.')
+              : (tr ? 'Kural bir sonraki motor başlangıcında uygulanacak.' : 'The rule will be applied on the next engine start.');
+            get().appendLog(
+              tr
+                ? `[PATTERN] Ayar doğrulandı: ${modeText}; ${verified.domainCount} alan adı. ${applyText}`
+                : `[PATTERN] Setting verified: ${modeText}; ${verified.domainCount} domains. ${applyText}`,
+              'info',
+            );
+          }).catch(err => {
+            const tr = get().language === 'tr';
+            get().appendLog(tr ? `[ERROR] Desen ayarı uygulanamadı: ${err}` : `[ERROR] Pattern setting could not be applied: ${err}`, 'error');
+          });
         }, 100);
       },
       syncDnsToBackend: () => {
         if (dnsSyncTimeout) clearTimeout(dnsSyncTimeout);
         dnsSyncTimeout = setTimeout(() => {
           const state = get();
-          invoke('sync_dns_settings', {
-            protocol: state.dnsProtocol,
+          const protocol = state.dnsProtocol === 'doq' ? 'doh' : state.dnsProtocol;
+          if (state.dnsProtocol === 'doq') set({ dnsProtocol: 'doh' });
+          invoke<DnsConfigStatus>('sync_dns_settings', {
+            protocol,
             adblock: state.dnsAdBlock,
             cache: state.dnsCache,
             socks5Proxy: state.proxySocks5,
-          }).catch(err => console.error("sync_dns_settings error:", err));
+          }).then((verified) => {
+            const tr = get().language === 'tr';
+            const activeText = verified.forwarderActive
+              ? (tr ? 'Çalışan yönlendirici yeni ayarı kullanıyor.' : 'The running forwarder is using the new setting.')
+              : (tr ? 'Ayar kaydedildi; yönlendirici başlatıldığında kullanılacak.' : 'Saved; it will be used when the forwarder starts.');
+            get().appendLog(
+              tr
+                ? `[DNS] Ayarlar doğrulandı: ${verified.protocol.toUpperCase()}, önbellek ${verified.cache ? 'açık' : 'kapalı'}, reklam filtresi ${verified.adblock ? 'açık' : 'kapalı'}. ${activeText}`
+                : `[DNS] Settings verified: ${verified.protocol.toUpperCase()}, cache ${verified.cache ? 'on' : 'off'}, ad filter ${verified.adblock ? 'on' : 'off'}. ${activeText}`,
+              'info',
+            );
+          }).catch(err => {
+            const tr = get().language === 'tr';
+            get().appendLog(tr ? `[ERROR] DNS ayarı doğrulanamadı: ${err}` : `[ERROR] DNS setting could not be verified: ${err}`, 'error');
+          });
         }, 100);
       },
 
@@ -437,22 +490,40 @@ export const useEngineStore = create<EngineStore>()(
 
         // Seçilen preseti kalıcı olarak kaydet (persist aracılığıyla)
         set({ activePresetId: id, status: { variant: 'starting' } });
-        get().appendLog(`[ENGINE] Starting: ${id}`, 'info');
+        get().appendLog(get().language === 'tr' ? `[ENGINE] “${id}” profiliyle DPI bypass başlatılıyor...` : `[ENGINE] Starting DPI bypass with profile “${id}”...`, 'info');
 
         try {
+          if (bypassSyncTimeout) clearTimeout(bypassSyncTimeout);
+          if (dnsSyncTimeout) clearTimeout(dnsSyncTimeout);
+          const current = get();
+          const activeDomains = current.bypassMode === 'whitelist' ? current.whitelistDomains : current.blacklistDomains;
+          await invoke<BypassConfigStatus>('sync_bypass_config', {
+            mode: current.bypassMode,
+            list: cleanDomainsHelper(activeDomains),
+            proxy: current.proxySocks5,
+            killSwitch: current.killSwitch,
+            whitelistDomains: current.whitelistDomains,
+            blacklistDomains: current.blacklistDomains,
+          });
+          await invoke<DnsConfigStatus>('sync_dns_settings', {
+            protocol: current.dnsProtocol === 'doq' ? 'doh' : current.dnsProtocol,
+            adblock: current.dnsAdBlock,
+            cache: current.dnsCache,
+            socks5Proxy: current.proxySocks5,
+          });
           const result = await invoke<EngineStatus>('start_engine_with_dns_guard', { presetId: id });
           set({ status: result });
 
           if (result.variant === 'running') {
-            get().appendLog(`[ENGINE] Bypass active (PID: ${result.pid})`, 'info');
+            get().appendLog(get().language === 'tr' ? `[ENGINE] DPI bypass etkin ve çalışıyor (işlem ${result.pid}).` : `[ENGINE] DPI bypass is active and running (process ${result.pid}).`, 'info');
           } else if (result.variant === 'error') {
-            get().appendLog(`[ERROR] Engine error: ${result.message}`, 'error');
+            get().appendLog(get().language === 'tr' ? `[ERROR] DPI motoru hatası: ${result.message}` : `[ERROR] DPI engine error: ${result.message}`, 'error');
           }
         } catch (err: any) {
           const errorCode = typeof err === 'object' && err !== null && 'code' in err ? err.code : 'UNKNOWN';
           const errorMsg = typeof err === 'object' && err !== null && 'message' in err ? err.message : String(err);
           set({ status: { variant: 'error', message: errorMsg, code: errorCode } });
-          get().appendLog(`[ERROR] Startup error: ${errorMsg}`, 'error');
+          get().appendLog(get().language === 'tr' ? `[ERROR] DPI bypass başlatılamadı: ${errorMsg}` : `[ERROR] DPI bypass could not start: ${errorMsg}`, 'error');
         }
       },
 
@@ -460,7 +531,7 @@ export const useEngineStore = create<EngineStore>()(
         try {
           await invoke('stop_engine');
           set({ status: { variant: 'stopped' } });
-          get().appendLog('[ENGINE] Engine stopped.', 'warn');
+          get().appendLog(get().language === 'tr' ? '[ENGINE] DPI bypass durduruldu.' : '[ENGINE] DPI bypass stopped.', 'warn');
         } catch (err) {
           console.error('Durdurma hatası:', err);
         }

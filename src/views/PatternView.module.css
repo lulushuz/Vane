@@ -137,6 +137,11 @@
   background: #4c6ef5;
 }
 
+.addBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 /* List Container (Scrollable) */
 .listContainer {
   background: var(--color-bg-secondary);

@@ -441,20 +441,24 @@ async fn spawn_and_run(
     apply_kill_switch(kill_switch);
 
     if bypass_mode == "whitelist" || bypass_mode == "blacklist" {
-        if let Ok(app_data) = app.path().app_data_dir() {
-            let _ = std::fs::create_dir_all(&app_data);
-            let domains_file_path = app_data.join("domains.txt");
-            if let Err(e) = std::fs::write(&domains_file_path, &domain_list) {
-                tracing::error!("Could not write domains.txt: {}", e);
-            } else {
-                let file_path_str = domains_file_path.to_string_lossy().to_string();
-                if bypass_mode == "whitelist" {
-                    prepared_args.push(format!("--hostlist={}", file_path_str));
-                } else {
-                    prepared_args.push(format!("--hostlist-exclude={}", file_path_str));
-                }
-            }
+        let app_data = app.path().app_data_dir()
+            .map_err(|e| EngineError::IoError(format!("Pattern storage path is unavailable: {}", e)))?;
+        std::fs::create_dir_all(&app_data)
+            .map_err(|e| EngineError::IoError(format!("Pattern storage could not be created: {}", e)))?;
+        let domains_file_path = app_data.join("domains.txt");
+        std::fs::write(&domains_file_path, &domain_list)
+            .map_err(|e| EngineError::IoError(format!("Pattern list could not be written: {}", e)))?;
+        let file_path_str = domains_file_path.to_string_lossy().to_string();
+        let domain_count = domain_list.lines().filter(|line| !line.trim().is_empty()).count();
+        if bypass_mode == "whitelist" {
+            prepared_args.push(format!("--hostlist={}", file_path_str));
+            tracing::info!("Pattern verified: DPI bypass will run only for {} whitelisted domains.", domain_count);
+        } else {
+            prepared_args.push(format!("--hostlist-exclude={}", file_path_str));
+            tracing::info!("Pattern verified: {} blacklisted domains will be excluded from DPI bypass.", domain_count);
         }
+    } else {
+        tracing::info!("Pattern verified: DPI bypass will run for all sites.");
     }
 
     #[cfg(target_os = "linux")]

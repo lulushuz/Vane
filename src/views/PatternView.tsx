@@ -4,6 +4,7 @@ import { X, Plus, CheckCircle, AlertTriangle } from 'lucide-react';
 import { translations } from '../utils/translations';
 import { motion, AnimatePresence } from 'framer-motion';
 import styles from './PatternView.module.css';
+import { CustomSelect } from '../components/CustomSelect/CustomSelect';
 
 const isDomainValid = (domain: string): boolean => {
   const regex = /^(?:\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(?:\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})+$/;
@@ -18,6 +19,7 @@ export function PatternView() {
     setBypassMode,
     setWhitelistDomains,
     setBlacklistDomains,
+    appendLog,
     language,
   } = useEngineStore();
 
@@ -28,6 +30,12 @@ export function PatternView() {
   const addDomain = () => {
     const trimmed = newDomain.trim().toLowerCase();
     if (!trimmed) return;
+    if (!isDomainValid(trimmed)) {
+      appendLog(language === 'tr'
+        ? `[ERROR] “${trimmed}” geçerli bir alan adı değil; desen listesine eklenmedi.`
+        : `[ERROR] “${trimmed}” is not a valid domain and was not added to the pattern list.`, 'error');
+      return;
+    }
 
     if (bypassMode === 'whitelist') {
       if (whitelistDomains.includes(trimmed)) return;
@@ -48,6 +56,11 @@ export function PatternView() {
   };
 
   const activeDomains = bypassMode === 'whitelist' ? whitelistDomains : blacklistDomains;
+  const modeOptions = [
+    { value: 'all' as const, label: t.bypassAll, description: t.bypassAllDesc },
+    { value: 'whitelist' as const, label: t.onlyWhitelist, description: t.onlyWhitelistDesc },
+    { value: 'blacklist' as const, label: t.excludeBlacklist, description: t.excludeBlacklistDesc },
+  ];
 
   return (
     <motion.div
@@ -66,15 +79,12 @@ export function PatternView() {
       {/* Mode Selection Dropdown */}
       <div className={styles.selectWrapper}>
         <label className={styles.selectLabel}>{language === 'tr' ? 'Bypass Modu Seçin' : 'Select Bypass Mode'}</label>
-        <select
-          className={styles.select}
+        <CustomSelect
           value={bypassMode}
-          onChange={(e) => setBypassMode(e.target.value as any)}
-        >
-          <option value="all">{t.bypassAll}</option>
-          <option value="whitelist">{t.onlyWhitelist}</option>
-          <option value="blacklist">{t.excludeBlacklist}</option>
-        </select>
+          options={modeOptions}
+          ariaLabel={language === 'tr' ? 'Bypass modu' : 'Bypass mode'}
+          onChange={setBypassMode}
+        />
       </div>
 
       {/* Domain List Manager Section */}
@@ -107,7 +117,7 @@ export function PatternView() {
                 placeholder="example.com"
                 onKeyDown={(e) => { if (e.key === 'Enter') addDomain(); }}
               />
-              <button className={styles.addBtn} onClick={addDomain}>
+              <button className={styles.addBtn} onClick={addDomain} disabled={!newDomain.trim()}>
                 <Plus size={16} />
                 <span>{language === 'tr' ? 'Ekle' : 'Add'}</span>
               </button>

@@ -297,6 +297,21 @@ pub struct ForwarderStatus {
     pub active: bool,
     pub port: u16,
     pub endpoint: String,
+    pub protocol: String,
+    pub adblock: bool,
+    pub cache: bool,
+}
+
+fn forwarder_status(active: bool, port: u16, endpoint: String, app: &AppHandle) -> ForwarderStatus {
+    let settings = crate::dns::forwarder::read_dns_settings(app);
+    ForwarderStatus {
+        active,
+        port,
+        endpoint,
+        protocol: settings.protocol,
+        adblock: settings.adblock,
+        cache: settings.cache,
+    }
 }
 
 #[tauri::command]
@@ -347,10 +362,13 @@ pub async fn start_doh_forwarder(
         let endpoint = handle.endpoint.url().to_string();
         *guard = Some(handle);
 
-        ForwarderStatus { active: true, port, endpoint }
+        forwarder_status(true, port, endpoint, &app)
     };
 
-    tracing::info!("DoH Forwarder started: port {}", DOH_FORWARDER_DEFAULT_PORT);
+    tracing::info!(
+        "DNS forwarder is running and verified: protocol={}, cache={}, adblock={}, port={}",
+        status.protocol.to_uppercase(), status.cache, status.adblock, status.port
+    );
     Ok(status)
 }
 
@@ -366,7 +384,11 @@ pub async fn stop_doh_forwarder(
 
     if let Some(h) = handle {
         h.stop().await;
-        let _ = reset_dns_to_dhcp();
+        let reset = reset_dns_to_dhcp();
+        if !reset.success {
+            return Err(format!("Forwarder stopped but automatic DNS restore failed: {:?}", reset.error));
+        }
+        tracing::info!("DNS forwarder stopped and system DNS was restored automatically.");
         Ok(())
     } else {
         Err("DoH Forwarder is already stopped.".into())
@@ -374,19 +396,11 @@ pub async fn stop_doh_forwarder(
 }
 
 #[tauri::command]
-pub fn get_doh_forwarder_status(state: State<'_, AppState>) -> ForwarderStatus {
+pub fn get_doh_forwarder_status(app: AppHandle, state: State<'_, AppState>) -> ForwarderStatus {
     let guard = state.forwarder.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_ref() {
-        Some(h) => ForwarderStatus {
-            active: true,
-            port: h.port,
-            endpoint: h.endpoint.url().to_string(),
-        },
-        None => ForwarderStatus {
-            active: false,
-            port: DOH_FORWARDER_DEFAULT_PORT,
-            endpoint: DoHEndpoint::Cloudflare.url().to_string(),
-        },
+        Some(h) => forwarder_status(true, h.port, h.endpoint.url().to_string(), &app),
+        None => forwarder_status(false, DOH_FORWARDER_DEFAULT_PORT, DoHEndpoint::Cloudflare.url().to_string(), &app),
     }
 }
 
@@ -575,6 +589,16 @@ fn save_settings_to_disk(app: &AppHandle, update_fn: impl FnOnce(&mut serde_json
     Ok(())
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DnsConfigStatus {
+    protocol: String,
+    adblock: bool,
+    cache: bool,
+    socks5_proxy: String,
+    forwarder_active: bool,
+}
+
 #[tauri::command]
 pub fn sync_dns_settings(
     protocol: String,
@@ -582,21 +606,55 @@ pub fn sync_dns_settings(
     cache: bool,
     socks5_proxy: String,
     app: AppHandle,
-) {
+    state: State<'_, AppState>,
+) -> Result<DnsConfigStatus, String> {
+    if protocol != "doh" && protocol != "dot" {
+        return Err(format!("Unsupported DNS transport protocol: {}", protocol));
+    }
     let settings = crate::dns::forwarder::DnsSettings {
         protocol: protocol.clone(),
         adblock,
         cache,
         socks5_proxy: socks5_proxy.clone(),
     };
-    crate::dns::forwarder::update_dns_settings_cache(settings);
+    crate::dns::forwarder::update_dns_settings_cache(settings.clone());
 
-    let _ = save_settings_to_disk(&app, move |state| {
-        state["dnsProtocol"] = serde_json::Value::String(protocol);
+    let persisted = settings.clone();
+    save_settings_to_disk(&app, move |state| {
+        state["dnsProtocol"] = serde_json::Value::String(persisted.protocol);
         state["dnsAdBlock"] = serde_json::Value::Bool(adblock);
         state["dnsCache"] = serde_json::Value::Bool(cache);
         state["proxySocks5"] = serde_json::Value::String(socks5_proxy);
-    });
+    })?;
+    let verified = crate::dns::forwarder::read_dns_settings(&app);
+    let forwarder_active = state.forwarder.lock()
+        .map_err(|_| "Forwarder lock poisoned.".to_string())?
+        .is_some();
+    let result = DnsConfigStatus {
+        protocol: verified.protocol,
+        adblock: verified.adblock,
+        cache: verified.cache,
+        socks5_proxy: verified.socks5_proxy,
+        forwarder_active,
+    };
+    app.emit("dns_config_synced", result.clone()).map_err(|e| e.to_string())?;
+    tracing::info!(
+        "DNS settings applied and verified: protocol={}, cache={}, adblock={}, proxy={}",
+        result.protocol.to_uppercase(), result.cache, result.adblock,
+        if result.socks5_proxy.is_empty() { "direct" } else { "SOCKS5" }
+    );
+    Ok(result)
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BypassConfigStatus {
+    mode: String,
+    domain_count: usize,
+    engine_restarted: bool,
+    engine_running: bool,
+    whitelist_domains: Vec<String>,
+    blacklist_domains: Vec<String>,
 }
 
 #[tauri::command]
@@ -609,7 +667,10 @@ pub async fn sync_bypass_config(
     blacklist_domains: Vec<String>,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<BypassConfigStatus, String> {
+    if mode != "all" && mode != "whitelist" && mode != "blacklist" {
+        return Err(format!("Unsupported bypass mode: {}", mode));
+    }
     crate::engine::manager::update_bypass_config_cache(mode.clone(), list.clone(), proxy.clone(), kill_switch);
 
     let whitelist_clone = whitelist_domains.clone();
@@ -618,16 +679,17 @@ pub async fn sync_bypass_config(
     let list_clone = list.clone();
     let proxy_clone = proxy.clone();
     
-    let _ = save_settings_to_disk(&app, move |state| {
+    save_settings_to_disk(&app, move |state| {
         state["bypassMode"] = serde_json::Value::String(mode_clone);
         state["domainList"] = serde_json::Value::String(list_clone);
         state["proxySocks5"] = serde_json::Value::String(proxy_clone);
         state["killSwitch"] = serde_json::Value::Bool(kill_switch);
         state["whitelistDomains"] = serde_json::to_value(whitelist_clone).unwrap_or(serde_json::Value::Array(vec![]));
         state["blacklistDomains"] = serde_json::to_value(blacklist_clone).unwrap_or(serde_json::Value::Array(vec![]));
-    });
+    })?;
 
     let status = state.engine_manager.current_status();
+    let mut engine_restarted = false;
     if let crate::engine::EngineStatus::Running { .. } = status {
         tracing::info!("Bypass config changed while engine is running. Restarting engine silently...");
         let active_preset_id = crate::read_last_preset_id(&app).unwrap_or_else(|| "default".to_string());
@@ -644,9 +706,28 @@ pub async fn sync_bypass_config(
             if let Err(e) = state.engine_manager.start(&preset, &app).await {
                 return Err(format!("Failed to restart engine: {:?}", e));
             }
+            engine_restarted = true;
         }
     }
-    Ok(())
+    let domain_count = match mode.as_str() {
+        "whitelist" => whitelist_domains.len(),
+        "blacklist" => blacklist_domains.len(),
+        _ => 0,
+    };
+    let result = BypassConfigStatus {
+        mode: mode.clone(),
+        domain_count,
+        engine_restarted,
+        engine_running: matches!(state.engine_manager.current_status(), crate::engine::EngineStatus::Running { .. }),
+        whitelist_domains,
+        blacklist_domains,
+    };
+    app.emit("bypass_config_synced", result.clone()).map_err(|e| e.to_string())?;
+    tracing::info!(
+        "Bypass pattern saved and verified: mode={}, domains={}, engine_restarted={}",
+        mode, domain_count, engine_restarted
+    );
+    Ok(result)
 }
 
 fn preset_opt_guard<T>(val: Option<T>) -> Option<T> {

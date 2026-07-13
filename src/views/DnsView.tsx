@@ -5,6 +5,7 @@ import { Check, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import { useEngineStore } from '../store/engineStore';
 import { translations } from '../utils/translations';
 import styles from './DnsView.module.css';
+import { CustomSelect } from '../components/CustomSelect/CustomSelect';
 
 interface ApplyDnsResult {
   success: boolean;
@@ -15,6 +16,9 @@ interface ForwarderStatus {
   active: boolean;
   port: number;
   endpoint: string;
+  protocol: 'doh' | 'dot';
+  adblock: boolean;
+  cache: boolean;
 }
 
 const CloudflareIcon = ({ size = 24 }: { size?: number }) => (
@@ -93,6 +97,7 @@ export function DnsView() {
     setDnsProtocol,
     setDnsAdBlock,
     setDnsCache,
+    appendLog,
     language,
   } = useEngineStore();
 
@@ -124,13 +129,20 @@ export function DnsView() {
     try {
       if (forwarder?.active) {
         await invoke('stop_doh_forwarder');
-        setForwarder((prev: ForwarderStatus | null) => prev ? { ...prev, active: false } : null);
+        const verified = await invoke<ForwarderStatus>('get_doh_forwarder_status');
+        setForwarder(verified);
+        appendLog(language === 'tr'
+          ? '[DNS] DNS yönlendiricisinin durduğu ve sistem DNS ayarının geri yüklendiği doğrulandı.'
+          : '[DNS] Verified that the DNS forwarder stopped and the system DNS setting was restored.', 'info');
       } else {
         const st = await invoke<ForwarderStatus>('start_doh_forwarder');
         setForwarder(st);
+        appendLog(language === 'tr'
+          ? `[DNS] DNS yönlendiricisi doğrulandı: ${st.protocol.toUpperCase()}, önbellek ${st.cache ? 'açık' : 'kapalı'}, reklam filtresi ${st.adblock ? 'açık' : 'kapalı'}.`
+          : `[DNS] DNS forwarder verified: ${st.protocol.toUpperCase()}, cache ${st.cache ? 'on' : 'off'}, ad filter ${st.adblock ? 'on' : 'off'}.`, 'info');
       }
     } catch (e: any) {
-      alert(`DoH Error: ${e}`);
+      appendLog(language === 'tr' ? `[ERROR] DNS yönlendiricisi işlemi başarısız: ${e}` : `[ERROR] DNS forwarder operation failed: ${e}`, 'error');
     } finally {
       setIsForwarderLoading(false);
     }
@@ -155,9 +167,15 @@ export function DnsView() {
         // Re-sync on failure to restore correct UI state.
         setDnsSynced(false);
         await syncWithSystem();
+        appendLog(language === 'tr' ? `[ERROR] Sistem DNS ayarı uygulanamadı: ${res.error}` : `[ERROR] System DNS setting could not be applied: ${res.error}`, 'error');
+      } else {
+        appendLog(language === 'tr'
+          ? `[DNS] Sistem DNS ayarı başarıyla uygulandı ve işletim sistemi tarafından kabul edildi: ${p}${s ? ` / ${s}` : ''}.`
+          : `[DNS] System DNS setting was applied and accepted by the operating system: ${p}${s ? ` / ${s}` : ''}.`, 'info');
       }
     } catch (err) {
       console.error('Invoke error:', err);
+      appendLog(language === 'tr' ? `[ERROR] Sistem DNS ayarı doğrulanamadı: ${err}` : `[ERROR] System DNS setting could not be verified: ${err}`, 'error');
     }
   };
 
@@ -211,15 +229,16 @@ export function DnsView() {
           {/* Protocol Selection */}
           <div className={styles.configItem}>
             <label className={styles.configLabel}>{t.transportProtocol}</label>
-            <select
-              className={styles.select}
+            <CustomSelect
               value={dnsProtocol}
-              onChange={(e) => setDnsProtocol(e.target.value as 'doh' | 'dot' | 'doq')}
-            >
-              <option value="doh">DNS over HTTPS (DoH)</option>
-              <option value="dot">DNS over TLS (DoT)</option>
-              <option value="doq">DNS over QUIC (DoQ)</option>
-            </select>
+              ariaLabel={t.transportProtocol}
+              options={[
+                { value: 'doh', label: 'DNS over HTTPS (DoH)', description: language === 'tr' ? 'HTTPS üzerinden şifreli DNS' : 'Encrypted DNS over HTTPS' },
+                { value: 'dot', label: 'DNS over TLS (DoT)', description: language === 'tr' ? 'TLS üzerinden şifreli DNS' : 'Encrypted DNS over TLS' },
+                { value: 'doq', label: 'DNS over QUIC (DoQ)', description: language === 'tr' ? 'Bu sürümde henüz desteklenmiyor' : 'Not supported in this version yet', disabled: true },
+              ]}
+              onChange={setDnsProtocol}
+            />
           </div>
 
           {/* AdBlock Toggle */}

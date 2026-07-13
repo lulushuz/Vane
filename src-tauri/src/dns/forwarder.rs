@@ -151,6 +151,14 @@ pub fn init_dns_cache() {
     }
 }
 
+pub fn clear_dns_cache() {
+    if let Ok(mut guard) = DNS_CACHE.write() {
+        if let Some(cache) = guard.as_mut() {
+            cache.clear();
+        }
+    }
+}
+
 fn get_cached_dns(qname: &str, qtype: u16) -> Option<bytes::Bytes> {
     let guard = DNS_CACHE.read().ok()?;
     let cache = guard.as_ref()?;
@@ -221,7 +229,8 @@ fn get_or_create_dot_resolver(endpoint: DoHEndpoint) -> Option<TokioAsyncResolve
 }
 
 // ─── SETTINGS READING & CACHING ───
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DnsSettings {
     pub protocol: String,
     pub adblock: bool,
@@ -232,6 +241,9 @@ pub struct DnsSettings {
 static DNS_SETTINGS_CACHE: RwLock<Option<DnsSettings>> = RwLock::new(None);
 
 pub fn update_dns_settings_cache(settings: DnsSettings) {
+    if !settings.cache {
+        clear_dns_cache();
+    }
     if let Ok(mut guard) = DNS_SETTINGS_CACHE.write() {
         *guard = Some(settings);
     }
@@ -282,6 +294,7 @@ pub fn read_dns_settings(app: &AppHandle) -> DnsSettings {
         .and_then(|p| p.as_str())
         .unwrap_or("doh")
         .to_string();
+    let protocol = if protocol == "dot" { "dot".to_string() } else { "doh".to_string() };
     let adblock = state
         .and_then(|s| s.get("dnsAdBlock"))
         .and_then(|a| a.as_bool())
@@ -507,7 +520,7 @@ async fn proxy_dns_query(
         }
 
         // 3. Resolve via Protocols
-        let response_bytes = if settings.protocol == "dot" || settings.protocol == "doq" {
+        let response_bytes = if settings.protocol == "dot" {
             let resolver = get_or_create_dot_resolver(endpoint)?;
             let name = hickory_resolver::Name::from_utf8(&qname_clean).ok()?;
             let lookup = resolver.lookup(name, qtype).await.ok()?;

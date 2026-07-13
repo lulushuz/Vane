@@ -5602,7 +5602,7 @@ checksum = "7ba6f5989077681266825251a52748b8c1d8a4ad098cc37e440103d0ea717fc0"
 
 [[package]]
 name = "vane-dpi"
-version = "2.0.5"
+version = "2.0.7"
 dependencies = [
  "bytes",
  "futures",
