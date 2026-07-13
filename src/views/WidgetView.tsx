@@ -102,7 +102,7 @@ export function WidgetView() {
   }, []);
 
   const openGithub = () => {
-    open('https://github.com/luluwux/Vane');
+    open('https://github.com/lulushuz/Vane');
   };
 
   // Animated Radio SVG Variants

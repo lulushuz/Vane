@@ -62,7 +62,7 @@
     },
     "updater": {
       "endpoints": [
-        "https://github.com/luluwux/Vane/releases/latest/download/latest.json"
+        "https://github.com/lulushuz/Vane/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBN0NCRDIxM0MyQ0QyRTgKUldUbzBpdzhJYjE4S29TR3dsWGpHNElseitvTWphRmhONjA3N0g1bk5sVEg2S3VKb2dIZVVyYTEK"
     }

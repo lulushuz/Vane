@@ -4,14 +4,14 @@ use crate::config::preset::Preset;
 use minisign_verify::{PublicKey, Signature};
 
 /// The remote URL serving the dynamic presets manifest.
-/// Points to the raw presets.json in the luluwux/Vane-Presets GitHub repository.
+/// Points to the raw presets.json in the lulushuz/Vane-Presets GitHub repository.
 pub const REMOTE_PRESETS_URL: &str =
-    "https://raw.githubusercontent.com/luluwux/Vane-Presets/main/presets.json";
+    "https://raw.githubusercontent.com/lulushuz/Vane-Presets/main/presets.json";
 
 /// The signature URL (Minisign ed25519 signature of the presets.json file).
 /// Will be used once a signing pipeline is set up in the presets repo.
 pub const REMOTE_PRESETS_SIG_URL: &str =
-    "https://raw.githubusercontent.com/luluwux/Vane-Presets/main/presets.json.minisig";
+    "https://raw.githubusercontent.com/lulushuz/Vane-Presets/main/presets.json.minisig";
 
 /// Embedded Minisign public key for verifying the remote JSON.
 pub const MANIFEST_PUBLIC_KEY: &str = "RWQo/mHXZdRyPdQNeH2YrFR8+knwokccmntw3cd24APtrqtxnbHGGaY7";

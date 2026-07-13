@@ -77,7 +77,7 @@ export function FeedbackView() {
           </div>
           <button
             className={styles.actionBtn}
-            onClick={() => openUrl('https://github.com/luluwux/Vane')}
+            onClick={() => openUrl('https://github.com/lulushuz/Vane')}
           >
             <ExternalLink size={14} /> {language === 'tr' ? 'Depoyu Görüntüle' : 'View Repository'}
           </button>

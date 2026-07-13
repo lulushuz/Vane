@@ -10,9 +10,9 @@
 
 <p align="center">
   <a href="README.tr.md"><img src="https://img.shields.io/badge/lang-tr-blue.svg" alt="tr"></a>
-  <img src="https://img.shields.io/github/actions/workflow/status/luluwux/Vane/releases.yml?style=flat-square&label=build" alt="Build Status">
-  <img src="https://img.shields.io/github/license/luluwux/Vane?style=flat-square&color=blue" alt="License">
-  <img src="https://img.shields.io/github/v/release/luluwux/Vane?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=build" alt="Build Status">
+  <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="License">
+  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square" alt="Version">
   <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
 </p>
 
@@ -1032,7 +1032,7 @@ Vane implements multiple layers of security controls:
 
 ### Windows
 
-1. Download the latest `.msi` installer from [Releases](https://github.com/luluwux/Vane/releases).
+1. Download the latest `.msi` installer from [Releases](https://github.com/lulushuz/Vane/releases).
 2. Run the installer as Administrator.
 3. Launch Vane from the Start Menu.
 
@@ -1040,7 +1040,7 @@ Vane implements multiple layers of security controls:
 
 ### Linux
 
-1. Download the `.deb` (Debian/Ubuntu) or `.AppImage` from [Releases](https://github.com/luluwux/Vane/releases).
+1. Download the `.deb` (Debian/Ubuntu) or `.AppImage` from [Releases](https://github.com/lulushuz/Vane/releases).
 2. Install with `sudo dpkg -i vane_*.deb` or `chmod +x Vane_*.AppImage && ./Vane_*.AppImage`.
 3. Launch Vane; it will request `pkexec` (PolicyKit) root elevation on engine start.
 
@@ -1061,7 +1061,7 @@ Vane implements multiple layers of security controls:
 
 ```bash
 # Clone the repository
-git clone https://github.com/luluwux/Vane.git
+git clone https://github.com/lulushuz/Vane.git
 cd Vane
 
 # Install frontend dependencies
@@ -1129,8 +1129,8 @@ Licensed under the **GPL-3.0 License** — see [LICENSE](LICENSE) for details.
 
 | Channel | Link |
 |---------|------|
-| 🐛 Bug Reports | [GitHub Issues](https://github.com/luluwux/Vane/issues) |
-| 💡 Feature Requests | [GitHub Issues](https://github.com/luluwux/Vane/issues) |
+| 🐛 Bug Reports | [GitHub Issues](https://github.com/lulushuz/Vane/issues) |
+| 💡 Feature Requests | [GitHub Issues](https://github.com/lulushuz/Vane/issues) |
 | 💬 Discord (Personal) | [luppux](https://discord.com/users/852103749228036136) |
 | 💬 Discord (Community) | [discord.gg/luppux](https://discord.gg/luppux) |
 | 📧 Security Reports | alp@archey.com.tr |

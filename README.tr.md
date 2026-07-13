@@ -10,9 +10,9 @@
 
 <p align="center">
   <a href="README.md"><img src="https://img.shields.io/badge/lang-en-red.svg" alt="en"></a>
-  <img src="https://img.shields.io/github/actions/workflow/status/luluwux/Vane/releases.yml?style=flat-square&label=derleme" alt="Derleme Durumu">
-  <img src="https://img.shields.io/github/license/luluwux/Vane?style=flat-square&color=blue" alt="Lisans">
-  <img src="https://img.shields.io/github/v/release/luluwux/Vane?style=flat-square" alt="Sürüm">
+  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=derleme" alt="Derleme Durumu">
+  <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="Lisans">
+  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square" alt="Sürüm">
   <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
 </p>
 
@@ -862,7 +862,7 @@ table ip vane_mangle {
 
 ### Windows
 
-1. [Releases](https://github.com/luluwux/Vane/releases) sayfasından en son `.msi` yükleyicisini indirin.
+1. [Releases](https://github.com/lulushuz/Vane/releases) sayfasından en son `.msi` yükleyicisini indirin.
 2. Yükleyiciyi Yönetici olarak çalıştırın.
 3. Vane'i Başlat Menüsünden başlatın.
 
@@ -870,7 +870,7 @@ table ip vane_mangle {
 
 ### Linux
 
-1. [Releases](https://github.com/luluwux/Vane/releases) sayfasından `.deb` (Debian/Ubuntu) veya `.AppImage` dosyasını indirin.
+1. [Releases](https://github.com/lulushuz/Vane/releases) sayfasından `.deb` (Debian/Ubuntu) veya `.AppImage` dosyasını indirin.
 2. `sudo dpkg -i vane_*.deb` veya `chmod +x Vane_*.AppImage && ./Vane_*.AppImage` ile kurun.
 3. Vane'i başlatın; motor başlatıldığında `pkexec` (PolicyKit) kök yükseltmesi isteyecektir.
 
@@ -891,7 +891,7 @@ table ip vane_mangle {
 
 ```bash
 # Depoyu klonla
-git clone https://github.com/luluwux/Vane.git
+git clone https://github.com/lulushuz/Vane.git
 cd Vane
 
 # Ön yüz bağımlılıklarını yükle
@@ -957,8 +957,8 @@ cargo clippy
 
 | Kanal | Bağlantı |
 |-------|----------|
-| 🐛 Hata Bildirimleri | [GitHub Issues](https://github.com/luluwux/Vane/issues) |
-| 💡 Özellik İstekleri | [GitHub Issues](https://github.com/luluwux/Vane/issues) |
+| 🐛 Hata Bildirimleri | [GitHub Issues](https://github.com/lulushuz/Vane/issues) |
+| 💡 Özellik İstekleri | [GitHub Issues](https://github.com/lulushuz/Vane/issues) |
 | 💬 Discord (Kişisel) | [luppux](https://discord.com/users/852103749228036136) |
 | 💬 Discord (Topluluk) | [discord.gg/luppux](https://discord.gg/luppux) |
 | 📧 Güvenlik Bildirimleri | alp@archey.com.tr |
