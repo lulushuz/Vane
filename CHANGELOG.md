@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.8] - 2026-07-13
+
+### Added
+- Added accessible custom select menus for **Bypass Pattern** and **DNS Transport Protocol** controls.
+- Added clear, localized EN/TR verification logs for Pattern, DNS transport, Smart DNS Cache, AdBlock, DNS provider, and local DNS Forwarder operations.
+- Added backend-confirmed status messages that distinguish settings applied to a running service from settings saved for the next start.
+
+### Changed
+- Pattern and DNS settings are now synchronized with the backend immediately before the DPI engine starts.
+- Common low-level engine and DNS messages are translated into clearer user-facing explanations while retaining their category and severity.
+- DoQ is now shown as unavailable instead of silently using the DoT resolver and reporting an incorrect transport protocol.
+
+### Fixed
+- Fixed **Whitelist mode** not reliably limiting DPI bypass to the configured domains.
+- Fixed **Blacklist mode** not reliably excluding configured domains from DPI bypass.
+- Fixed saved Pattern mode and domain lists being lost, overwritten, or applied too late on the next DPI start.
+- Fixed a race where starting DPI immediately after changing Pattern settings could launch Zapret with the previous mode.
+- Fixed the main and settings windows overwriting each other's Pattern, DNS Cache, AdBlock, protocol, and proxy values.
+- Fixed **Smart DNS Cache** appearing to turn itself back on after being disabled.
+- Fixed disabling Smart DNS Cache leaving previously cached DNS records in memory.
+- Fixed DNS and Pattern settings being reported as successful before persistence or runtime application was verified.
+- Fixed DNS Forwarder stop being reported as successful when the operating system DNS settings could not be restored.
+- Fixed invalid domains being accepted into Pattern lists.
+- Fixed technical backend log messages being difficult to understand and inconsistently localized between Turkish and English.
+
+---
+
 ## [2.0.0] - 2026-07-01
 
 ### 🚀 Major Release — Repo Hardening & Documentation Overhaul
