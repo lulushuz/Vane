@@ -1,0 +1,13 @@
+.root { position: relative; width: 100%; }
+.trigger, .option { width: 100%; border: 1px solid var(--color-border); color: var(--color-text-primary); font-family: inherit; text-align: left; cursor: pointer; }
+.trigger { min-height: 48px; padding: 9px 12px; border-radius: 9px; background: var(--color-bg-secondary); display: flex; align-items: center; justify-content: space-between; gap: 12px; transition: border-color .15s, background .15s; }
+.trigger:hover, .trigger.open { border-color: var(--color-toggle-active); background: rgba(92,124,250,.06); }
+.triggerText, .option > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.trigger strong, .option strong { font-size: .85rem; font-weight: 650; }
+.trigger small, .option small { color: var(--color-text-muted); font-size: .72rem; line-height: 1.3; }
+.chevron { flex-shrink: 0; transition: transform .15s; }
+.open .chevron { transform: rotate(180deg); }
+.menu { position: absolute; z-index: 1200; top: calc(100% + 6px); left: 0; right: 0; padding: 5px; border: 1px solid var(--color-border); border-radius: 10px; background: #18191d; box-shadow: 0 12px 32px rgba(0,0,0,.45); }
+.option { border: 0; border-radius: 7px; background: transparent; padding: 9px 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.option:hover:not(:disabled), .selected { background: rgba(92,124,250,.12); color: #fff; }
+.option:disabled { cursor: not-allowed; opacity: .42; }
