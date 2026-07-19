@@ -414,6 +414,7 @@ pub(crate) fn kill_switch_enabled() -> bool {
     KILL_SWITCH_ENABLED.load(Ordering::SeqCst)
 }
 
+#[cfg(test)]
 fn parse_bypass_config(content: &str) -> Result<BypassConfig, EngineError> {
     let file_json = serde_json::from_str::<serde_json::Value>(content).map_err(|error| {
         EngineError::ConfigParseError(format!("Settings JSON is invalid: {error}"))

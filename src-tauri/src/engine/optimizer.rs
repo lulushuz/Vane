@@ -288,12 +288,8 @@ impl Optimizer {
             }
         }
 
-        if success_count > 0 {
-            let avg_latency = total_latency / success_count;
-            let score = (success_count * 10000).saturating_sub(avg_latency);
-            Some(score)
-        } else {
-            None
-        }
+        let avg_latency = total_latency.checked_div(success_count)?;
+        let score = (success_count * 10000).saturating_sub(avg_latency);
+        Some(score)
     }
 }

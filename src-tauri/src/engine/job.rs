@@ -11,6 +11,12 @@ pub struct JobObjectGuard {
     handle: windows::Win32::Foundation::HANDLE,
 }
 
+// SAFETY: this guard has exclusive ownership of a process-wide Windows kernel
+// handle. Moving that ownership to another thread does not invalidate the
+// handle, and Drop closes it exactly once.
+#[cfg(target_os = "windows")]
+unsafe impl Send for JobObjectGuard {}
+
 #[cfg(target_os = "windows")]
 impl JobObjectGuard {
     // Creates a new anonymous Job Object with `KILL_ON_JOB_CLOSE` semantics.

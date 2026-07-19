@@ -236,9 +236,9 @@ pub async fn save_cached_presets_with_sig(
     let cache_path = dir.join("remote_presets_cache.json");
     let sig_path = dir.join("remote_presets_cache.json.minisig");
     crate::settings::atomic_replace_bytes(&sig_path, signature.as_bytes())
-        .map_err(|error| PresetError::General(error))?;
+        .map_err(PresetError::General)?;
     crate::settings::atomic_replace_bytes(&cache_path, raw_json.as_bytes())
-        .map_err(|error| PresetError::General(error))?;
+        .map_err(PresetError::General)?;
 
     tracing::debug!("Remote presets cache and signature successfully written.");
     Ok(())

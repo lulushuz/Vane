@@ -210,9 +210,7 @@ fn validate_split_positions(value: &str) -> Result<(), EngineError> {
             }
             continue;
         }
-        let marker_end = token
-            .find(|character| character == '+' || character == '-')
-            .unwrap_or(token.len());
+        let marker_end = token.find(['+', '-']).unwrap_or(token.len());
         let (marker, offset) = token.split_at(marker_end);
         if !MARKERS.contains(&marker) {
             return Err(EngineError::InvalidPreset(
