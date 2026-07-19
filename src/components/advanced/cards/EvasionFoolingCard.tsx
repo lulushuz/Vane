@@ -14,7 +14,8 @@ const FOOLING_FLAGS = [
   { value: 'md5sig', label: 'MD5Sig', desc: 'Sets MD5 signature option to fool simple DPI. (--dpi-desync-fooling=md5sig)' },
   { value: 'datanoack', label: 'DataNoAck', desc: 'Sends payload immediately without waiting for ACK. (--dpi-desync-fooling=datanoack)' },
   { value: 'hopbyhop', label: 'HopByHop', desc: 'IPv6: Add Hop-by-Hop options to bypass filter. (--dpi-desync-fooling=hopbyhop)' },
-  { value: 'destopt', label: 'DestOpt', desc: 'IPv6: Add Destination Options extension header. (--dpi-desync-fooling=destopt)' },
+  { value: 'hopbyhop2', label: 'HopByHop2', desc: 'IPv6: Use the second Hop-by-Hop fooling variant. (--dpi-desync-fooling=hopbyhop2)' },
+  { value: 'ts', label: 'Timestamp', desc: 'Apply TCP timestamp-based fooling. (--dpi-desync-fooling=ts)' },
 ];
 
 export function EvasionFoolingCard({ config: c, update }: Props) {

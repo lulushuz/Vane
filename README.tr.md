@@ -492,34 +492,19 @@ Vane'in Gelişmiş sekmesinde sunulan tüm zapret parametrelerinin tam referans�
 
 | Parametre | Değerler | Varsayılan | Açıklama |
 |-----------|---------|----------|----------|
-| `--dpi-desync` | `split`,`disorder`,`fake`,`multisplit`,`multidisorder`... | — | Birincil desync yöntemi(leri) |
-| `--dpi-desync2` | Yukarıdakiyle aynı | — | Kurulu bağlantılar için ikincil yöntem |
+| `--dpi-desync` | `fake`,`multisplit`,`multidisorder`,`fakedsplit`,`fakeddisorder`... | — | Birincil desync yöntemi(leri) |
 | `--dpi-desync-split-pos` | İşaretçi veya tamsayı listesi | `2` | Bölme konumu(ları) |
 | `--dpi-desync-split-http-req` | `none`,`method`,`host` | `none` | HTTP isteği özel bölme noktası |
-| `--dpi-desync-split-pos-http-req` | Tamsayı | — | HTTP bölmesi için bayt ofseti |
-| `--dpi-desync-split-tls` | `none`,`sni`,`snh` | `none` | TLS özel bölme noktası |
-| `--dpi-desync-split-pos-tls` | Tamsayı | — | TLS bölmesi için bayt ofseti |
-| `--dpi-desync-fooling` | `badsum`,`badseq`,`md5sig`,`ts`,`datanoack`,`hopbyhop`,`destopt` | — | Sahte paket yanıltma modu(ları) |
+| `--dpi-desync-split-tls` | `none`,`sni`,`sniext` | `none` | TLS özel bölme noktası |
+| `--dpi-desync-fooling` | `badsum`,`badseq`,`md5sig`,`ts`,`datanoack`,`hopbyhop`,`hopbyhop2` | — | Sahte paket yanıltma modu(ları) |
 | `--dpi-desync-autottl` | `[-]N:N-N` | — | TTL sınırlarını otomatik hesapla |
 | `--dpi-desync-ttl` | Tamsayı | — | Sahte paketler için sabit TTL |
-| `--dpi-desync-ttl-ext` | Tamsayı | — | Ek TTL ofseti |
 | `--dpi-desync-repeats` | Tamsayı | `1` | Gerçek paket başına sahte paket sayısı |
 | `--dpi-desync-any-protocol` | Bayrak | Kapalı | Tüm TCP bağlantılarına desync uygula |
 | `--dpi-desync-cutoff` | `d1`-`d9`, `s1`-`sN` | — | Yalnızca ilk N veri/SYN paketine desync uygula |
-| `--dpi-desync-fake-tls-sni` | alan adı | — | Sahte TLS ClientHello için özel SNI |
-| `--dpi-desync-fake-http` | metin veya dosya yolu | — | HTTP sahteleri için özel yük |
-| `--dpi-desync-fake-tls` | metin veya dosya yolu | — | TLS sahteleri için özel yük |
-| `--dpi-desync-fake-quic` | metin veya dosya yolu | — | QUIC sahteleri için özel yük |
-| `--dpi-desync-http` | Yukarıdakiyle aynı | — | HTTP bağlantıları için yöntem geçersiz kılma |
-| `--dpi-desync-https` | Yukarıdakiyle aynı | — | HTTPS/TLS bağlantıları için yöntem geçersiz kılma |
-| `--dpi-desync-quic` | Yukarıdakiyle aynı | — | QUIC/UDP bağlantıları için yöntem geçersiz kılma |
-| `--mss` | Tamsayı | — | TCP Maksimum Segment Boyutu geçersiz kılma |
-| `--tcp-window-size` | Tamsayı | — | Gönderilen paketlerde TCP pencere boyutu |
-| `--wssize` | `N:N` | — | Sunucuya bildirilen pencere ölçek faktörü |
+| `--wssize` | Tamsayı | — | Sunucuya bildirilen alıcı pencere boyutu |
 | `--wf-tcp` | port listesi | — | Ele geçirilecek TCP portları |
 | `--wf-udp` | port listesi | — | Ele geçirilecek UDP portları |
-| `--ipset` | dosya yolu | — | Hedef IP aralıkları dosyası |
-| `--bind-addr` | IP adresi | — | Belirli ağ arayüzüne bağla |
 | `--ipcache-lifetime` | Saniye | 7200 | IP önbelleği giriş süresi |
 | `--dup` | Tamsayı | — | Orijinal başına yinelenen paket sayısı |
 
@@ -711,35 +696,22 @@ Vane, ağ adaptörü değişikliklerini algılamak için `WM_DEVICECHANGE` (Wind
 
 | Ayar | Parametre | Değerler | Açıklama |
 |------|-----------|---------|----------|
-| Desync Yöntemi | `--dpi-desync` | `split`, `disorder`, `fake`, `multisplit`... | Birincil aşma yöntemi |
-| İkincil Yöntem | `--dpi-desync2` | Yukarıdakiyle aynı | İlk yöntemden sonra uygulanır |
+| Desync Yöntemi | `--dpi-desync` | `fake`, `multisplit`, `multidisorder`, `fakedsplit`... | Birincil aşma yöntemi |
 | Bölme Konumu | `--dpi-desync-split-pos` | İşaretçi veya tamsayı listesi | TCP yükünün nerede kesileceği |
 | HTTP Bölme Hedefi | `--dpi-desync-split-http-req` | `none`, `method`, `host` | HTTP'ye özgü bölme çıpası |
-| TLS Bölme Hedefi | `--dpi-desync-split-tls` | `none`, `sni`, `snh` | TLS'ye özgü bölme çıpası |
+| TLS Bölme Hedefi | `--dpi-desync-split-tls` | `none`, `sni`, `sniext` | TLS'ye özgü bölme çıpası |
 | Yanıltma Modu | `--dpi-desync-fooling` | `badsum`, `badseq`, `md5sig`, `ts`, `datanoack`... | Sahteyi sunucuya ulaşmaktan engelle |
 | Otomatik TTL | `--dpi-desync-autottl` | `[-]N:N-N` | TTL'yi dinamik olarak kalibre et |
 | Sabit TTL | `--dpi-desync-ttl` | Tamsayı | Sabit sahte TTL değeri |
-| Genişletilmiş TTL | `--dpi-desync-ttl-ext` | Tamsayı | TTL'ye eklenen ofset |
 | Sahte Tekrarlar | `--dpi-desync-repeats` | Tamsayı | Sahte paket sayısı |
 | Herhangi Protokol | `--dpi-desync-any-protocol` | Bayrak | Tüm TCP'ye uygula |
 | Kesim Noktası | `--dpi-desync-cutoff` | `d1`-`d9`, `s1`-`sN` | İlk N pakete desync uygula |
-
-### Sahte Yük
-
-| Ayar | Parametre | Açıklama |
-|------|-----------|----------|
-| Özel TLS SNI | `--dpi-desync-fake-tls-sni` | Sahte TLS ClientHello için alan adı |
-| Sahte HTTP Yükü | `--dpi-desync-fake-http` | HTTP sahteleri için metin veya dosya |
-| Sahte TLS Yükü | `--dpi-desync-fake-tls` | TLS sahteleri için metin veya dosya |
-| Sahte QUIC Yükü | `--dpi-desync-fake-quic` | QUIC sahteleri için metin veya dosya |
 
 ### Paket ve Trafik
 
 | Ayar | Parametre | Açıklama |
 |------|-----------|----------|
-| MSS Geçersiz Kılma | `--mss` | TCP Maksimum Segment Boyutu |
-| TCP Pencere Boyutu | `--tcp-window-size` | Gönderilen paketlerde pencere geçersiz kılma |
-| Sunucu Pencere Ölçeği | `--wssize` | Sunucuya bildirilen pencereyi kısıtla |
+| TCP Alıcı Penceresi | `--wssize` | Sunucuya bildirilen alıcı penceresini kısıtla |
 
 ### Protokol ve Portlar
 

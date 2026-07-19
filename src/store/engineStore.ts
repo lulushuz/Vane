@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
-import { load } from '@tauri-apps/plugin-store';
 import type { NetworkAdapter } from '../types/network';
 
 export type EngineStatus =
@@ -62,7 +61,7 @@ export interface DnsConfigStatus {
 */
 export interface AdvancedConfig {
   // DPI Desynchronization
-  desyncMethod: string;       // 'split' | 'split2' | 'disorder' | 'fake' | 'oob' | 'custom' | 'none'
+  desyncMethod: string;       // bundled winws desync mode or 'custom' / 'none'
   customDesyncMethod: string; // desyncMethod === 'custom' ise bu kullanılır
   splitPosition: number;      // --dpi-desync-split-pos
   desyncRepeats: number;      // --dpi-desync-repeats
@@ -85,7 +84,7 @@ export interface AdvancedConfig {
   desyncCutoff: string;       // --dpi-desync-cutoff
   splitHttpReq: string;       // --dpi-desync-split-http-req (none, method, host)
   splitPosHttpReq: number;    // --dpi-desync-split-pos-http-req
-  splitTls: string;           // --dpi-desync-split-tls (none, sni, snh)
+  splitTls: string;           // --dpi-desync-split-tls (none, sni, sniext)
   splitPosTls: number;        // --dpi-desync-split-pos-tls
   fakeTtlExt: number;         // --dpi-desync-ttl-ext
   fakeTlsSni: string;         // --dpi-desync-fake-tls-sni
@@ -93,7 +92,7 @@ export interface AdvancedConfig {
   fakeTlsPayload: string;     // --dpi-desync-fake-tls (string/filepath)
   fakeQuicPayload: string;    // --dpi-desync-fake-quic (string/filepath)
   desync2: string;            // --dpi-desync2
-  tcpWindowSize: number;      // --tcp-window-size
+  tcpWindowSize: number;      // --wssize
   ipsetPath: string;          // --ipset
   tpwsMode: boolean;          // Runs tpws instead of nfqws/winws
   bindInterface: string;      // --bind-addr
@@ -135,14 +134,12 @@ export const DEFAULT_ADVANCED_CONFIG: AdvancedConfig = {
   invalidArgs: [],
 };
 
-/* 
-   Tauri Store Adapter
-   Zustand'ın persist middleware'i için tauri-plugin-store'u depolama motoru
-   olarak bağlar. Böylece veriler AppData/com.vane.dpi/settings.json dosyasına
-   yazılır — PC yeniden başlasa bile korunur. 
+/*
+   Rust-owned settings adapter. Zustand remains the UI state model, while Rust
+   serializes multi-window updates and atomically replaces settings.json with a
+   last-known-good backup so a crash cannot silently reset user preferences.
 */
 
-const STORE_FILE = 'settings.json';
 let storeWriteQueue: Promise<void> = Promise.resolve();
 
 const enqueueStoreWrite = (operation: () => Promise<void>): Promise<void> => {
@@ -154,33 +151,17 @@ const enqueueStoreWrite = (operation: () => Promise<void>): Promise<void> => {
 function createTauriStorage(): StateStorage {
   return {
     getItem: async (key: string): Promise<string | null> => {
-      try {
-        await storeWriteQueue;
-        const store = await load(STORE_FILE, { autoSave: false } as any);
-        const value = await store.get<string>(key);
-        return value ?? null;
-      } catch {
-        return null;
-      }
+      await storeWriteQueue;
+      return await invoke<string | null>('settings_get', { key });
     },
     setItem: async (key: string, value: string): Promise<void> => {
       return enqueueStoreWrite(async () => {
-        try {
-          const store = await load(STORE_FILE, { autoSave: false } as any);
-          await store.set(key, value);
-          await store.save();
-        } catch (e) {
-          console.error('Tauri Store yazma hatası:', e);
-        }
+        await invoke('settings_set', { key, value });
       });
     },
     removeItem: async (key: string): Promise<void> => {
       return enqueueStoreWrite(async () => {
-        try {
-          const store = await load(STORE_FILE, { autoSave: false } as any);
-          await store.delete(key);
-          await store.save();
-        } catch { /* ignore */ }
+        await invoke('settings_remove', { key });
       });
     },
   };
@@ -206,6 +187,7 @@ interface EngineStore {
   proxySocks5: string;
   killSwitch: boolean;
   watchdog: boolean;
+  dnsForwarderEnabled: boolean;
   language: 'tr' | 'en';
 
   // Geçici (session) alanlar
@@ -236,9 +218,10 @@ interface EngineStore {
   setDnsProtocol: (protocol: 'doh' | 'dot' | 'doq') => void;
   setDnsAdBlock: (enabled: boolean) => void;
   setDnsCache: (enabled: boolean) => void;
-  setProxySocks5: (addr: string) => void;
+  setProxySocks5: (addr: string) => Promise<boolean>;
   setKillSwitch: (enabled: boolean) => void;
   setWatchdog: (enabled: boolean) => void;
+  setDnsForwarderEnabled: (enabled: boolean) => void;
   setLanguage: (lang: 'tr' | 'en') => void;
   syncBypassToBackend: () => void;
   syncDnsToBackend: () => void;
@@ -254,6 +237,7 @@ interface EngineStore {
   setDnsCustom: (primary: string, secondary: string) => void;
   setDnsSynced: (synced: boolean) => void;
   hasHydrated: boolean;
+  persistenceError: string | null;
   setHasHydrated: (val: boolean) => void;
 }
 
@@ -262,6 +246,19 @@ let bypassSyncTimeout: any = null;
 let dnsSyncTimeout: any = null;
 let bypassSyncRevision = 0;
 let dnsSyncRevision = 0;
+let pendingDnsRollback: Partial<Pick<
+  EngineStore,
+  'dnsProtocol' | 'dnsAdBlock' | 'dnsCache' | 'proxySocks5' | 'healthCheckTargets'
+>> = {};
+
+const rememberDnsRollback = (
+  key: keyof typeof pendingDnsRollback,
+  value: EngineStore[keyof typeof pendingDnsRollback],
+) => {
+  if (!(key in pendingDnsRollback)) {
+    Object.assign(pendingDnsRollback, { [key]: value });
+  }
+};
 
 export const useEngineStore = create<EngineStore>()(
   persist(
@@ -282,6 +279,7 @@ export const useEngineStore = create<EngineStore>()(
       proxySocks5: '',
       killSwitch: false,
       watchdog: true,
+      dnsForwarderEnabled: false,
       language: 'en',
 
       // Session değerleri (persist edilmez)
@@ -294,6 +292,7 @@ export const useEngineStore = create<EngineStore>()(
       advancedDirty: false,
       healthCheckTargets: ['discord.com'],
       hasHydrated: false,
+      persistenceError: null,
 
       setStatus: (status) => set({ status }),
       setActivePreset: async (presetId) => {
@@ -319,7 +318,11 @@ export const useEngineStore = create<EngineStore>()(
       resetAdvancedConfig: () => set({ advancedConfig: DEFAULT_ADVANCED_CONFIG }),
       setAdvancedDirty: (advancedDirty) => set({ advancedDirty }),
       setActiveTab: (tab) => set({ activeTab: tab }),
-      setHealthCheckTargets: (targets) => set({ healthCheckTargets: targets }),
+      setHealthCheckTargets: (healthCheckTargets) => {
+        rememberDnsRollback('healthCheckTargets', get().healthCheckTargets);
+        set({ healthCheckTargets });
+        get().syncDnsToBackend();
+      },
       clearLogs: () => set({ logs: [] }),
       setBypassMode: (bypassMode) => {
         set({ bypassMode });
@@ -338,27 +341,152 @@ export const useEngineStore = create<EngineStore>()(
         get().syncBypassToBackend();
       },
       setDnsProtocol: (dnsProtocol) => {
+        if (dnsProtocol === 'dot' && get().proxySocks5) {
+          get().appendLog(
+            get().language === 'tr'
+              ? '[ERROR] SOCKS5 proxy etkinken DoT seçilemez; DNS sızıntısını önlemek için değişiklik uygulanmadı.'
+              : '[ERROR] DoT cannot be selected while SOCKS5 is configured; the change was rejected to prevent a DNS leak.',
+            'error',
+          );
+          return;
+        }
+        rememberDnsRollback('dnsProtocol', get().dnsProtocol);
         set({ dnsProtocol });
         get().syncDnsToBackend();
       },
       setDnsAdBlock: (dnsAdBlock) => {
+        rememberDnsRollback('dnsAdBlock', get().dnsAdBlock);
         set({ dnsAdBlock });
         get().syncDnsToBackend();
       },
       setDnsCache: (dnsCache) => {
+        rememberDnsRollback('dnsCache', get().dnsCache);
         set({ dnsCache });
         get().syncDnsToBackend();
       },
       setProxySocks5: (proxySocks5) => {
-        set({ proxySocks5 });
-        get().syncBypassToBackend();
-        get().syncDnsToBackend();
+        if (proxySocks5 && get().dnsProtocol === 'dot') {
+          get().appendLog(
+            get().language === 'tr'
+              ? '[ERROR] DoT etkinken SOCKS5 proxy kaydedilemez; önce DoH seçin.'
+              : '[ERROR] SOCKS5 cannot be saved while DoT is active; select DoH first.',
+            'error',
+          );
+          return Promise.resolve(false);
+        }
+        const previous = get().proxySocks5;
+        const state = get();
+        const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
+        const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
+        const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
+        return (async () => {
+          try {
+            await invoke('sync_dns_settings', {
+              protocol: state.dnsProtocol === 'doq' ? 'doh' : state.dnsProtocol,
+              adblock: state.dnsAdBlock,
+              cache: state.dnsCache,
+              socks5Proxy: proxySocks5,
+              healthCheckTargets: state.healthCheckTargets,
+              emitEvent: false,
+            });
+            await invoke('sync_bypass_config', {
+              mode: state.bypassMode,
+              list: activeDomains.join('\n'),
+              proxy: proxySocks5,
+              killSwitch: state.killSwitch,
+              whitelistDomains: wl,
+              blacklistDomains: bl,
+              activePresetId: state.activePresetId || 'default',
+            });
+            set({ proxySocks5 });
+            get().appendLog(
+              get().language === 'tr'
+                ? `[DNS] SOCKS5H proxy iki çalışma katmanında doğrulandı: ${proxySocks5 || 'doğrudan bağlantı'}.`
+                : `[DNS] SOCKS5H proxy was verified in both runtime layers: ${proxySocks5 || 'direct connection'}.`,
+              'info',
+            );
+            return true;
+          } catch (error) {
+            try {
+              await invoke('sync_dns_settings', {
+                protocol: state.dnsProtocol === 'doq' ? 'doh' : state.dnsProtocol,
+                adblock: state.dnsAdBlock,
+                cache: state.dnsCache,
+                socks5Proxy: previous,
+                healthCheckTargets: state.healthCheckTargets,
+                emitEvent: false,
+              });
+              await invoke('sync_bypass_config', {
+                mode: state.bypassMode,
+                list: activeDomains.join('\n'),
+                proxy: previous,
+                killSwitch: state.killSwitch,
+                whitelistDomains: wl,
+                blacklistDomains: bl,
+                activePresetId: state.activePresetId || 'default',
+              });
+            } catch { /* backend logs contain rollback details */ }
+            get().appendLog(
+              get().language === 'tr'
+                ? `[ERROR] SOCKS5 proxy doğrulanamadı; önceki ayar korundu: ${error}`
+                : `[ERROR] SOCKS5 proxy could not be verified; the previous setting was preserved: ${error}`,
+              'error',
+            );
+            return false;
+          }
+        })();
       },
       setKillSwitch: (killSwitch) => {
-        set({ killSwitch });
-        get().syncBypassToBackend();
+        const state = get();
+        const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
+        const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
+        const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
+        void invoke<BypassConfigStatus>('sync_bypass_config', {
+          mode: state.bypassMode,
+          list: activeDomains.join('\n'),
+          proxy: state.proxySocks5,
+          killSwitch,
+          whitelistDomains: wl,
+          blacklistDomains: bl,
+          activePresetId: state.activePresetId || 'default',
+        }).then((verified) => {
+          set({ killSwitch });
+          get().appendLog(
+            get().language === 'tr'
+              ? `[SECURITY] DNS Kill Switch ${killSwitch ? 'açık' : 'kapalı'} olarak doğrulandı; motor ${verified.engineRunning ? 'çalışıyor' : 'kapalı'}.`
+              : `[SECURITY] DNS Kill Switch was verified ${killSwitch ? 'on' : 'off'}; engine is ${verified.engineRunning ? 'running' : 'stopped'}.`,
+            'info',
+          );
+        }).catch((error) => {
+          get().appendLog(
+            get().language === 'tr'
+              ? `[ERROR] DNS Kill Switch değiştirilemedi; önceki ayar korundu: ${error}`
+              : `[ERROR] DNS Kill Switch could not be changed; the previous setting was preserved: ${error}`,
+            'error',
+          );
+        });
       },
-      setWatchdog: (watchdog) => set({ watchdog }),
+      setWatchdog: (watchdog) => {
+        invoke<{ active: boolean; watchdogEnabled: boolean }>('set_dns_watchdog', { enabled: watchdog })
+          .then((status) => {
+            set({ watchdog: status.active ? status.watchdogEnabled : watchdog });
+            const tr = get().language === 'tr';
+            get().appendLog(status.active
+              ? (tr
+                ? `[DNS] Bağlantı gözlemcisi çalışma sırasında doğrulandı: ${status.watchdogEnabled ? 'açık' : 'kapalı'}.`
+                : `[DNS] Connection watchdog runtime state verified: ${status.watchdogEnabled ? 'on' : 'off'}.`)
+              : (tr
+                ? '[DNS] Bağlantı gözlemcisi ayarı kaydedildi; DNS yönlendiricisi başladığında uygulanacak.'
+                : '[DNS] Connection watchdog setting saved; it will apply when the DNS forwarder starts.'), 'info');
+          })
+          .catch((error) => get().appendLog(
+            get().language === 'tr'
+              ? `[ERROR] Bağlantı gözlemcisi değiştirilemedi: ${error}`
+              : `[ERROR] Connection watchdog could not be changed: ${error}`,
+            'error',
+          ));
+      },
+      setDnsForwarderEnabled: (dnsForwarderEnabled) => set({ dnsForwarderEnabled }),
       setHasHydrated: (hasHydrated) => set({ hasHydrated }),
       setLanguage: async (language) => {
         set({ language });
@@ -383,6 +511,7 @@ export const useEngineStore = create<EngineStore>()(
             killSwitch: state.killSwitch,
             whitelistDomains: wl,
             blacklistDomains: bl,
+            activePresetId: state.activePresetId,
           }).then((verified: any) => {
             if (revision !== bypassSyncRevision) return;
             const verifiedActiveDomains = verified.mode === 'whitelist'
@@ -427,8 +556,11 @@ export const useEngineStore = create<EngineStore>()(
             adblock: state.dnsAdBlock,
             cache: state.dnsCache,
             socks5Proxy: state.proxySocks5,
+            healthCheckTargets: state.healthCheckTargets,
+            emitEvent: true,
           }).then((verified) => {
             if (revision !== dnsSyncRevision) return;
+            pendingDnsRollback = {};
             const tr = get().language === 'tr';
             const activeText = verified.forwarderActive
               ? (tr ? 'Çalışan yönlendirici yeni ayarı kullanıyor.' : 'The running forwarder is using the new setting.')
@@ -440,8 +572,17 @@ export const useEngineStore = create<EngineStore>()(
               'info',
             );
           }).catch(err => {
+            if (revision !== dnsSyncRevision) return;
+            const rollback = pendingDnsRollback;
+            pendingDnsRollback = {};
+            if (Object.keys(rollback).length > 0) set(rollback);
             const tr = get().language === 'tr';
-            get().appendLog(tr ? `[ERROR] DNS ayarı doğrulanamadı: ${err}` : `[ERROR] DNS setting could not be verified: ${err}`, 'error');
+            get().appendLog(
+              tr
+                ? `[ERROR] DNS ayarı doğrulanamadı; arayüz son doğrulanmış değere geri döndü: ${err}`
+                : `[ERROR] DNS setting could not be verified; the UI reverted to the last verified value: ${err}`,
+              'error',
+            );
           });
         }, 100);
       },
@@ -517,13 +658,42 @@ export const useEngineStore = create<EngineStore>()(
             killSwitch: current.killSwitch,
             whitelistDomains: wl,
             blacklistDomains: bl,
+            activePresetId: current.activePresetId,
           });
           await invoke<DnsConfigStatus>('sync_dns_settings', {
             protocol: current.dnsProtocol === 'doq' ? 'doh' : current.dnsProtocol,
             adblock: current.dnsAdBlock,
             cache: current.dnsCache,
             socks5Proxy: current.proxySocks5,
+            healthCheckTargets: current.healthCheckTargets,
+            emitEvent: true,
           });
+          pendingDnsRollback = {};
+          if (current.killSwitch || current.dnsForwarderEnabled) {
+            const forwarder = await invoke<{ active: boolean }>('get_doh_forwarder_status');
+            if (!forwarder.active) {
+              await invoke('start_doh_forwarder', { watchdog: current.watchdog });
+              if (!current.dnsForwarderEnabled) {
+                set({ dnsForwarderEnabled: true });
+                get().appendLog(
+                  current.language === 'tr'
+                    ? '[SECURITY] DNS Kill Switch için şifreli yerel DNS yönlendiricisi otomatik başlatıldı.'
+                    : '[SECURITY] The encrypted local DNS forwarder was started automatically for DNS Kill Switch.',
+                  'info',
+                );
+              }
+            }
+          } else if (current.selectedDnsId) {
+            const provider = current.dnsProviders.find((item) => item.id === current.selectedDnsId);
+            const primary = current.selectedDnsId === 'custom' ? current.dnsCustomPrimary : provider?.primary;
+            const secondary = current.selectedDnsId === 'custom' ? current.dnsCustomSecondary : provider?.secondary;
+            if (!primary) throw new Error('Saved DNS provider is unavailable or incomplete.');
+            const applied = await invoke<{ success: boolean; error?: string }>('apply_dns_settings', {
+              primary,
+              secondary: secondary || primary,
+            });
+            if (!applied.success) throw new Error(applied.error || 'Saved DNS settings could not be restored.');
+          }
           const result = await invoke<EngineStatus>('start_engine_with_dns_guard', { presetId: id });
           set({ status: result });
 
@@ -533,6 +703,9 @@ export const useEngineStore = create<EngineStore>()(
             get().appendLog(get().language === 'tr' ? `[ERROR] DPI motoru hatası: ${result.message}` : `[ERROR] DPI engine error: ${result.message}`, 'error');
           }
         } catch (err: any) {
+          const rollback = pendingDnsRollback;
+          pendingDnsRollback = {};
+          if (Object.keys(rollback).length > 0) set(rollback);
           const errorCode = typeof err === 'object' && err !== null && 'code' in err ? err.code : 'UNKNOWN';
           const errorMsg = typeof err === 'object' && err !== null && 'message' in err ? err.message : String(err);
           set({ status: { variant: 'error', message: errorMsg, code: errorCode } });
@@ -552,16 +725,29 @@ export const useEngineStore = create<EngineStore>()(
 
       refreshDnsStatus: async () => {
         try {
-          const [provs, adaps] = await Promise.all([
+          const [provs, adaps, forwarder] = await Promise.all([
             invoke<DnsProvider[]>('list_dns_providers'),
             invoke<NetworkAdapter[]>('get_network_adapters'),
+            invoke<{ active: boolean }>('get_doh_forwarder_status'),
           ]);
 
           set({ dnsProviders: provs });
+          if (forwarder.active) {
+            set({ dnsSynced: true });
+            return;
+          }
 
           // Statik DNS ayarlı adaptörü tercih et, yoksa ilkini al
           const staticAdapter = adaps.find((a) => !a.isDhcp);
           const activeDns = staticAdapter?.currentPrimaryDns ?? adaps[0]?.currentPrimaryDns;
+          const desiredId = get().selectedDnsId;
+          if (desiredId) {
+            const desiredPrimary = desiredId === 'custom'
+              ? get().dnsCustomPrimary
+              : provs.find((provider) => provider.id === desiredId)?.primary;
+            set({ dnsSynced: Boolean(activeDns && desiredPrimary && activeDns === desiredPrimary) });
+            return;
+          }
 
           if (activeDns) {
             const match = provs.find((p) => p.primary === activeDns);
@@ -585,9 +771,34 @@ export const useEngineStore = create<EngineStore>()(
       },
     }),
     {
-      name: 'vane-settings',           // Tauri Store'daki anahtar adı
-      storage: createJSONStorage(createTauriStorage), // Depolama motoru
-      onRehydrateStorage: () => (state) => {
+      name: 'vane-settings',           // Rust settings repository key
+      storage: createJSONStorage(createTauriStorage), // Atomic Rust persistence adapter
+      version: 1,
+      migrate: (persistedState: unknown) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          throw new Error('Persisted settings schema is not an object.');
+        }
+        const state = persistedState as Partial<EngineStore>;
+        const normalizeDomains = (value: unknown): string[] => Array.isArray(value)
+          ? value.filter((item): item is string => typeof item === 'string')
+          : typeof value === 'string'
+            ? value.split('\n').map((item) => item.trim()).filter(Boolean)
+            : [];
+        return {
+          ...state,
+          whitelistDomains: normalizeDomains(state.whitelistDomains),
+          blacklistDomains: normalizeDomains(state.blacklistDomains),
+          dnsForwarderEnabled: state.dnsForwarderEnabled === true,
+        } as EngineStore;
+      },
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          useEngineStore.setState({
+            hasHydrated: true,
+            persistenceError: String(error),
+          });
+          return;
+        }
         if (state) {
           let dirty = false;
           let wl = state.whitelistDomains;
@@ -637,6 +848,7 @@ export const useEngineStore = create<EngineStore>()(
         proxySocks5: state.proxySocks5,
         killSwitch: state.killSwitch,
         watchdog: state.watchdog,
+        dnsForwarderEnabled: state.dnsForwarderEnabled,
         language: state.language,
       }),
     }

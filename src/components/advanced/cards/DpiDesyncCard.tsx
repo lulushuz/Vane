@@ -12,11 +12,12 @@ interface Props {
 
 const DESYNC_OPTIONS = [
   { value: 'none', label: 'None / Yok' },
-  { value: 'split', label: 'Split' },
-  { value: 'split2', label: 'Split2' },
-  { value: 'disorder', label: 'Disorder' },
   { value: 'fake', label: 'Fake' },
-  { value: 'oob', label: 'OOB' },
+  { value: 'multisplit', label: 'MultiSplit' },
+  { value: 'multidisorder', label: 'MultiDisorder' },
+  { value: 'fakedsplit', label: 'FakedSplit' },
+  { value: 'fakeddisorder', label: 'FakedDisorder' },
+  { value: 'hostfakesplit', label: 'HostFakeSplit' },
   { value: 'syndata', label: 'Syndata' },
 ];
 
@@ -41,11 +42,13 @@ export function DpiDesyncCard({ config: c, update }: Props) {
           <div className={styles.flexCol}>
             <select className={styles.selectBox} value={c.desyncMethod} onChange={(e) => update('desyncMethod', e.target.value)}>
               <option value="none">None</option>
-              <option value="split">Split</option>
-              <option value="split2">Split2</option>
-              <option value="disorder">Disorder</option>
               <option value="fake">Fake</option>
-              <option value="oob">OOB</option>
+              <option value="multisplit">MultiSplit</option>
+              <option value="multidisorder">MultiDisorder</option>
+              <option value="fakedsplit">FakedSplit</option>
+              <option value="fakeddisorder">FakedDisorder</option>
+              <option value="hostfakesplit">HostFakeSplit</option>
+              <option value="syndata">Syndata</option>
               <option value="custom">Custom</option>
             </select>
             {c.desyncMethod === 'custom' && (
@@ -75,6 +78,7 @@ export function DpiDesyncCard({ config: c, update }: Props) {
             value={c.desyncCutoff} 
             onChange={(e) => update('desyncCutoff', e.target.value)}
             placeholder="e.g. d3"
+            pattern="[nds][0-9]+"
           />
         </div>
 
@@ -82,9 +86,9 @@ export function DpiDesyncCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'HTTP Özel Yöntemi' : 'HTTP Specific Strategy'}</label>
-            <span>{isTr ? 'HTTP bağlantılarına özel manipülasyon taktiği. (--dpi-desync-http)' : 'Desync tactic applied specifically to HTTP connections. (--dpi-desync-http)'}</span>
+            <span>{isTr ? 'Paketle gelen winws bu bayrağı desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support this flag.'}</span>
           </div>
-          <select className={styles.selectBox} value={c.desyncHttp} onChange={(e) => update('desyncHttp', e.target.value)}>
+          <select disabled className={styles.selectBox} value={c.desyncHttp} onChange={(e) => update('desyncHttp', e.target.value)}>
             {DESYNC_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
           </select>
         </div>
@@ -93,9 +97,9 @@ export function DpiDesyncCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'HTTPS (TLS) Özel Yöntemi' : 'HTTPS (TLS) Specific Strategy'}</label>
-            <span>{isTr ? 'HTTPS/TLS ClientHello için özel manipülasyon taktiği. (--dpi-desync-https)' : 'Desync tactic applied to HTTPS/TLS connections. (--dpi-desync-https)'}</span>
+            <span>{isTr ? 'Paketle gelen winws bu bayrağı desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support this flag.'}</span>
           </div>
-          <select className={styles.selectBox} value={c.desyncHttps} onChange={(e) => update('desyncHttps', e.target.value)}>
+          <select disabled className={styles.selectBox} value={c.desyncHttps} onChange={(e) => update('desyncHttps', e.target.value)}>
             {DESYNC_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
           </select>
         </div>
@@ -104,9 +108,9 @@ export function DpiDesyncCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'QUIC Özel Yöntemi' : 'QUIC Specific Strategy'}</label>
-            <span>{isTr ? 'QUIC/UDP bağlantılarına özel manipülasyon taktiği. (--dpi-desync-quic)' : 'Desync tactic applied specifically to QUIC packets. (--dpi-desync-quic)'}</span>
+            <span>{isTr ? 'Paketle gelen winws bu bayrağı desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support this flag.'}</span>
           </div>
-          <select className={styles.selectBox} value={c.desyncQuic} onChange={(e) => update('desyncQuic', e.target.value)}>
+          <select disabled className={styles.selectBox} value={c.desyncQuic} onChange={(e) => update('desyncQuic', e.target.value)}>
             <option value="none">None / Yok</option>
             <option value="split">Split</option>
             <option value="disorder">Disorder</option>
@@ -118,9 +122,9 @@ export function DpiDesyncCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'İkinci Aşama Desync' : 'Second Stage Desync'}</label>
-            <span>{isTr ? 'İlk aşama başarısız olduğunda devreye girecek yedek taktik. (--dpi-desync2)' : 'Backup strategy if the first desync fails to fool DPI. (--dpi-desync2)'}</span>
+            <span>{isTr ? 'Paketle gelen winws bu bayrağı desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support this flag.'}</span>
           </div>
-          <select className={styles.selectBox} value={c.desync2} onChange={(e) => update('desync2', e.target.value)}>
+          <select disabled className={styles.selectBox} value={c.desync2} onChange={(e) => update('desync2', e.target.value)}>
             <option value="none">None / Yok</option>
             <option value="split">Split</option>
             <option value="split2">Split2</option>
@@ -157,21 +161,21 @@ export function DpiDesyncCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'HTTP Bölme Konumu' : 'HTTP Split Position'}</label>
-            <span>{isTr ? 'HTTP isteklerinin bölüneceği byte konumu. (--dpi-desync-split-pos-http-req)' : 'Byte position to split HTTP requests. (--dpi-desync-split-pos-http-req)'}</span>
+            <span>{isTr ? 'Bu ayrı konum bayrağı paketle gelen winws tarafından desteklenmiyor.' : 'This separate position flag is not supported by the bundled winws.'}</span>
           </div>
-          <NumberInput value={c.splitPosHttpReq} min={0} max={1500} onChange={(v) => update('splitPosHttpReq', v)} />
+          <NumberInput disabled value={c.splitPosHttpReq} min={0} max={1500} onChange={(v) => update('splitPosHttpReq', v)} />
         </div>
 
         {/* TLS Split Type */}
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'TLS Bölme Türü' : 'TLS Split Type'}</label>
-            <span>{isTr ? 'HTTPS/TLS bölme yöntemi (sni / snh). (--dpi-desync-split-tls)' : 'Select TLS ClientHello split tactic (sni / snh). (--dpi-desync-split-tls)'}</span>
+            <span>{isTr ? 'HTTPS/TLS bölme yöntemi (sni / sniext). (--dpi-desync-split-tls)' : 'Select TLS ClientHello split tactic (sni / sniext). (--dpi-desync-split-tls)'}</span>
           </div>
           <select className={styles.selectBox} value={c.splitTls} onChange={(e) => update('splitTls', e.target.value)}>
             <option value="none">None / Yok</option>
             <option value="sni">SNI</option>
-            <option value="snh">SNH (Server Name Hint)</option>
+            <option value="sniext">SNI Extension</option>
           </select>
         </div>
 
@@ -179,9 +183,9 @@ export function DpiDesyncCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'TLS Bölme Konumu' : 'TLS Split Position'}</label>
-            <span>{isTr ? 'TLS ClientHello isteklerinin bölüneceği byte konumu. (--dpi-desync-split-pos-tls)' : 'Byte position to split TLS ClientHello packets. (--dpi-desync-split-pos-tls)'}</span>
+            <span>{isTr ? 'Bu ayrı konum bayrağı paketle gelen winws tarafından desteklenmiyor.' : 'This separate position flag is not supported by the bundled winws.'}</span>
           </div>
-          <NumberInput value={c.splitPosTls} min={0} max={1500} onChange={(v) => update('splitPosTls', v)} />
+          <NumberInput disabled value={c.splitPosTls} min={0} max={1500} onChange={(v) => update('splitPosTls', v)} />
         </div>
       </div>
     </div>

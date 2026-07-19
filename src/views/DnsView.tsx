@@ -99,6 +99,7 @@ export function DnsView() {
     setDnsAdBlock,
     setDnsCache,
     watchdog,
+    setDnsForwarderEnabled,
     appendLog,
     language,
   } = useEngineStore();
@@ -107,6 +108,14 @@ export function DnsView() {
 
   const [forwarder, setForwarder] = useState<ForwarderStatus | null>(null);
   const [isForwarderLoading, setIsForwarderLoading] = useState(false);
+  const [customPrimaryDraft, setCustomPrimaryDraft] = useState(customPrimary);
+  const [customSecondaryDraft, setCustomSecondaryDraft] = useState(customSecondary);
+  const [customEditorOpen, setCustomEditorOpen] = useState(selectedId === 'custom');
+
+  useEffect(() => {
+    setCustomPrimaryDraft(customPrimary);
+    setCustomSecondaryDraft(customSecondary);
+  }, [customPrimary, customSecondary]);
 
   // Sync with the system once on mount.
   const syncWithSystem = useCallback(async () => {
@@ -131,6 +140,7 @@ export function DnsView() {
     try {
       if (forwarder?.active) {
         await invoke('stop_doh_forwarder');
+        setDnsForwarderEnabled(false);
         const verified = await invoke<ForwarderStatus>('get_doh_forwarder_status');
         setForwarder(verified);
         appendLog(language === 'tr'
@@ -138,6 +148,7 @@ export function DnsView() {
           : '[DNS] Verified that the DNS forwarder stopped and the system DNS setting was restored.', 'info');
       } else {
         const st = await invoke<ForwarderStatus>('start_doh_forwarder', { watchdog });
+        setDnsForwarderEnabled(true);
         setForwarder(st);
         appendLog(language === 'tr'
           ? `[DNS] DNS yönlendiricisi doğrulandı: ${st.protocol.toUpperCase()}, önbellek ${st.cache ? 'açık' : 'kapalı'}, reklam filtresi ${st.adblock ? 'açık' : 'kapalı'}, bağlantı gözlemcisi ${st.watchdogEnabled ? 'çalışıyor' : 'kapalı'}.`
@@ -151,13 +162,13 @@ export function DnsView() {
   };
 
   // Apply the selected DNS to the backend.
-  const saveToBackend = async (id: string, primary?: string, secondary?: string) => {
+  const saveToBackend = async (id: string, primary?: string, secondary?: string): Promise<boolean> => {
     try {
       const targetProvider = providers.find(p => p.id === id);
-      const p = primary ?? targetProvider?.primary;
-      const s = secondary ?? targetProvider?.secondary ?? p;
+      const p = (primary ?? targetProvider?.primary)?.trim();
+      const s = secondary?.trim() || targetProvider?.secondary || p;
 
-      if (!p) return;
+      if (!p) return false;
 
       const res = await invoke<ApplyDnsResult>('apply_dns_settings', {
         primary: p,
@@ -170,23 +181,44 @@ export function DnsView() {
         setDnsSynced(false);
         await syncWithSystem();
         appendLog(language === 'tr' ? `[ERROR] Sistem DNS ayarı uygulanamadı: ${res.error}` : `[ERROR] System DNS setting could not be applied: ${res.error}`, 'error');
+        return false;
       } else {
+        if (id === 'custom') setDnsCustom(p, s ?? p);
+        setSelectedDnsId(id);
         appendLog(language === 'tr'
           ? `[DNS] Sistem DNS ayarı başarıyla uygulandı ve işletim sistemi tarafından kabul edildi: ${p}${s ? ` / ${s}` : ''}.`
           : `[DNS] System DNS setting was applied and accepted by the operating system: ${p}${s ? ` / ${s}` : ''}.`, 'info');
+        return true;
       }
     } catch (err) {
       console.error('Invoke error:', err);
       appendLog(language === 'tr' ? `[ERROR] Sistem DNS ayarı doğrulanamadı: ${err}` : `[ERROR] System DNS setting could not be verified: ${err}`, 'error');
+      return false;
     }
   };
 
-  const handleSelect = (id: string) => {
-    if (id === selectedId) return;
-    setSelectedDnsId(id);
-    if (id !== 'custom') {
-      saveToBackend(id);
+  const handleSelect = async (id: string) => {
+    if (id === selectedId && id !== 'custom') return;
+    if (forwarder?.active) {
+      try {
+        await invoke('stop_doh_forwarder');
+        setDnsForwarderEnabled(false);
+        setForwarder(await invoke<ForwarderStatus>('get_doh_forwarder_status'));
+        appendLog(language === 'tr'
+          ? '[DNS] Sistem DNS sağlayıcısı değiştirilmeden önce yerel yönlendirici durduruldu ve önceki DNS geri yüklendi.'
+          : '[DNS] The local forwarder was stopped and the previous DNS restored before changing the system DNS provider.', 'info');
+      } catch (error) {
+        appendLog(language === 'tr'
+          ? `[ERROR] DNS sağlayıcısı değiştirilmedi; yönlendirici güvenli biçimde durdurulamadı: ${error}`
+          : `[ERROR] DNS provider was not changed because the forwarder could not be stopped safely: ${error}`, 'error');
+        return;
+      }
     }
+    if (id === 'custom') {
+      setCustomEditorOpen(true);
+      return;
+    }
+    if (await saveToBackend(id)) setCustomEditorOpen(false);
   };
 
   return (
@@ -300,7 +332,7 @@ export function DnsView() {
         ))}
 
         <button
-          className={`${styles.card} ${selectedId === 'custom' ? styles.selected : ''}`}
+          className={`${styles.card} ${selectedId === 'custom' || customEditorOpen ? styles.selected : ''}`}
           onClick={() => handleSelect('custom')}
         >
           {selectedId === 'custom' && (
@@ -313,7 +345,7 @@ export function DnsView() {
       </div>
 
       <AnimatePresence>
-        {selectedId === 'custom' && (
+        {customEditorOpen && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -329,14 +361,14 @@ export function DnsView() {
                   <input
                     type="text"
                     placeholder={language === 'tr' ? 'Birincil DNS' : 'Primary DNS'}
-                    value={customPrimary}
-                    onChange={(e) => setDnsCustom(e.target.value, customSecondary)}
+                    value={customPrimaryDraft}
+                    onChange={(e) => setCustomPrimaryDraft(e.target.value)}
                   />
                   <input
                     type="text"
                     placeholder={language === 'tr' ? 'İkincil DNS' : 'Secondary DNS'}
-                    value={customSecondary}
-                    onChange={(e) => setDnsCustom(customPrimary, e.target.value)}
+                    value={customSecondaryDraft}
+                    onChange={(e) => setCustomSecondaryDraft(e.target.value)}
                   />
                 </div>
               </div>
@@ -345,17 +377,20 @@ export function DnsView() {
             <div className={styles.customActions}>
               <button
                 className={styles.cancelBtn}
-                onClick={() => {
-                  setSelectedDnsId('google');
-                  saveToBackend('google');
+                onClick={async () => {
+                  if (await saveToBackend('google')) setCustomEditorOpen(false);
                 }}
               >
                 <X size={14} /> {t.cancel}
               </button>
               <button
                 className={styles.saveBtn}
-                onClick={() => saveToBackend('custom', customPrimary, customSecondary)}
-                disabled={!customPrimary}
+                onClick={async () => {
+                  if (await saveToBackend('custom', customPrimaryDraft, customSecondaryDraft)) {
+                    setCustomEditorOpen(false);
+                  }
+                }}
+                disabled={!customPrimaryDraft}
               >
                 <Check size={14} /> {t.save}
               </button>

@@ -19,9 +19,6 @@ pub struct ProcessHandle {
     _route_guard: Option<crate::network::router::NetworkRouteGuard>,
 }
 
-unsafe impl Send for ProcessHandle {}
-unsafe impl Sync for ProcessHandle {}
-
 impl std::fmt::Debug for ProcessHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessHandle")

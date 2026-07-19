@@ -16,10 +16,11 @@ import type { EngineStatus } from './types/engine';
 const WINDOW_LABEL = getCurrentWindow().label;
 
 export default function App() {
-  const { setStatus, refreshPresets, refreshDnsStatus } = useEngineStore();
+  const { setStatus, refreshPresets, refreshDnsStatus, hasHydrated, persistenceError, language } = useEngineStore();
 
   useEffect(() => {
     const bootstrap = async () => {
+      if (!hasHydrated || persistenceError) return;
       try {
         const currentStatus = await invoke<EngineStatus>('get_engine_status');
         setStatus(currentStatus);
@@ -33,10 +34,21 @@ export default function App() {
 
     bootstrap();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hasHydrated, persistenceError]);
 
   // Register global event listeners for this window.
   useEventListeners();
+
+  if (!hasHydrated) return null;
+  if (persistenceError) {
+    return (
+      <div style={{ padding: 20, color: '#fff', background: '#15171c', minHeight: '100vh' }}>
+        {language === 'tr'
+          ? 'Ayarlar güvenli biçimde okunamadı. Vane, kayıtlı ayarlarınızı varsayılanlarla ezmemek için başlatmayı durdurdu.'
+          : 'Settings could not be read safely. Vane stopped startup to avoid overwriting your saved settings with defaults.'}
+      </div>
+    );
+  }
 
   if (WINDOW_LABEL === 'settings') return <SettingsWindow />;
   return <WidgetView />;

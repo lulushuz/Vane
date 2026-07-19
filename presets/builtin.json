@@ -40,7 +40,7 @@
     "icon": "🛡️",
     "args": [
       "--wf-tcp=80,443",
-      "--dpi-desync=split2",
+      "--dpi-desync=multisplit",
       "--dpi-desync-split-pos=2"
     ],
     "isCustom": false,
@@ -114,7 +114,7 @@
     "icon": "🎮",
     "args": [
       "--wf-tcp=443",
-      "--dpi-desync=split",
+      "--dpi-desync=multisplit",
       "--dpi-desync-split-pos=1"
     ],
     "isCustom": false,
@@ -123,12 +123,12 @@
   },
   {
     "id": "oob-advanced",
-    "label": "Out-of-Band (OOB)",
-    "description": "Saturates firewall sensors using OOB desync signals.",
+    "label": "Faked Split Advanced",
+    "description": "Uses a fake segment mix before the real split to confuse DPI state tracking.",
     "icon": "🛸",
     "args": [
       "--wf-tcp=443",
-      "--dpi-desync=oob",
+      "--dpi-desync=fakedsplit",
       "--dpi-desync-split-pos=1"
     ],
     "isCustom": false,
@@ -158,7 +158,7 @@
     "args": [
       "--wf-tcp=80,443",
       "--wf-udp=443",
-      "--dpi-desync=split",
+      "--dpi-desync=multisplit",
       "--dpi-desync-any-protocol",
       "--dpi-desync-cutoff=d3",
       "--dpi-desync-split-pos=4",

@@ -40,6 +40,9 @@ export function ProtocolPortsCard({ config: c, update }: Props) {
             className={styles.textInput} 
             value={c.httpPorts} 
             onChange={(e) => update('httpPorts', e.target.value)} 
+            inputMode="numeric"
+            pattern="[0-9, -]+"
+            placeholder="80, 443"
           />
         </div>
 
@@ -47,7 +50,7 @@ export function ProtocolPortsCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'Dinlenecek Arayüz / IP' : 'Bind Interface / IP'}</label>
-            <span>{isTr ? 'Zapret\'in dinleyeceği yerel IP adresi veya proxy adresi (örn: 127.0.0.1). (--bind-addr / --socks)' : 'Local interface IP or proxy address to bind to (e.g. 127.0.0.1). (--bind-addr / --socks)'}</span>
+            <span>{isTr ? 'Paketle gelen winws --bind-addr bayrağını desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support --bind-addr.'}</span>
           </div>
           <input 
             type="text" 
@@ -55,6 +58,7 @@ export function ProtocolPortsCard({ config: c, update }: Props) {
             value={c.bindInterface} 
             onChange={(e) => update('bindInterface', e.target.value)} 
             placeholder="e.g. 127.0.0.1"
+            disabled
           />
         </div>
       </div>

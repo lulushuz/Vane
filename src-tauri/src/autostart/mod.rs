@@ -102,8 +102,8 @@ pub fn enable_autostart(exe_path: &str) -> Result<(), String> {
     );
 
     let service_path = service_dir.join(format!("{}.service", SYSTEMD_SERVICE_NAME));
-    std::fs::write(&service_path, service_content)
-        .map_err(|e| format!("Servis dosyası yazılamadı: {}", e))?;
+    crate::settings::atomic_replace_bytes(&service_path, service_content.as_bytes())
+        .map_err(|e| format!("Servis dosyası atomik olarak yazılamadı: {}", e))?;
 
     systemctl_user(&["daemon-reload"])
         .map_err(|e| tracing::warn!("daemon-reload başarısız: {}", e))

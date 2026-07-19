@@ -89,13 +89,3 @@ impl Drop for JobObjectGuard {
         tracing::debug!("Job Object dropped — child processes will be terminated by kernel.");
     }
 }
-
-/* 
-   SAFETY: The HANDLE is valid for the lifetime of this struct and is only
-   used from the owning thread. Tauri moves AppState across threads but the
-   handle is only closed on Drop, which is single-threaded. 
-*/
-#[cfg(target_os = "windows")]
-unsafe impl Send for JobObjectGuard {}
-#[cfg(target_os = "windows")]
-unsafe impl Sync for JobObjectGuard {}

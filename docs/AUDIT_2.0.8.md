@@ -11,7 +11,7 @@ The audit compared `v2.0.0` (`2d37c42`) with the pre-audit `main` head (`41c5f3b
 | Advanced | `AdvancedConfig`, selected `Preset.args` | preset save/start commands | validated `Preset.args` passed to `winws`/`nfqws` |
 | Pattern | bypass mode plus whitelist/blacklist arrays | `sync_bypass_config` | canonical Rust domain list, `domains.txt`, `--hostlist` or `--hostlist-exclude` |
 | DNS | protocol, cache, ad filter, proxy, watchdog | DNS sync and forwarder commands | `DnsSettings` cache, local forwarder, OS DNS adapter, optional watchdog |
-| Persistence | Zustand partial state | Tauri Store | `settings.json` (single writer after this audit) |
+| Persistence | Zustand partial state | `settings_get/set/remove` | Rust-owned atomic `settings.json` plus last-known-good backup |
 
 ## Confirmed root causes and resolutions
 
@@ -25,7 +25,7 @@ The frontend silently expanded several domains into service aliases. Rust now ow
 
 ### P0: settings and restart races
 
-Zustand Store and Rust independently rewrote the same JSON file. Debounced Pattern/DNS IPC calls could overlap, and old responses could update the UI after newer choices. Rust file writes were removed, Store writes are serialized, UI responses carry an in-memory revision guard, and backend Pattern/DNS synchronization is mutex-serialized.
+Multiple webviews could persist complete stale Zustand snapshots, while runtime readers observed partially replaced files. Rust now owns all settings I/O, serializes writes, atomically replaces the file, retains a last-known-good backup, migrates the schema, and merges only fields changed by each webview. Startup refuses to overwrite unreadable settings with defaults.
 
 ### P0: Kill Switch could survive a failed engine start
 
@@ -43,14 +43,25 @@ Values were read with `split('=')[1]`, numeric values could become `NaN`, and un
 
 The package has `winws` and `nfqws`, but no TPWS binary. IPSet had no safe file-import path and normal Windows paths were rejected. These controls are now visibly unavailable and their arguments are rejected by Rust until complete implementations exist.
 
-## Automated evidence
+### P0: DNS state could survive a crash
 
-- `cargo test --lib`: 22 unit/property tests pass.
-- `cargo clippy --lib -- -D warnings`: passes.
-- `npm run build`: TypeScript strict compilation and Vite production build pass.
-- `.github/workflows/ci.yml`: repeats frontend validation and Rust validation on Windows and Linux.
+The previous adapter configuration existed only inside the forwarder handle. A process crash could therefore leave Windows pointing at `127.0.0.1` with no resolver. Vane now writes a versioned atomic restore snapshot before changing adapter DNS, restores and verifies it at the next launch after an interrupted session, and removes it only after a confirmed clean restore.
 
-The administrator-manifest application binary itself is intentionally excluded from `cargo test`; Windows returns elevation error 740 when Cargo tries to execute that test harness. Library tests cover the deterministic logic without requiring elevation.
+### P0: DNS controls could report intent instead of runtime truth
+
+Forwarder configuration was cached without consistently restarting the active service, Watchdog state could differ from the toggle, and provider selection could persist before Windows accepted it. Runtime-affecting changes are now serialized, validated, applied/restarted when necessary, reread, emitted, and logged. Repeated identical multi-window hydration no longer restarts the service.
+
+### P1: DNS proxy, cache, and filter gaps
+
+SOCKS5 created clients per query and could resolve upstream names outside the proxy; DoT+proxy did not have a supported fail-closed path. Cache keys omitted query options and expiration did not age returned TTLs. AdBlock downloads were unbounded. SOCKS5H client reuse, protocol incompatibility checks, full-query cache keys, TTL aging, bounded LRU eviction, and streamed/validated filter downloads close these gaps.
+
+### P1: Advanced input and preset authority gaps
+
+Several numeric, port, and cutoff fields could reach Rust with invalid semantics. More importantly, multiple controls emitted flags absent from the bundled winws, including protocol-specific desync overrides, `--dpi-desync2`, `--mss`, and `--bind-addr`. Those controls are now explicitly unavailable, TCP Receiver Window uses the real `--wssize` flag, built-in presets use supported modes, and Rust rejects unsupported modes/flags. Presets also cannot inject hostlists and override the Pattern screen. Unsupported binary payload editing remains disabled rather than pretending arbitrary text is a safe packet payload.
+
+## Verification
+
+The GitHub `Verify` workflow is the build authority for this change. It runs the frontend production build and Rust unit/property tests plus warning-free Clippy on Windows and Linux. No local release build was produced for this patch; the pushed commit is intentionally verified by the workflow.
 
 ## Required real-Windows acceptance matrix
 
@@ -61,11 +72,12 @@ These checks require an elevated Windows session and must be completed before de
 3. Verify blacklist exclusion and all-sites behavior with captured traffic.
 4. Toggle cache, ad filter, protocol, proxy, Watchdog, and Kill Switch while stopped and running; restart the app and confirm persistence.
 5. Force a `winws` spawn failure after Kill Switch enablement and confirm the firewall rule is removed.
-6. Simulate three upstream DNS failures and confirm DHCP recovery; confirm one or two failures do not alter system DNS.
+6. Simulate three upstream DNS failures and confirm the exact previous static/DHCP adapter state is restored; confirm one or two failures do not alter system DNS.
 7. Rapidly change Pattern and DNS controls and confirm only the final revision is applied and logged.
+8. Force-kill Vane while the forwarder owns system DNS, relaunch it, and verify the persisted recovery snapshot restores every adapter before auto-start.
+9. Verify UDP and TCP DNS, NXDOMAIN/negative responses, large EDNS responses, cache TTL aging, SOCKS5H fail-closed behavior, and filter download rejection.
 
 ## Remaining engineering work
 
-- Return structured configuration revisions from IPC instead of relying only on frontend revision guards.
 - Add elevated Windows integration fixtures for firewall, adapter DNS, and child argv verification.
 - Resolve the repository-wide pre-existing Rust formatting debt, then add `cargo fmt --check` to CI.

@@ -9,40 +9,25 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "--wf-tcp=",
     "--wf-udp=",
     "--windivert=",
-    "--windivert",
     "tcp.",
     "udp.",
     "icmp.",
     "--qnum=",
-    "--wl=",
-    "--hostlist=",
     "--dpi-desync=",
-    "--dpi-desync-http=",
-    "--dpi-desync-https=",
-    "--dpi-desync-quic=",
     "--dpi-desync-split-pos=",
     "--dpi-desync-repeats=",
     "--dpi-desync-fooling=",
     "--dpi-desync-ttl=",
-    "--dpi-desync-ttl-ext=",
     "--dpi-desync-cutoff=",
+    "--dpi-desync-split-http-req=",
+    "--dpi-desync-split-tls=",
+    "--wssize=",
+];
+
+const ALLOWED_EXACT_ARGS: &[&str] = &[
+    "--windivert",
     "--dpi-desync-any-protocol",
     "--dpi-desync-autottl",
-    "--dpi-desync-split-http-req=",
-    "--dpi-desync-split-pos-http-req=",
-    "--dpi-desync-split-tls=",
-    "--dpi-desync-split-pos-tls=",
-    "--dpi-desync-fake-tls-sni=",
-    "--dpi-desync-fake-http=",
-    "--dpi-desync-fake-tls=",
-    "--dpi-desync-fake-quic=",
-    "--dpi-desync2=",
-    "--mss=",
-    "--new-ttl=",
-    "--max-payload=",
-    "--tcp-window-size=",
-    "--bind-addr=",
-    "--http=",
     "--debug",
     "--debug2",
 ];
@@ -55,7 +40,8 @@ pub fn validate_preset_args(args: &[String]) -> Result<(), EngineError> {
     if args.len() > MAX_ARG_COUNT {
         return Err(EngineError::InvalidPreset(format!(
             "Argüman sayısı limiti aşıldı: {} > {} (izin verilen maksimum).",
-            args.len(), MAX_ARG_COUNT
+            args.len(),
+            MAX_ARG_COUNT
         )));
     }
 
@@ -70,14 +56,15 @@ fn validate_single_arg(arg: &str) -> Result<(), EngineError> {
     if arg.len() > MAX_ARG_LEN {
         return Err(EngineError::InvalidPreset(format!(
             "Argüman çok uzun ({} karakter > {} limit): \"{}…\"",
-            arg.len(), MAX_ARG_LEN,
-            &arg[..MAX_ARG_LEN.min(32)]
+            arg.len(),
+            MAX_ARG_LEN,
+            arg.chars().take(32).collect::<String>()
         )));
     }
 
     if arg.is_empty() {
         return Err(EngineError::InvalidPreset(
-            "Boş argüman kabul edilmiyor.".into()
+            "Boş argüman kabul edilmiyor.".into(),
         ));
     }
 
@@ -85,14 +72,16 @@ fn validate_single_arg(arg: &str) -> Result<(), EngineError> {
         if arg.contains(ch) {
             return Err(EngineError::InvalidPreset(format!(
                 "Güvenli olmayan karakter '{:?}' argümanda tespit edildi: \"{}\"",
-                ch, sanitize_for_log(arg)
+                ch,
+                sanitize_for_log(arg)
             )));
         }
     }
 
-    let is_allowed = ALLOWED_PREFIXES.iter().any(|prefix| {
-        arg == *prefix || arg.starts_with(prefix)
-    });
+    let is_allowed = ALLOWED_EXACT_ARGS.contains(&arg)
+        || ALLOWED_PREFIXES
+            .iter()
+            .any(|prefix| arg.starts_with(prefix));
 
     if !is_allowed {
         return Err(EngineError::InvalidPreset(format!(
@@ -102,61 +91,181 @@ fn validate_single_arg(arg: &str) -> Result<(), EngineError> {
         )));
     }
 
-    if let Some(val) = arg.strip_prefix("--hostlist=") {
-        validate_hostlist_value(val)?;
-    } else if let Some(val) = arg.strip_prefix("--wl=") {
-        if validate_ip_or_domain(val).is_err() {
-            validate_hostlist_value(val)?;
-        }
+    if let Some(value) = arg
+        .strip_prefix("--wf-tcp=")
+        .or_else(|| arg.strip_prefix("--wf-udp="))
+        .or_else(|| arg.strip_prefix("--filter-tcp="))
+        .or_else(|| arg.strip_prefix("--filter-udp="))
+    {
+        validate_port_spec(value)?;
+    } else if let Some(value) = arg.strip_prefix("--dpi-desync-cutoff=") {
+        validate_cutoff(value)?;
+    } else if let Some(value) = arg
+        .strip_prefix("--dpi-desync=")
+    {
+        validate_strategy(value)?;
+    } else if let Some(value) = arg.strip_prefix("--dpi-desync-fooling=") {
+        validate_fooling(value)?;
+    } else if let Some(value) = arg.strip_prefix("--dpi-desync-split-http-req=") {
+        validate_legacy_split_selector(value, &["method", "host"])?;
+    } else if let Some(value) = arg.strip_prefix("--dpi-desync-split-tls=") {
+        validate_legacy_split_selector(value, &["sni", "sniext"])?;
+    } else if let Some(value) = arg.strip_prefix("--dpi-desync-ttl=") {
+        validate_number(value, 1, 255, "TTL")?;
+    } else if let Some(value) = arg.strip_prefix("--dpi-desync-repeats=") {
+        validate_number(value, 1, 100, "repeat count")?;
+    } else if let Some(value) = arg
+        .strip_prefix("--dpi-desync-split-pos=")
+    {
+        validate_split_positions(value)?;
+    } else if let Some(value) = arg.strip_prefix("--wssize=") {
+        validate_number(value, 1, 16_777_216, "TCP window")?;
+    } else if let Some(value) = arg.strip_prefix("--qnum=") {
+        validate_number(value, 0, 65_535, "queue number")?;
     }
 
     Ok(())
 }
 
-fn validate_hostlist_value(val: &str) -> Result<(), EngineError> {
-    if val.is_empty() {
-        return Err(EngineError::InvalidPreset("Hostlist değeri boş olamaz".into()));
+fn validate_number(
+    value: &str,
+    minimum: u32,
+    maximum: u32,
+    label: &str,
+) -> Result<(), EngineError> {
+    let parsed = value
+        .parse::<u32>()
+        .map_err(|_| EngineError::InvalidPreset(format!("{label} must be an integer.")))?;
+    if !(minimum..=maximum).contains(&parsed) {
+        return Err(EngineError::InvalidPreset(format!(
+            "{label} must be between {minimum} and {maximum}."
+        )));
     }
-    if val.contains("..") {
-        return Err(EngineError::InvalidPreset("Dizin geçişi (..) tespit edildi".into()));
-    }
-    if val.contains("//") {
-        return Err(EngineError::InvalidPreset("Çift taksim (//) tespit edildi".into()));
-    }
-    if val.contains('\\') {
-        return Err(EngineError::InvalidPreset("Ters taksim (\\) tespit edildi".into()));
-    }
-    if val.contains('\0') {
-        return Err(EngineError::InvalidPreset("Null karakter tespit edildi".into()));
-    }
-    if val.contains('%') {
-        return Err(EngineError::InvalidPreset("Yüzde işareti (%) veya URL encoding tespit edildi".into()));
-    }
-    if val.starts_with('/') {
-        return Err(EngineError::InvalidPreset("Mutlak yol (Linux) kabul edilmiyor".into()));
-    }
-    let chars: Vec<char> = val.chars().collect();
-    if chars.len() >= 2 && chars[1] == ':' && chars[0].is_ascii_alphabetic() {
+    Ok(())
+}
+
+fn validate_port_spec(value: &str) -> Result<(), EngineError> {
+    if value.is_empty() {
         return Err(EngineError::InvalidPreset(
-            "Sürücü harfi içeren mutlak yol kabul edilmiyor".into(),
+            "Port list cannot be empty.".into(),
+        ));
+    }
+    for token in value.split(',') {
+        if let Some((start, end)) = token.split_once('-') {
+            let start = start
+                .parse::<u16>()
+                .map_err(|_| EngineError::InvalidPreset("Port range is invalid.".into()))?;
+            let end = end
+                .parse::<u16>()
+                .map_err(|_| EngineError::InvalidPreset("Port range is invalid.".into()))?;
+            if start == 0 || start > end {
+                return Err(EngineError::InvalidPreset(
+                    "Port range is outside 1-65535 or reversed.".into(),
+                ));
+            }
+        } else {
+            let port = token.parse::<u16>().map_err(|_| {
+                EngineError::InvalidPreset("Port must be an integer between 1 and 65535.".into())
+            })?;
+            if port == 0 {
+                return Err(EngineError::InvalidPreset("Port 0 is not accepted.".into()));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_cutoff(value: &str) -> Result<(), EngineError> {
+    let (kind, number) = value.split_at(
+        value
+            .char_indices()
+            .nth(1)
+            .map(|(index, _)| index)
+            .unwrap_or(value.len()),
+    );
+    if !matches!(kind, "n" | "d" | "s") {
+        return Err(EngineError::InvalidPreset(
+            "Desync cutoff must start with n, d, or s.".into(),
+        ));
+    }
+    validate_number(number, 1, 1_000_000, "desync cutoff")
+}
+
+fn validate_split_positions(value: &str) -> Result<(), EngineError> {
+    const MARKERS: &[&str] = &[
+        "method", "host", "endhost", "sld", "endsld", "midsld", "sniext",
+    ];
+    if value.is_empty() {
+        return Err(EngineError::InvalidPreset(
+            "Split position cannot be empty.".into(),
+        ));
+    }
+    for token in value.split(',') {
+        if let Ok(position) = token.parse::<i32>() {
+            if position == 0 || !(-65_535..=65_535).contains(&position) {
+                return Err(EngineError::InvalidPreset(
+                    "Numeric split position must be between -65535 and 65535, excluding zero."
+                        .into(),
+                ));
+            }
+            continue;
+        }
+        let marker_end = token
+            .find(|character| character == '+' || character == '-')
+            .unwrap_or(token.len());
+        let (marker, offset) = token.split_at(marker_end);
+        if !MARKERS.contains(&marker) {
+            return Err(EngineError::InvalidPreset(
+                "Split position contains an unsupported marker.".into(),
+            ));
+        }
+        if !offset.is_empty()
+            && (offset.len() == 1
+                || offset[1..].parse::<u16>().is_err()
+                || !matches!(offset.as_bytes()[0], b'+' | b'-'))
+        {
+            return Err(EngineError::InvalidPreset(
+                "Split marker offset must use +N or -N.".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_strategy(value: &str) -> Result<(), EngineError> {
+    const MODES: &[&str] = &[
+        "synack", "syndata", "fake", "fakeknown", "rst", "rstack", "hopbyhop",
+        "destopt", "ipfrag1", "multisplit", "multidisorder", "fakedsplit",
+        "fakeddisorder", "hostfakesplit", "ipfrag2", "udplen", "tamper",
+    ];
+    if value.is_empty() || value.split(',').any(|mode| !MODES.contains(&mode)) {
+        return Err(EngineError::InvalidPreset(
+            "Desync strategy is not supported by the bundled engine.".into(),
         ));
     }
     Ok(())
 }
 
-fn validate_ip_or_domain(val: &str) -> Result<(), EngineError> {
-    if val.is_empty() {
-        return Err(EngineError::InvalidPreset("IP veya domain değeri boş olamaz".into()));
-    }
-    for c in val.chars() {
-        if !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-' {
-            return Err(EngineError::InvalidPreset(format!("Geçersiz karakter '{}' IP/domain içinde tespit edildi", c)));
-        }
-    }
-    if val.contains("..") {
-        return Err(EngineError::InvalidPreset("Çift nokta (..) tespit edildi".into()));
+fn validate_fooling(value: &str) -> Result<(), EngineError> {
+    const MODES: &[&str] = &[
+        "none", "md5sig", "badseq", "badsum", "datanoack", "ts", "hopbyhop", "hopbyhop2",
+    ];
+    if value.is_empty() || value.split(',').any(|mode| !MODES.contains(&mode)) {
+        return Err(EngineError::InvalidPreset(
+            "Fooling mode is not supported by the bundled engine.".into(),
+        ));
     }
     Ok(())
+}
+
+fn validate_legacy_split_selector(value: &str, allowed: &[&str]) -> Result<(), EngineError> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(EngineError::InvalidPreset(
+            "Split selector is not supported by the bundled engine.".into(),
+        ))
+    }
 }
 
 fn sanitize_for_log(s: &str) -> String {
@@ -176,7 +285,7 @@ mod tests {
             "--wf-tcp=80,443".to_string(),
             "--dpi-desync=fake".to_string(),
             "--dpi-desync-autottl".to_string(),
-            "--mss=1300".to_string(),
+            "--wssize=1300".to_string(),
             "--filter-tcp=80".to_string(),
             "--windivert".to_string(),
             "tcp.DstPort==443".to_string(),
@@ -232,6 +341,26 @@ mod tests {
     }
 
     #[test]
+    fn long_multibyte_arg_is_rejected_without_panicking() {
+        let args = vec![format!("--dpi-desync={}", "ş".repeat(80))];
+        assert!(validate_preset_args(&args).is_err());
+    }
+
+    #[test]
+    fn exact_flags_reject_appended_text() {
+        for arg in ["--debuganything", "--windivertanything", "--dpi-desync-any-protocol=true"] {
+            assert!(validate_preset_args(&[arg.to_string()]).is_err(), "invalid exact flag passed: {arg}");
+        }
+    }
+
+    #[test]
+    fn semantic_values_are_checked() {
+        for arg in ["--wf-tcp=0", "--wf-udp=70000", "--bind-addr=not-an-ip", "--dpi-desync-ttl=999"] {
+            assert!(validate_preset_args(&[arg.to_string()]).is_err(), "invalid value passed: {arg}");
+        }
+    }
+
+    #[test]
     fn test_path_traversal_rejected() {
         let payloads = vec![
             "../../../etc/passwd",
@@ -268,12 +397,12 @@ mod tests {
     }
 
     #[test]
-    fn test_hostlist_args_pass() {
+    fn preset_hostlist_args_are_rejected_so_pattern_remains_authoritative() {
         let args = vec![
             "--hostlist=list.txt".to_string(),
             "--wl=example.com".to_string(),
         ];
-        assert!(validate_preset_args(&args).is_ok());
+        assert!(validate_preset_args(&args).is_err());
     }
 
     #[test]
@@ -290,29 +419,17 @@ mod tests {
 
     proptest! {
         #[test]
-        fn path_traversal_always_rejected(s in ".*") {
+        fn preset_hostlist_is_always_rejected(s in ".*") {
             let arg = format!("--hostlist={}", s);
-            let has_traversal = s.contains("..")
-                || s.contains("//")
-                || s.contains('\\')
-                || s.contains('\0')
-                || s.contains('%')
-                || s.starts_with('/')
-                || (s.len() >= 2 && s.chars().nth(0).unwrap().is_ascii_alphabetic() && s.chars().nth(1).unwrap() == ':');
-
             let result = validate_single_arg(&arg);
-            if has_traversal {
-                assert!(result.is_err(), "Expected error for: {}", s);
-            }
+            assert!(result.is_err(), "Preset hostlist unexpectedly passed: {}", s);
         }
 
         #[test]
-        fn valid_ip_or_domain_always_accepted(s in "[a-zA-Z0-9_-]{1,20}(\\.[a-zA-Z0-9_-]{1,20})*") {
+        fn preset_whitelist_is_always_rejected(s in "[a-zA-Z0-9_-]{1,20}(\\.[a-zA-Z0-9_-]{1,20})*") {
             let arg = format!("--wl={}", s);
             let result = validate_single_arg(&arg);
-            if !s.contains("..") && s.len() + 5 <= MAX_ARG_LEN {
-                assert!(result.is_ok(), "Expected ok for: {}, got {:?}", s, result);
-            }
+            assert!(result.is_err(), "Preset whitelist unexpectedly passed: {}", s);
         }
     }
 }

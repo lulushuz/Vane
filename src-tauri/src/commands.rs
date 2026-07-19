@@ -1,25 +1,24 @@
-use tauri::{AppHandle, Manager, State, Emitter};
-use std::time::Duration;
-use std::sync::Arc;
+use crate::config::preset::Preset;
+use crate::dns::{
+    apply_dns, builtin_providers, get_active_adapters, is_using_trusted_dns, reset_dns_to_dhcp,
+    resolve_doh, spawn_doh_forwarder, ApplyDnsResult, DnsProvider, DoHEndpoint, DohResult,
+    NetworkAdapter, DOH_CLOUDFLARE, DOH_FORWARDER_DEFAULT_PORT, DOH_GOOGLE,
+};
+use crate::engine::{EngineError, EngineStatus};
+use crate::privilege::checker::is_elevated;
+use crate::AppState;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use crate::AppState;
-use crate::config::preset::Preset;
-use crate::engine::{EngineError, EngineStatus};
-use crate::dns::{
-    DnsProvider, NetworkAdapter, ApplyDnsResult,
-    builtin_providers, get_active_adapters, apply_dns,
-    reset_dns_to_dhcp, is_using_trusted_dns,
-    resolve_doh, DohResult, DOH_CLOUDFLARE, DOH_GOOGLE,
-    DoHEndpoint, DOH_FORWARDER_DEFAULT_PORT,
-    spawn_doh_forwarder,
-};
-use crate::privilege::checker::is_elevated;
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // ─── Macro: Map Mutex lock error to EngineError ────────────────────────────
 macro_rules! lock_or_err {
     ($mutex:expr) => {
-        $mutex.lock().map_err(|_| EngineError::IoError("Config lock poisoned".into()))
+        $mutex
+            .lock()
+            .map_err(|_| EngineError::IoError("Config lock poisoned".into()))
     };
 }
 
@@ -40,10 +39,7 @@ pub async fn start_engine(
 }
 
 #[tauri::command]
-pub async fn stop_engine(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), EngineError> {
+pub async fn stop_engine(app: AppHandle, state: State<'_, AppState>) -> Result<(), EngineError> {
     state.engine_manager.stop(&app)
 }
 
@@ -64,13 +60,14 @@ pub fn save_custom_preset(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), EngineError> {
-    let app_data = app.path().app_data_dir().map_err(|e| EngineError::IoError(e.to_string()))?;
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| EngineError::IoError(e.to_string()))?;
     let custom_dir = app_data.join("presets");
     std::fs::create_dir_all(&custom_dir).map_err(|e| EngineError::IoError(e.to_string()))?;
 
-    lock_or_err!(state.config_loader)?
-        .save_custom_preset(preset, &custom_dir)
-        .map_err(|e| EngineError::IoError(e.to_string()))
+    lock_or_err!(state.config_loader)?.save_custom_preset(preset, &custom_dir)
 }
 
 #[tauri::command]
@@ -85,12 +82,10 @@ pub fn delete_custom_preset(
         .map_err(|e| EngineError::IoError(e.to_string()))?
         .join("presets");
 
-    lock_or_err!(state.config_loader)?
-        .delete_custom_preset(&preset_id, &custom_dir)
-        .map_err(|e| EngineError::IoError(e.to_string()))
+    lock_or_err!(state.config_loader)?.delete_custom_preset(&preset_id, &custom_dir)
 }
 
-use crate::engine::optimizer::{Optimizer, OptimizePayload};
+use crate::engine::optimizer::{OptimizePayload, Optimizer};
 
 #[tauri::command]
 pub async fn start_auto_optimize(
@@ -99,11 +94,14 @@ pub async fn start_auto_optimize(
 ) -> Result<Preset, EngineError> {
     let optimizer = Optimizer::new(app.clone());
 
-    let _ = app.emit("optimize_progress", OptimizePayload {
-        step: "Starting...".into(),
-        preset_name: "Preparation".into(),
-        progress_pct: 0,
-    });
+    let _ = app.emit(
+        "optimize_progress",
+        OptimizePayload {
+            step: "Starting...".into(),
+            preset_name: "Preparation".into(),
+            progress_pct: 0,
+        },
+    );
 
     let best_preset = optimizer
         .run_heuristic_scan()
@@ -130,7 +128,27 @@ pub fn get_network_adapters() -> Vec<NetworkAdapter> {
 }
 
 #[tauri::command]
-pub fn apply_dns_settings(primary: String, secondary: String, app: AppHandle) -> ApplyDnsResult {
+pub async fn apply_dns_settings(
+    primary: String,
+    secondary: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> ApplyDnsResult {
+    let _sync_guard = state.dns_sync.lock().await;
+    if state
+        .forwarder
+        .lock()
+        .map(|guard| guard.is_some())
+        .unwrap_or(true)
+    {
+        return ApplyDnsResult {
+            success: false,
+            applied_adapters: Vec::new(),
+            error: Some(
+                "Stop the local DNS forwarder before changing the system DNS provider.".into(),
+            ),
+        };
+    }
     let res = apply_dns(&primary, &secondary);
     if res.success {
         let _ = app.emit("dns_status_changed", ());
@@ -139,7 +157,26 @@ pub fn apply_dns_settings(primary: String, secondary: String, app: AppHandle) ->
 }
 
 #[tauri::command]
-pub fn reset_dns_settings(app: AppHandle) -> ApplyDnsResult {
+pub async fn reset_dns_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> ApplyDnsResult {
+    let _sync_guard = state.dns_sync.lock().await;
+    if state
+        .forwarder
+        .lock()
+        .map(|guard| guard.is_some())
+        .unwrap_or(true)
+    {
+        return ApplyDnsResult {
+            success: false,
+            applied_adapters: Vec::new(),
+            error: Some(
+                "Stop the local DNS forwarder before resetting the system DNS configuration."
+                    .into(),
+            ),
+        };
+    }
     let res = reset_dns_to_dhcp();
     if res.success {
         let _ = app.emit("dns_status_changed", ());
@@ -158,15 +195,14 @@ pub async fn start_engine_with_dns_guard(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<EngineStatus, EngineError> {
-    let dns_ok = is_using_trusted_dns();
+    let forwarder_active = state
+        .forwarder
+        .lock()
+        .map(|guard| guard.is_some())
+        .unwrap_or(false);
+    let dns_ok = forwarder_active || is_using_trusted_dns();
     if !dns_ok {
-        let result = apply_dns("1.1.1.1", "1.0.0.1");
-        if result.success {
-            tracing::info!("DNS Guard: Cloudflare automatically applied.");
-            let _ = app.emit("dns_auto_applied", "Cloudflare DNS (1.1.1.1) automatically applied.");
-        } else {
-            tracing::warn!("DNS Guard: Cloudflare could not be applied — {:?}", result.error);
-        }
+        tracing::warn!("DNS Guard: The current system DNS is not a built-in trusted provider; Vane preserved the user's explicit DNS choice.");
     }
 
     let preset = {
@@ -208,8 +244,7 @@ pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn get_system_info() -> serde_json::Value {
     let os = std::env::consts::OS;
-    let device_model = std::env::var("COMPUTERNAME")
-        .unwrap_or_else(|_| "Windows Desktop".into());
+    let device_model = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows Desktop".into());
 
     serde_json::json!({
         "os": os,
@@ -219,10 +254,20 @@ pub fn get_system_info() -> serde_json::Value {
 
 #[tauri::command]
 pub fn export_preset(file_path: String, content: String) -> Result<(), String> {
-    if file_path.is_empty() {
-        return Err("File path cannot be empty".into());
+    let path = std::path::Path::new(&file_path);
+    if path.extension().and_then(|value| value.to_str()) != Some("vane") {
+        return Err("Preset exports must use the .vane extension.".into());
     }
-    std::fs::write(&file_path, content).map_err(|e| format!("Could not export preset: {}", e))
+    if content.len() > 1024 * 1024 {
+        return Err("Preset export exceeds the 1 MiB safety limit.".into());
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("Preset export is not valid JSON: {error}"))?;
+    if !parsed.is_object() {
+        return Err("Preset export must contain a JSON object.".into());
+    }
+    crate::settings::atomic_replace_bytes(path, content.as_bytes())
+        .map_err(|error| format!("Could not export preset: {error}"))
 }
 
 #[tauri::command]
@@ -233,7 +278,9 @@ pub fn check_is_elevated() -> bool {
 #[tauri::command]
 pub fn set_autostart(enabled: bool, _app: AppHandle) -> Result<(), String> {
     if !is_elevated() {
-        return Err("Administrator privileges are required for task scheduler registration.".into());
+        return Err(
+            "Administrator privileges are required for task scheduler registration.".into(),
+        );
     }
 
     if enabled {
@@ -261,18 +308,20 @@ pub async fn refresh_remote_presets(
 ) -> Result<String, String> {
     use crate::presets::{fetch_remote_presets, RemoteFetchOutcome};
 
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
-    let cached_version = crate::presets::load_cached_presets(&app_data)
-        .map(|m| m.version);
+    let cached_version = crate::presets::load_cached_presets(&app_data).map(|m| m.version);
 
     match fetch_remote_presets(&state.http_client, cached_version.as_deref()).await {
         RemoteFetchOutcome::Updated(manifest, sig_text, raw_json) => {
             let version = manifest.version.clone();
-            let _ = crate::presets::save_cached_presets_with_sig(&manifest, &raw_json, &sig_text, &app_data).await;
+            crate::config::loader::validate_remote_presets(&manifest.presets)
+                .map_err(|error| format!("Signed remote preset update is incompatible with this engine: {error}"))?;
+            crate::presets::save_cached_presets_with_sig(
+                &manifest, &raw_json, &sig_text, &app_data,
+            )
+            .await
+            .map_err(|error| format!("Verified remote presets could not be persisted: {error}"))?;
 
             lock_or_err!(state.config_loader)
                 .map_err(|e| e.to_string())?
@@ -287,7 +336,9 @@ pub async fn refresh_remote_presets(
             Err("Offline: Remote presets are unreachable.".into())
         }
         RemoteFetchOutcome::ParseError(e) => Err(format!("Parse error: {}", e)),
-        RemoteFetchOutcome::SignatureInvalid => Err("CRITICAL: Security Signature invalid! (CVE-5 Protection)".into()),
+        RemoteFetchOutcome::SignatureInvalid => {
+            Err("CRITICAL: Security Signature invalid! (CVE-5 Protection)".into())
+        }
     }
 }
 
@@ -328,8 +379,24 @@ pub async fn start_doh_forwarder(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ForwarderStatus, String> {
+    let _sync_guard = state.dns_sync.lock().await;
+    let endpoint = match crate::settings::read_runtime_settings(&app)? {
+        Some(settings) if settings.selected_dns_id == "google" => DoHEndpoint::Google,
+        _ => DoHEndpoint::Cloudflare,
+    };
+    start_dns_forwarder_runtime(&app, state.inner(), watchdog, endpoint).await
+}
+
+pub(crate) async fn start_dns_forwarder_runtime(
+    app: &AppHandle,
+    state: &AppState,
+    watchdog: bool,
+    endpoint: DoHEndpoint,
+) -> Result<ForwarderStatus, String> {
     {
-        let guard = state.forwarder.lock()
+        let guard = state
+            .forwarder
+            .lock()
             .map_err(|_| "Forwarder lock poisoned.".to_string())?;
         if guard.is_some() {
             return Err("DoH Forwarder is already running.".into());
@@ -340,19 +407,39 @@ pub async fn start_doh_forwarder(
         app.clone(),
         state.http_client.clone(),
         DOH_FORWARDER_DEFAULT_PORT,
-        DoHEndpoint::Cloudflare,
-    ).await?;
+        endpoint,
+    )
+    .await?;
+
+    if let Err(error) = crate::dns::save_dns_restore_snapshot(app, &handle.previous_dns) {
+        handle.stop().await;
+        return Err(format!(
+            "DNS forwarder was not activated because a safe restore point could not be saved: {error}"
+        ));
+    }
 
     let dns_applied = apply_dns("127.0.0.1", "127.0.0.1");
     if !dns_applied.success {
+        let previous_dns = handle.previous_dns.clone();
         let _ = handle.stop().await;
-        return Err(format!("Sistem DNS'i 127.0.0.1 olarak ayarlanamadı: {:?}", dns_applied.error));
+        let _ = crate::dns::restore_dns_snapshot(&previous_dns);
+        let _ = crate::dns::clear_dns_restore_snapshot(app);
+        return Err(format!(
+            "Sistem DNS'i 127.0.0.1 olarak ayarlanamadı: {:?}",
+            dns_applied.error
+        ));
     }
 
     let shutdown_clone = Arc::clone(&handle.shutdown);
     let client_clone = state.http_client.clone();
     let watchdog_endpoint = handle.endpoint;
-    let watchdog_protocol = crate::dns::forwarder::read_dns_settings(&app).protocol;
+    let watchdog_settings = crate::dns::forwarder::read_dns_settings(app);
+    let watchdog_protocol = watchdog_settings.protocol;
+    let health_check_target = watchdog_settings
+        .health_check_targets
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "example.com".into());
     let app_clone = app.clone();
 
     if watchdog {
@@ -360,6 +447,7 @@ pub async fn start_doh_forwarder(
             client_clone,
             watchdog_endpoint,
             watchdog_protocol,
+            health_check_target,
             shutdown_clone,
             app_clone,
         );
@@ -370,12 +458,15 @@ pub async fn start_doh_forwarder(
     }
 
     let status = {
-        let mut guard = state.forwarder.lock()
+        let mut guard = state
+            .forwarder
+            .lock()
             .map_err(|_| "Forwarder lock poisoned.".to_string())?;
 
         if guard.is_some() {
-            tauri::async_runtime::spawn(async move { handle.stop().await; });
-            let _ = reset_dns_to_dhcp();
+            tauri::async_runtime::spawn(async move {
+                handle.stop().await;
+            });
             return Err("DoH Forwarder is already running.".into());
         }
 
@@ -383,32 +474,44 @@ pub async fn start_doh_forwarder(
         let endpoint = handle.endpoint.url().to_string();
         *guard = Some(handle);
 
-        forwarder_status(true, port, endpoint, watchdog, &app)
+        forwarder_status(true, port, endpoint, watchdog, app)
     };
 
     tracing::info!(
         "DNS forwarder is running and verified: protocol={}, cache={}, adblock={}, port={}",
-        status.protocol.to_uppercase(), status.cache, status.adblock, status.port
+        status.protocol.to_uppercase(),
+        status.cache,
+        status.adblock,
+        status.port
     );
     Ok(status)
 }
 
 #[tauri::command]
 pub async fn stop_doh_forwarder(
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let _sync_guard = state.dns_sync.lock().await;
     let handle = {
-        let mut guard = state.forwarder.lock()
+        let mut guard = state
+            .forwarder
+            .lock()
             .map_err(|_| "Forwarder lock poisoned.".to_string())?;
         guard.take()
     };
 
     if let Some(h) = handle {
+        let previous_dns = h.previous_dns.clone();
         h.stop().await;
-        let reset = reset_dns_to_dhcp();
+        let reset = crate::dns::restore_dns_snapshot(&previous_dns);
         if !reset.success {
-            return Err(format!("Forwarder stopped but automatic DNS restore failed: {:?}", reset.error));
+            return Err(format!(
+                "Forwarder stopped but automatic DNS restore failed: {:?}",
+                reset.error
+            ));
         }
+        crate::dns::clear_dns_restore_snapshot(&app)?;
         tracing::info!("DNS forwarder stopped and system DNS was restored automatically.");
         Ok(())
     } else {
@@ -441,7 +544,7 @@ pub fn get_doh_forwarder_status(app: AppHandle, state: State<'_, AppState>) -> F
 fn icmp_ping_ms() -> Option<u64> {
     #[cfg(target_os = "windows")]
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    
+
     let output = std::process::Command::new("ping")
         .args(["-n", "1", "-w", "3000", "1.1.1.1"])
         .creation_flags(CREATE_NO_WINDOW)
@@ -449,7 +552,7 @@ fn icmp_ping_ms() -> Option<u64> {
         .ok()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
+
     for line in stdout.lines() {
         let lower = line.to_lowercase();
         if lower.contains("average") || lower.contains("ortalama") {
@@ -483,16 +586,21 @@ pub async fn get_engine_health(
     if actual_targets.is_empty() {
         actual_targets.push("discord.com".to_string());
     }
+    if actual_targets.len() > 10 {
+        return Err("At most 10 health-check targets are allowed.".into());
+    }
+    actual_targets = crate::config::domain::canonicalize_domain_rules(&actual_targets)
+        .map_err(|error| format!("Invalid health-check target: {error}"))?;
+    if actual_targets.iter().any(|target| target.starts_with("*.")) {
+        return Err("Wildcard health-check targets are not supported.".into());
+    }
 
     let mut all_healthy = true;
     for target in &actual_targets {
-        let url = if target.starts_with("http") {
-            target.to_string()
-        } else {
-            format!("https://{}", target)
-        };
+        let url = format!("https://{}", target);
 
-        let result = state.http_client
+        let result = state
+            .http_client
             .head(&url)
             .timeout(Duration::from_secs(5))
             .send()
@@ -505,7 +613,11 @@ pub async fn get_engine_health(
     }
 
     #[cfg(target_os = "windows")]
-    let latency_ms: u64 = if all_healthy { icmp_ping_ms().unwrap_or(0) } else { 0 };
+    let latency_ms: u64 = if all_healthy {
+        icmp_ping_ms().unwrap_or(0)
+    } else {
+        0
+    };
     #[cfg(not(target_os = "windows"))]
     let latency_ms: u64 = 0;
 
@@ -563,30 +675,89 @@ pub struct IpWhoIsResponse {
 #[tauri::command]
 pub async fn get_geoip_data(state: State<'_, AppState>) -> Result<IpWhoIsResponse, String> {
     let client = &state.http_client;
-    let response = client.get("https://ipwho.is/")
+    let response = client
+        .get("https://ipwho.is/")
         .send()
         .await
         .map_err(|e| e.to_string())?;
-    
-    let data = response.json::<IpWhoIsResponse>()
+
+    let data = response
+        .json::<IpWhoIsResponse>()
         .await
         .map_err(|e| e.to_string())?;
-        
+
     Ok(data)
 }
 
 #[tauri::command]
 pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
-    if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err("Güvenlik ihlali: Yalnızca HTTP veya HTTPS şemalarına izin verilir.".into());
+    let parsed = reqwest::Url::parse(&url).map_err(|_| "The URL is invalid.".to_string())?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() {
+        return Err("Security policy: only absolute HTTPS URLs are allowed.".into());
     }
     use tauri_plugin_opener::OpenerExt;
-    app.opener().open_path(url, None::<String>).map_err(|e| e.to_string())
+    app.opener()
+        .open_url(parsed.as_str(), None::<String>)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_network_stats() -> (u64, u64) {
     crate::network::get_total_network_bytes()
+}
+
+#[tauri::command]
+pub async fn set_dns_watchdog(
+    enabled: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ForwarderStatus, String> {
+    let _sync_guard = state.dns_sync.lock().await;
+    let existing = {
+        let mut guard = state
+            .forwarder
+            .lock()
+            .map_err(|_| "Forwarder lock poisoned.".to_string())?;
+        guard.take()
+    };
+    let Some(handle) = existing else {
+        tracing::info!("DNS watchdog setting saved; forwarder is not running.");
+        return Ok(forwarder_status(
+            false,
+            DOH_FORWARDER_DEFAULT_PORT,
+            DoHEndpoint::Cloudflare.url().to_string(),
+            false,
+            &app,
+        ));
+    };
+    let endpoint = handle.endpoint;
+    let previous_dns = handle.previous_dns.clone();
+    handle.stop().await;
+    let status = match start_dns_forwarder_runtime(&app, state.inner(), enabled, endpoint).await {
+        Ok(status) => status,
+        Err(error) => {
+            let restored = crate::dns::restore_dns_snapshot(&previous_dns);
+            if restored.success {
+                let _ = crate::dns::clear_dns_restore_snapshot(&app);
+            }
+            return Err(format!(
+                "DNS watchdog change could not restart the forwarder; previous DNS restore success={}: {error}",
+                restored.success
+            ));
+        }
+    };
+    if let Ok(mut guard) = state.forwarder.lock() {
+        if let Some(handle) = guard.as_mut() {
+            handle.previous_dns = previous_dns;
+        }
+    }
+    tracing::info!("DNS watchdog runtime state was changed and verified: enabled={enabled}.");
+    Ok(status)
+}
+
+#[tauri::command]
+pub fn validate_socks5_proxy(proxy: String) -> Result<String, String> {
+    crate::dns::forwarder::normalize_socks5_proxy(&proxy)
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -600,11 +771,14 @@ pub struct DnsConfigStatus {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Flat arguments preserve the existing Tauri IPC contract.
 pub async fn sync_dns_settings(
     protocol: String,
     adblock: bool,
     cache: bool,
     socks5_proxy: String,
+    health_check_targets: Vec<String>,
+    emit_event: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<DnsConfigStatus, String> {
@@ -612,16 +786,64 @@ pub async fn sync_dns_settings(
     if protocol != "doh" && protocol != "dot" {
         return Err(format!("Unsupported DNS transport protocol: {}", protocol));
     }
+    let health_check_targets =
+        crate::config::domain::canonicalize_domain_rules(&health_check_targets)
+            .map_err(|error| format!("Invalid DNS health-check target: {error}"))?;
+    if health_check_targets.is_empty() {
+        return Err("At least one DNS health-check target is required.".into());
+    }
     let settings = crate::dns::forwarder::DnsSettings {
         protocol: protocol.clone(),
         adblock,
         cache,
         socks5_proxy: socks5_proxy.clone(),
+        health_check_targets,
     };
-    crate::dns::forwarder::update_dns_settings_cache(settings.clone());
+    let settings_changed = crate::dns::forwarder::read_dns_settings(&app) != settings;
+    crate::dns::forwarder::update_dns_settings_cache(settings.clone())?;
+    if adblock {
+        crate::dns::forwarder::initialize_adblock(&app);
+    }
+    let running = if settings_changed {
+        let mut guard = state
+            .forwarder
+            .lock()
+            .map_err(|_| "Forwarder lock poisoned.".to_string())?;
+        guard.take()
+    } else {
+        None
+    };
+    if let Some(handle) = running {
+        let endpoint = handle.endpoint;
+        let watchdog_enabled = handle.watchdog_enabled;
+        let previous_dns = handle.previous_dns.clone();
+        handle.stop().await;
+        if let Err(error) =
+            start_dns_forwarder_runtime(&app, state.inner(), watchdog_enabled, endpoint).await
+        {
+            let restored = crate::dns::restore_dns_snapshot(&previous_dns);
+            if restored.success {
+                let _ = crate::dns::clear_dns_restore_snapshot(&app);
+            }
+            return Err(format!(
+                "DNS runtime restart failed; previous DNS restore success={}: {error}",
+                restored.success
+            ));
+        }
+        if let Ok(mut guard) = state.forwarder.lock() {
+            if let Some(handle) = guard.as_mut() {
+                handle.previous_dns = previous_dns;
+            }
+        }
+        tracing::info!("Running DNS forwarder was restarted to verify the changed settings.");
+    } else if !settings_changed {
+        tracing::info!("DNS settings were already active; no forwarder restart was needed.");
+    }
 
     let verified = crate::dns::forwarder::read_dns_settings(&app);
-    let forwarder_active = state.forwarder.lock()
+    let forwarder_active = state
+        .forwarder
+        .lock()
         .map_err(|_| "Forwarder lock poisoned.".to_string())?
         .is_some();
     let result = DnsConfigStatus {
@@ -631,11 +853,15 @@ pub async fn sync_dns_settings(
         socks5_proxy: verified.socks5_proxy,
         forwarder_active,
     };
-    app.emit("dns_config_synced", result.clone()).map_err(|e| e.to_string())?;
+    if emit_event.unwrap_or(true) {
+        app.emit("dns_config_synced", result.clone())
+            .map_err(|e| e.to_string())?;
+    }
     tracing::info!(
-        "DNS settings applied and verified: protocol={}, cache={}, adblock={}, proxy={}",
+        "DNS settings applied and verified: protocol={}, cache={}, adblock={}, proxy={}, health_target={}",
         result.protocol.to_uppercase(), result.cache, result.adblock,
-        if result.socks5_proxy.is_empty() { "direct" } else { "SOCKS5" }
+        if result.socks5_proxy.is_empty() { "direct" } else { "SOCKS5H" },
+        verified.health_check_targets.first().map(String::as_str).unwrap_or("example.com")
     );
     Ok(result)
 }
@@ -649,6 +875,7 @@ pub struct BypassConfigStatus {
     engine_running: bool,
     whitelist_domains: Vec<String>,
     blacklist_domains: Vec<String>,
+    active_preset_id: String,
 }
 
 #[tauri::command]
@@ -660,6 +887,7 @@ pub async fn sync_bypass_config(
     kill_switch: bool,
     whitelist_domains: Vec<String>,
     blacklist_domains: Vec<String>,
+    active_preset_id: String,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<BypassConfigStatus, String> {
@@ -671,6 +899,12 @@ pub async fn sync_bypass_config(
         .map_err(|error| format!("Invalid whitelist domain: {error}"))?;
     let blacklist_domains = crate::config::domain::canonicalize_domain_rules(&blacklist_domains)
         .map_err(|error| format!("Invalid blacklist domain: {error}"))?;
+    if mode == "whitelist" && whitelist_domains.is_empty() {
+        return Err(
+            "Whitelist mode requires at least one valid domain; the running engine was left unchanged."
+                .into(),
+        );
+    }
     let canonical_list = match mode.as_str() {
         "whitelist" => whitelist_domains.join("\n"),
         "blacklist" => blacklist_domains.join("\n"),
@@ -691,25 +925,59 @@ pub async fn sync_bypass_config(
     let status = state.engine_manager.current_status();
     let mut engine_restarted = false;
     if let crate::engine::EngineStatus::Running { .. } = status {
-        tracing::info!("Bypass config changed while engine is running. Restarting engine silently...");
-        let active_preset_id = crate::read_last_preset_id(&app).unwrap_or_else(|| "default".to_string());
-        
-        let preset_opt = if let Ok(loader) = state.config_loader.lock() {
-            preset_opt_guard(loader.find_preset(&active_preset_id))
-        } else {
-            None
-        };
-
-        if let Some(preset) = preset_opt {
-            state
-                .engine_manager
-                .stop(&app)
-                .map_err(|error| format!("Failed to stop engine before Pattern restart: {error}"))?;
-            if let Err(e) = state.engine_manager.start(&preset, &app).await {
-                return Err(format!("Failed to restart engine: {:?}", e));
+        tracing::info!(
+            "Bypass config changed while engine is running. Restarting engine silently..."
+        );
+        if kill_switch {
+            let forwarder_active = state
+                .forwarder
+                .lock()
+                .map_err(|_| "Forwarder lock poisoned.".to_string())?
+                .is_some();
+            if !forwarder_active {
+                let _dns_guard = state.dns_sync.lock().await;
+                let forwarder_active = state
+                    .forwarder
+                    .lock()
+                    .map_err(|_| "Forwarder lock poisoned.".to_string())?
+                    .is_some();
+                if forwarder_active {
+                    tracing::info!("DNS forwarder became active while the Pattern update was waiting; reusing it.");
+                } else {
+                    let runtime =
+                        crate::settings::read_runtime_settings(&app)?.unwrap_or_default();
+                    let endpoint = if runtime.selected_dns_id == "google" {
+                        DoHEndpoint::Google
+                    } else {
+                        DoHEndpoint::Cloudflare
+                    };
+                    start_dns_forwarder_runtime(&app, state.inner(), runtime.watchdog, endpoint)
+                        .await?;
+                    tracing::info!(
+                        "DNS forwarder was started before applying Kill Switch to the running engine."
+                    );
+                }
             }
-            engine_restarted = true;
         }
+        let preset = state
+            .config_loader
+            .lock()
+            .map_err(|_| "Preset loader lock is poisoned.".to_string())?
+            .find_preset(&active_preset_id)
+            .ok_or_else(|| {
+                format!(
+                    "Active preset '{}' was not found; Pattern restart was cancelled.",
+                    active_preset_id
+                )
+            })?;
+        state
+            .engine_manager
+            .stop(&app)
+            .map_err(|error| format!("Failed to stop engine before Pattern restart: {error}"))?;
+        if let Err(e) = state.engine_manager.start(&preset, &app).await {
+            return Err(format!("Failed to restart engine: {:?}", e));
+        }
+        engine_restarted = true;
     }
     let domain_count = match mode.as_str() {
         "whitelist" => whitelist_domains.len(),
@@ -720,18 +988,21 @@ pub async fn sync_bypass_config(
         mode: mode.clone(),
         domain_count,
         engine_restarted,
-        engine_running: matches!(state.engine_manager.current_status(), crate::engine::EngineStatus::Running { .. }),
+        engine_running: matches!(
+            state.engine_manager.current_status(),
+            crate::engine::EngineStatus::Running { .. }
+        ),
         whitelist_domains,
         blacklist_domains,
+        active_preset_id,
     };
-    app.emit("bypass_config_synced", result.clone()).map_err(|e| e.to_string())?;
+    app.emit("bypass_config_synced", result.clone())
+        .map_err(|e| e.to_string())?;
     tracing::info!(
         "Bypass pattern saved and verified: mode={}, domains={}, engine_restarted={}",
-        mode, domain_count, engine_restarted
+        mode,
+        domain_count,
+        engine_restarted
     );
     Ok(result)
-}
-
-fn preset_opt_guard<T>(val: Option<T>) -> Option<T> {
-    val
 }

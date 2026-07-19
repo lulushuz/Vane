@@ -2,7 +2,7 @@
  * Validates and sanitizes a raw JSON object before it is trusted as a Preset.
  *
  * Defense against CVE-2 (JSON Import Path Traversal / CLI Injection):
- * - Rejects any arg that does not start with a known safe prefix.
+ * - Performs transport-safe structural checks before authoritative Rust validation.
  * - Ensures the args array has a reasonable length bound.
  * - Strips any shell metacharacters from string values.
  *
@@ -11,25 +11,6 @@
  */
 
 import type { Preset } from '../types/engine';
-
-/** Known safe argument prefixes for winws.exe. Any arg not in this list is rejected. */
-const ALLOWED_ARG_PREFIXES = [
-  '--filter-tcp=',
-  '--filter-udp=',
-  '--wf-tcp=',
-  '--wf-udp=',
-  '--dpi-desync=',
-  '--dpi-desync-split-pos=',
-  '--dpi-desync-repeats=',
-  '--dpi-desync-fooling=',
-  '--dpi-desync-ttl=',
-  '--dpi-desync-cutoff=',
-  '--dpi-desync-any-protocol',
-  '--dpi-desync-autottl',
-  '--mss=',
-  '--new-ttl=',
-  '--max-payload=',
-];
 
 /** Shell metacharacters that must never appear in any arg. */
 const SHELL_INJECTION_PATTERN = /[;&|`$<>'"\\]/;
@@ -74,6 +55,9 @@ export function validateImportedPreset(raw: unknown): ValidationResult {
     if (typeof arg !== 'string') {
       return { ok: false, error: 'Tüm argümanlar string olmalıdır.' };
     }
+    if (arg.length === 0 || new TextEncoder().encode(arg).length > 128) {
+      return { ok: false, error: 'Argüman boş olamaz ve 128 baytı aşamaz.' };
+    }
 
     // Shell metacharacter injection guard
     if (SHELL_INJECTION_PATTERN.test(arg)) {
@@ -83,17 +67,7 @@ export function validateImportedPreset(raw: unknown): ValidationResult {
       };
     }
 
-    // Allowlist prefix check
-    const isAllowed = ALLOWED_ARG_PREFIXES.some(
-      (prefix) => arg === prefix.replace('=', '') || arg.startsWith(prefix)
-    );
-
-    if (!isAllowed) {
-      return {
-        ok: false,
-        error: `Tanınmayan argüman reddedildi: "${arg}". Yalnızca bilinen winws parametreleri kabul edilir.`,
-      };
-    }
+    // The Rust command validates the complete, canonical argument allowlist and grammar.
   }
 
   // ─── Build sanitized preset ───────────────────────────────────────────────

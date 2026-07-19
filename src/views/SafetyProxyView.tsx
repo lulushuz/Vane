@@ -4,17 +4,24 @@ import { ShieldAlert, EyeOff, Network, Save } from 'lucide-react';
 import { Toast } from '../components/Toast/Toast';
 import { translations } from '../utils/translations';
 import styles from './SafetyProxyView.module.css';
+import { invoke } from '@tauri-apps/api/core';
 
 export function SafetyProxyView() {
   const {
     killSwitch,
     watchdog,
     proxySocks5,
-    setKillSwitch,
-    setWatchdog,
-    setProxySocks5,
     status,
     language,
+    appendLog,
+    dnsProtocol,
+    dnsAdBlock,
+    dnsCache,
+    healthCheckTargets,
+    bypassMode,
+    whitelistDomains,
+    blacklistDomains,
+    activePresetId,
   } = useEngineStore();
 
   const t = translations[language];
@@ -32,11 +39,84 @@ export function SafetyProxyView() {
     setLocalProxy(proxySocks5);
   }, [killSwitch, watchdog, proxySocks5]);
 
-  const handleSave = () => {
-    setKillSwitch(localKillSwitch);
-    setWatchdog(localWatchdog);
-    setProxySocks5(localProxy.trim());
-    setShowToast(true);
+  const handleSave = async () => {
+    let verifiedProxy = '';
+    try {
+      verifiedProxy = await invoke<string>('validate_socks5_proxy', { proxy: localProxy });
+    } catch (error) {
+      appendLog(language === 'tr'
+        ? `[ERROR] SOCKS5 proxy kaydedilmedi: ${error}`
+        : `[ERROR] SOCKS5 proxy was not saved: ${error}`, 'error');
+      return;
+    }
+    if (verifiedProxy && dnsProtocol === 'dot') {
+      appendLog(language === 'tr'
+        ? '[ERROR] SOCKS5 proxy kaydedilmedi: önce DNS protokolünü DoH olarak seçin.'
+        : '[ERROR] SOCKS5 proxy was not saved: select DoH as the DNS protocol first.', 'error');
+      return;
+    }
+    const oldSettings = { killSwitch, watchdog, proxySocks5 };
+    const activeDomains = bypassMode === 'whitelist' ? whitelistDomains : blacklistDomains;
+    try {
+      await invoke('sync_dns_settings', {
+        protocol: dnsProtocol === 'doq' ? 'doh' : dnsProtocol,
+        adblock: dnsAdBlock,
+        cache: dnsCache,
+        socks5Proxy: verifiedProxy,
+        healthCheckTargets,
+        emitEvent: false,
+      });
+      await invoke('sync_bypass_config', {
+        mode: bypassMode,
+        list: activeDomains.join('\n'),
+        proxy: verifiedProxy,
+        killSwitch: localKillSwitch,
+        whitelistDomains,
+        blacklistDomains,
+        activePresetId: activePresetId || 'default',
+      });
+      const watchdogStatus = await invoke<{ active: boolean; watchdogEnabled: boolean }>(
+        'set_dns_watchdog',
+        { enabled: localWatchdog },
+      );
+      useEngineStore.setState({
+        killSwitch: localKillSwitch,
+        watchdog: watchdogStatus.active ? watchdogStatus.watchdogEnabled : localWatchdog,
+        proxySocks5: verifiedProxy,
+      });
+      appendLog(language === 'tr'
+        ? `[SECURITY] Güvenlik ayarları doğrulandı: Kill Switch ${localKillSwitch ? 'açık' : 'kapalı'}, gözlemci ${localWatchdog ? 'açık' : 'kapalı'}, DNS bağlantısı ${verifiedProxy ? 'SOCKS5H proxy' : 'doğrudan'}.`
+        : `[SECURITY] Safety settings verified: Kill Switch ${localKillSwitch ? 'on' : 'off'}, watchdog ${localWatchdog ? 'on' : 'off'}, DNS connection ${verifiedProxy ? 'SOCKS5H proxy' : 'direct'}.`, 'info');
+      setShowToast(true);
+    } catch (error) {
+      // Best-effort runtime rollback. Persistence is unchanged until every
+      // backend step above succeeds.
+      try {
+        await invoke('sync_dns_settings', {
+          protocol: dnsProtocol === 'doq' ? 'doh' : dnsProtocol,
+          adblock: dnsAdBlock,
+          cache: dnsCache,
+          socks5Proxy: oldSettings.proxySocks5,
+          healthCheckTargets,
+          emitEvent: false,
+        });
+        await invoke('sync_bypass_config', {
+          mode: bypassMode,
+          list: activeDomains.join('\n'),
+          proxy: oldSettings.proxySocks5,
+          killSwitch: oldSettings.killSwitch,
+          whitelistDomains,
+          blacklistDomains,
+          activePresetId: activePresetId || 'default',
+        });
+        await invoke('set_dns_watchdog', { enabled: oldSettings.watchdog });
+      } catch {
+        // The original error remains the actionable message; backend logs retain rollback detail.
+      }
+      appendLog(language === 'tr'
+        ? `[ERROR] Güvenlik ayarları doğrulanamadı; kalıcı ayarlar değiştirilmedi: ${error}`
+        : `[ERROR] Safety settings could not be verified; persisted settings were not changed: ${error}`, 'error');
+    }
   };
 
   return (
@@ -44,7 +124,7 @@ export function SafetyProxyView() {
       <header className={styles.header}>
         <h2 className={styles.title}>{t.safety}</h2>
         <p className={styles.subtitle}>
-          {language === 'tr' ? 'Güvenlik duvarı koruması, DNS sızıntı koruması, otomatik kurtarma ve SOCKS5 proxy yönlendirme.' : 'Firewall protection, DNS leak prevention, auto-recovery, and SOCKS5 proxy routing.'}
+          {language === 'tr' ? 'Güvenlik duvarı koruması, DNS sızıntı koruması, otomatik kurtarma ve DoH için SOCKS5 upstream yönlendirme.' : 'Firewall protection, DNS leak prevention, auto-recovery, and SOCKS5 upstream routing for DoH.'}
         </p>
       </header>
 

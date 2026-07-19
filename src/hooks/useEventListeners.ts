@@ -57,12 +57,25 @@ export function useEventListeners(): void {
 
     // Emitted when DNS Guard auto-applies Cloudflare on engine start
     register<string>('dns_auto_applied', (message) => {
-      appendLog(`[DNS] ${message}`, 'warn');
+      const tr = useEngineStore.getState().language === 'tr';
+      appendLog(
+        message === 'DNS_WATCHDOG_PREVIOUS_CONFIGURATION_RESTORED'
+          ? (tr
+            ? '[DNS] Üst DNS bağlantısı kesildi. İnternet erişimini kurtarmak için önceki adaptör DNS ayarları otomatik olarak geri yüklendi.'
+            : '[DNS] The upstream resolver failed. The previous adapter DNS settings were restored automatically to recover connectivity.')
+          : `[DNS] ${message}`,
+        'warn',
+      );
     });
 
     // WM_DEVICECHANGE fired by network/watcher.rs on adapter changes
     register<void>('network_changed', () => {
-      appendLog('[SYSTEM] Network change detected — refreshing DNS status...', 'warn');
+      appendLog(
+        useEngineStore.getState().language === 'tr'
+          ? '[SYSTEM] Ağ değişikliği algılandı; DNS durumu yeniden doğrulanıyor...'
+          : '[SYSTEM] Network change detected; DNS status is being verified again...',
+        'warn',
+      );
       refreshDnsStatus();
     });
 
@@ -75,6 +88,7 @@ export function useEventListeners(): void {
     register<'tr' | 'en'>('sync_language', (lang) => {
       useEngineStore.setState({ language: lang });
     });
+
 
     // Keep persisted settings identical in both the widget and settings windows.
     register<BypassConfigStatus>('bypass_config_synced', (config) => {
@@ -134,10 +148,37 @@ function makeUnderstandable(content: string, language: 'tr' | 'en'): string {
   if (/DNS forwarder stopped and system DNS was restored/i.test(clean)) return tr
     ? '[DNS] DNS yönlendiricisi durduruldu; sistem DNS ayarı otomatik olarak geri yüklendi.'
     : '[DNS] DNS forwarder stopped; the system DNS setting was restored automatically.';
-  match = clean.match(/DNS settings applied and verified: protocol=([^,]+), cache=(true|false), adblock=(true|false), proxy=(.+)/i);
+  if (/previous DNS forwarder shutdown was incomplete.*restored and verified/i.test(clean)) return tr
+    ? '[DNS] Önceki çalışmada DNS yönlendiricisi düzgün kapanmamış. Kaydedilen adaptör DNS ayarları açılışta geri yüklendi ve doğrulandı.'
+    : '[DNS] The previous DNS forwarder session did not close cleanly. Saved adapter DNS settings were restored and verified at startup.';
+  if (/System DNS was restored successfully after the upstream failure/i.test(clean)) return tr
+    ? '[DNS] Üst DNS bağlantısı kesildi; bağlantıyı korumak için önceki sistem DNS ayarı başarıyla geri yüklendi.'
+    : '[DNS] The upstream resolver failed; the previous system DNS setting was restored successfully to preserve connectivity.';
+  if (/DNS settings were already active; no forwarder restart was needed/i.test(clean)) return tr
+    ? '[DNS] Seçilen ayarlar zaten çalışıyordu; DNS yönlendiricisi gereksiz yere yeniden başlatılmadı.'
+    : '[DNS] The selected settings were already active; no unnecessary forwarder restart was performed.';
+  if (/Running DNS forwarder was restarted to verify the changed settings/i.test(clean)) return tr
+    ? '[DNS] Değişen ayarların gerçekten kullanılması için çalışan DNS yönlendiricisi yeniden başlatıldı ve doğrulandı.'
+    : '[DNS] The running DNS forwarder was restarted and verified so the changed settings are actually in use.';
+  if (/DNS forwarder was started before applying Kill Switch/i.test(clean)) return tr
+    ? '[SECURITY] DNS Kill Switch uygulanmadan önce şifreli yerel DNS yönlendiricisi başlatıldı.'
+    : '[SECURITY] The encrypted local DNS forwarder was started before DNS Kill Switch was applied.';
+  if (/Settings primary was (missing|damaged); using the last-known-good backup/i.test(clean)) return tr
+    ? '[SYSTEM] Ana ayar dosyası okunamadı; kullanıcı ayarlarının sıfırlanmaması için son sağlam yedek kullanıldı.'
+    : '[SYSTEM] The primary settings file was unreadable; the last-known-good backup was used instead of resetting user preferences.';
+  match = clean.match(/DNS settings applied and verified: protocol=([^,]+), cache=(true|false), adblock=(true|false), proxy=([^,]+), health_target=(.+)/i);
   if (match) return tr
-    ? `[DNS] Çalışma ayarı doğrulandı: protokol ${match[1]}, önbellek ${match[2] === 'true' ? 'açık' : 'kapalı'}, reklam filtresi ${match[3] === 'true' ? 'açık' : 'kapalı'}, bağlantı ${match[4] === 'direct' ? 'doğrudan' : match[4]}.`
-    : `[DNS] Runtime setting verified: protocol ${match[1]}, cache ${match[2] === 'true' ? 'on' : 'off'}, ad filter ${match[3] === 'true' ? 'on' : 'off'}, connection ${match[4]}.`;
+    ? `[DNS] Çalışma ayarı doğrulandı: protokol ${match[1]}, önbellek ${match[2] === 'true' ? 'açık' : 'kapalı'}, reklam/kötü amaçlı alan filtresi ${match[3] === 'true' ? 'açık' : 'kapalı'}, bağlantı ${match[4] === 'direct' ? 'doğrudan' : match[4]}, sağlık testi ${match[5]}.`
+    : `[DNS] Runtime setting verified: protocol ${match[1]}, cache ${match[2] === 'true' ? 'on' : 'off'}, ad/malware domain filter ${match[3] === 'true' ? 'on' : 'off'}, connection ${match[4]}, health target ${match[5]}.`;
+  if (/Smart DNS Cache is disabled and all RAM cache entries were cleared/i.test(clean)) return tr
+    ? '[DNS] Smart DNS Cache gerçekten kapatıldı ve bellekteki tüm kayıtlar temizlendi.'
+    : '[DNS] Smart DNS Cache was disabled and every in-memory entry was cleared.';
+  if (/Smart DNS Cache is enabled with TTL aging/i.test(clean)) return tr
+    ? '[DNS] Smart DNS Cache etkin: TTL süreleri yaşlandırılıyor ve en eski kullanılmayan kayıtlar kontrollü temizleniyor.'
+    : '[DNS] Smart DNS Cache is active with TTL aging and controlled least-recently-used eviction.';
+  if (/SOCKS5H client created/i.test(clean)) return tr
+    ? '[DNS] SOCKS5H upstream doğrulandı; DNS sunucusu adı proxy üzerinden çözümlenecek ve doğrudan bağlantıya sessiz geçiş yapılmayacak.'
+    : '[DNS] SOCKS5H upstream verified; resolver hostnames will be resolved through the proxy with no silent direct fallback.';
   match = clean.match(/Bypass pattern saved and verified: mode=([^,]+), domains=(\d+), engine_restarted=(true|false)/i);
   if (match) return tr
     ? `[PATTERN] Desen kaydedildi ve doğrulandı: mod ${match[1]}, ${match[2]} alan adı, motor ${match[3] === 'true' ? 'yeniden başlatıldı' : 'çalışmıyor'}.`
@@ -154,13 +195,13 @@ function makeUnderstandable(content: string, language: 'tr' | 'en'): string {
   if (/DNS watchdog was disabled; no health-check task was started/i.test(clean)) return tr
     ? '[DNS] Bağlantı gözlemcisi kapalı; arka planda gözlem görevi başlatılmadı.'
     : '[DNS] Connection watchdog is off; no background health-check task was started.';
-  match = clean.match(/DNS watchdog: ([A-Z]+) upstream could not resolve the health-check domain \(failure (\d)\/3\)/i);
+  match = clean.match(/DNS watchdog: ([A-Z]+) upstream could not resolve '([^']+)' \(failure (\d)\/3\)/i);
   if (match) return tr
-    ? `[DNS] ${match[1]} sunucusu gerçek test alan adını çözemedi (${match[2]}/3). Sistem DNS henüz değiştirilmedi.`
-    : `[DNS] The ${match[1]} upstream could not resolve the real test domain (${match[2]}/3). System DNS has not been changed yet.`;
+    ? `[DNS] ${match[1]} sunucusu “${match[2]}” test alan adını çözemedi (${match[3]}/3). Sistem DNS henüz değiştirilmedi.`
+    : `[DNS] The ${match[1]} upstream could not resolve “${match[2]}” (${match[3]}/3). System DNS has not been changed yet.`;
   if (/DNS upstream failed three real resolution checks/i.test(clean)) return tr
-    ? '[DNS] Üç gerçek çözümleme denemesi başarısız oldu; internet erişimini korumak için sistem DNS ayarı DHCP’ye döndürülüyor.'
-    : '[DNS] Three real resolution checks failed; system DNS is being restored to DHCP to preserve connectivity.';
+    ? '[DNS] Üç gerçek çözümleme denemesi başarısız oldu; internet erişimini korumak için önceki sistem DNS ayarı geri yükleniyor.'
+    : '[DNS] Three real resolution checks failed; the previous system DNS setting is being restored to preserve connectivity.';
   if (/DNS kill switch verified: TCP and UDP port 53 block rules were applied/i.test(clean)) return tr
     ? '[SECURITY] DNS Kill Switch doğrulandı: TCP ve UDP 53 çıkış kuralları etkin.'
     : '[SECURITY] DNS Kill Switch verified: TCP and UDP port 53 outbound rules are active.';

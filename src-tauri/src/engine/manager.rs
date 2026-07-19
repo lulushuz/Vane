@@ -1,10 +1,11 @@
-use std::sync::{Arc, Mutex};
 use std::process::Stdio;
-use tauri::{AppHandle, Manager, Emitter};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::preset::Preset;
-use crate::engine::{error::EngineError, process::ProcessHandle};
 use crate::engine::sanitizer::validate_preset_args;
+use crate::engine::{error::EngineError, process::ProcessHandle};
 use crate::privilege::checker::is_elevated;
 
 #[cfg(target_os = "windows")]
@@ -19,18 +20,24 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub enum EngineStatus {
     Stopped,
     Starting,
-    Running { pid: u32 },
-    Error { 
-        message: String, 
+    Running {
+        pid: u32,
+    },
+    Error {
+        message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        code: Option<String> 
+        code: Option<String>,
     },
 }
 
 pub trait EngineEventDispatcher: Send + Sync {
     fn emit_log_batch(&self, batch: Vec<String>);
     fn emit_status(&self, status: &EngineStatus);
-    fn resolve_path(&self, path: &str, base: tauri::path::BaseDirectory) -> Result<std::path::PathBuf, tauri::Error>;
+    fn resolve_path(
+        &self,
+        path: &str,
+        base: tauri::path::BaseDirectory,
+    ) -> Result<std::path::PathBuf, tauri::Error>;
     fn clone_app_handle(&self) -> AppHandle;
 }
 
@@ -42,8 +49,12 @@ impl EngineEventDispatcher for AppHandle {
     fn emit_status(&self, status: &EngineStatus) {
         let _ = self.emit("engine_status", status);
     }
-    
-    fn resolve_path(&self, path: &str, base: tauri::path::BaseDirectory) -> Result<std::path::PathBuf, tauri::Error> {
+
+    fn resolve_path(
+        &self,
+        path: &str,
+        base: tauri::path::BaseDirectory,
+    ) -> Result<std::path::PathBuf, tauri::Error> {
         self.path().resolve(path, base)
     }
 
@@ -55,8 +66,12 @@ impl EngineEventDispatcher for AppHandle {
 #[derive(Debug)]
 pub enum EngineState {
     Idle,
-    Starting { cancel: tokio::sync::oneshot::Sender<()> },
-    Running { handle: Box<ProcessHandle> },
+    Starting {
+        cancel: tokio::sync::oneshot::Sender<()>,
+    },
+    Running {
+        handle: Box<ProcessHandle>,
+    },
     Stopping,
     Failed(EngineError),
 }
@@ -81,15 +96,18 @@ impl EngineManager {
     }
 
     fn verify_binary_hash(path: &std::path::Path, expected_hex: &str) -> Result<(), EngineError> {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         use std::fs::File;
         use std::io::Read;
 
-        let mut file = File::open(path).map_err(|e| EngineError::IoError(format!("Dosya açılamadı: {}", e)))?;
+        let mut file = File::open(path)
+            .map_err(|e| EngineError::IoError(format!("Dosya açılamadı: {}", e)))?;
         let mut hasher = Sha256::new();
         let mut buffer = [0u8; 8192];
         loop {
-            let n = file.read(&mut buffer).map_err(|e| EngineError::IoError(format!("Dosya okunamadı: {}", e)))?;
+            let n = file
+                .read(&mut buffer)
+                .map_err(|e| EngineError::IoError(format!("Dosya okunamadı: {}", e)))?;
             if n == 0 {
                 break;
             }
@@ -108,28 +126,52 @@ impl EngineManager {
     }
 
     // Safely resolves binary path from Resource
-    fn resolve_binary_path(dispatcher: &impl EngineEventDispatcher) -> Result<std::path::PathBuf, EngineError> {
+    fn resolve_binary_path(
+        dispatcher: &impl EngineEventDispatcher,
+    ) -> Result<std::path::PathBuf, EngineError> {
         #[cfg(target_os = "windows")]
         {
             let path = dispatcher
-                .resolve_path("binaries/winws-x86_64-pc-windows-msvc.exe", tauri::path::BaseDirectory::Resource)
-                .map_err(|e| EngineError::BinaryNotFound(format!("Tauri Path resolve error: {}", e)))?;
+                .resolve_path(
+                    "binaries/winws-x86_64-pc-windows-msvc.exe",
+                    tauri::path::BaseDirectory::Resource,
+                )
+                .map_err(|e| {
+                    EngineError::BinaryNotFound(format!("Tauri Path resolve error: {}", e))
+                })?;
             if !path.exists() {
-                return Err(EngineError::BinaryNotFound(format!("winws.exe not found at: {}", path.display())));
+                return Err(EngineError::BinaryNotFound(format!(
+                    "winws.exe not found at: {}",
+                    path.display()
+                )));
             }
-            Self::verify_binary_hash(&path, "2DA71E80878DC270AC83F5893ECBB841F9752A57F1DA8FF9325636B4346BC632")?;
+            Self::verify_binary_hash(
+                &path,
+                "2DA71E80878DC270AC83F5893ECBB841F9752A57F1DA8FF9325636B4346BC632",
+            )?;
             Ok(path)
         }
 
         #[cfg(target_os = "linux")]
         {
             let path = dispatcher
-                .resolve_path("binaries/nfqws-x86_64-unknown-linux-gnu", tauri::path::BaseDirectory::Resource)
-                .map_err(|e| EngineError::BinaryNotFound(format!("Tauri Path resolve error: {}", e)))?;
+                .resolve_path(
+                    "binaries/nfqws-x86_64-unknown-linux-gnu",
+                    tauri::path::BaseDirectory::Resource,
+                )
+                .map_err(|e| {
+                    EngineError::BinaryNotFound(format!("Tauri Path resolve error: {}", e))
+                })?;
             if !path.exists() {
-                return Err(EngineError::BinaryNotFound(format!("nfqws not found at: {}", path.display())));
+                return Err(EngineError::BinaryNotFound(format!(
+                    "nfqws not found at: {}",
+                    path.display()
+                )));
             }
-            Self::verify_binary_hash(&path, "8D3452CE0E0B9D9FED2A3A087B1CAECFD39A910B7A31B304078FCBED3EA0E33C")?;
+            Self::verify_binary_hash(
+                &path,
+                "8D3452CE0E0B9D9FED2A3A087B1CAECFD39A910B7A31B304078FCBED3EA0E33C",
+            )?;
             // Ensure executable permissions
             use std::os::unix::fs::PermissionsExt;
             if let Ok(metadata) = std::fs::metadata(&path) {
@@ -138,7 +180,10 @@ impl EngineManager {
                     perms.set_mode(0o755);
                     if let Err(e) = std::fs::set_permissions(&path, perms) {
                         tracing::warn!("Could not set executable permissions on nfqws: {}", e);
-                        return Err(EngineError::IoError(format!("Could not set executable permissions on nfqws: {}", e)));
+                        return Err(EngineError::IoError(format!(
+                            "Could not set executable permissions on nfqws: {}",
+                            e
+                        )));
                     }
                 }
             }
@@ -156,7 +201,12 @@ impl EngineManager {
             let mut linux_args = Vec::new();
             linux_args.push("--qnum=200".to_string());
             for arg in preset_args {
-                if arg.starts_with("--wf-") || arg.starts_with("--windivert") || arg.starts_with("tcp.") || arg.starts_with("udp.") || arg.starts_with("icmp.") {
+                if arg.starts_with("--wf-")
+                    || arg.starts_with("--windivert")
+                    || arg.starts_with("tcp.")
+                    || arg.starts_with("udp.")
+                    || arg.starts_with("icmp.")
+                {
                     continue;
                 }
                 linux_args.push(arg.clone());
@@ -165,7 +215,11 @@ impl EngineManager {
         }
     }
 
-    pub async fn start<D: EngineEventDispatcher + Clone + 'static>(&self, preset: &Preset, dispatcher: &D) -> Result<(), EngineError> {
+    pub async fn start<D: EngineEventDispatcher + Clone + 'static>(
+        &self,
+        preset: &Preset,
+        dispatcher: &D,
+    ) -> Result<(), EngineError> {
         #[cfg(target_os = "windows")]
         if !is_elevated() {
             return Err(EngineError::InsufficientPrivileges);
@@ -174,7 +228,9 @@ impl EngineManager {
         validate_preset_args(&preset.args)?;
 
         let rx = {
-            let mut state_lock = self.state.lock()
+            let mut state_lock = self
+                .state
+                .lock()
                 .map_err(|_| EngineError::IoError("State lock poisoned".into()))?;
             match &*state_lock {
                 EngineState::Running { .. } | EngineState::Starting { .. } => {
@@ -222,7 +278,13 @@ impl EngineManager {
             }
             Err(e) => {
                 set_state_failed(&state_clone, e.clone());
-                self.set_status(EngineStatus::Error { message: e.to_string(), code: None }, &dispatcher_clone);
+                self.set_status(
+                    EngineStatus::Error {
+                        message: e.to_string(),
+                        code: None,
+                    },
+                    &dispatcher_clone,
+                );
                 Err(e)
             }
         }
@@ -233,12 +295,17 @@ impl EngineManager {
             tracing::error!("Engine stop continued, but DNS kill-switch cleanup failed: {error}");
         }
 
-        let mut state_lock = self.state.lock()
-            .map_err(|_| {
-                tracing::error!("State lock poisoned (stop phase).");
-                self.set_status(EngineStatus::Error { message: "Internal Error: State poisoned".into(), code: None }, dispatcher);
-                EngineError::IoError("State lock poisoned".into())
-            })?;
+        let mut state_lock = self.state.lock().map_err(|_| {
+            tracing::error!("State lock poisoned (stop phase).");
+            self.set_status(
+                EngineStatus::Error {
+                    message: "Internal Error: State poisoned".into(),
+                    code: None,
+                },
+                dispatcher,
+            );
+            EngineError::IoError("State lock poisoned".into())
+        })?;
 
         match std::mem::replace(&mut *state_lock, EngineState::Stopping) {
             EngineState::Idle => {
@@ -262,7 +329,9 @@ impl EngineManager {
 
                 handle.kill_graceful();
 
-                let mut state_lock = self.state.lock()
+                let mut state_lock = self
+                    .state
+                    .lock()
                     .map_err(|_| EngineError::IoError("State lock poisoned after kill".into()))?;
                 *state_lock = EngineState::Idle;
                 self.set_status(EngineStatus::Stopped, dispatcher);
@@ -326,8 +395,10 @@ impl BypassConfig {
 }
 
 static BYPASS_CONFIG_CACHE: RwLock<Option<BypassConfig>> = RwLock::new(None);
+static KILL_SWITCH_ENABLED: AtomicBool = AtomicBool::new(false);
 
 pub fn update_bypass_config_cache(mode: String, list: String, proxy: String, kill_switch: bool) {
+    KILL_SWITCH_ENABLED.store(kill_switch, Ordering::SeqCst);
     if let Ok(mut guard) = BYPASS_CONFIG_CACHE.write() {
         *guard = Some(BypassConfig {
             mode,
@@ -338,16 +409,23 @@ pub fn update_bypass_config_cache(mode: String, list: String, proxy: String, kil
     }
 }
 
+pub(crate) fn kill_switch_enabled() -> bool {
+    KILL_SWITCH_ENABLED.load(Ordering::SeqCst)
+}
+
 fn parse_bypass_config(content: &str) -> Result<BypassConfig, EngineError> {
-    let file_json = serde_json::from_str::<serde_json::Value>(content)
-        .map_err(|error| EngineError::ConfigParseError(format!("Settings JSON is invalid: {error}")))?;
+    let file_json = serde_json::from_str::<serde_json::Value>(content).map_err(|error| {
+        EngineError::ConfigParseError(format!("Settings JSON is invalid: {error}"))
+    })?;
     let zustand_raw = file_json.get("vane-settings").ok_or_else(|| {
         EngineError::ConfigParseError("The persisted Vane settings entry is missing.".to_string())
     })?;
     let zustand_json = match zustand_raw {
         serde_json::Value::String(value) => serde_json::from_str::<serde_json::Value>(value)
             .map_err(|error| {
-                EngineError::ConfigParseError(format!("Persisted Vane settings are invalid: {error}"))
+                EngineError::ConfigParseError(format!(
+                    "Persisted Vane settings are invalid: {error}"
+                ))
             })?,
         object => object.clone(),
     };
@@ -380,9 +458,10 @@ fn parse_bypass_config(content: &str) -> Result<BypassConfig, EngineError> {
                 .collect()
         })
         .unwrap_or_default();
-    let domains = crate::config::domain::canonicalize_domain_rules(&raw_domains).map_err(|error| {
-        EngineError::ConfigParseError(format!("Persisted bypass domain is invalid: {error}"))
-    })?;
+    let domains =
+        crate::config::domain::canonicalize_domain_rules(&raw_domains).map_err(|error| {
+            EngineError::ConfigParseError(format!("Persisted bypass domain is invalid: {error}"))
+        })?;
 
     Ok(BypassConfig {
         mode,
@@ -406,44 +485,42 @@ fn read_bypass_config(app: &AppHandle) -> Result<BypassConfig, EngineError> {
         }
     }
 
-    let app_data = app.path().app_data_dir().map_err(|error| {
-        EngineError::IoError(format!("Settings storage path is unavailable: {error}"))
-    })?;
-    let settings_path = app_data.join("settings.json");
-    if !settings_path.exists() {
+    let Some(settings) =
+        crate::settings::read_runtime_settings(app).map_err(EngineError::ConfigParseError)?
+    else {
         return Ok(BypassConfig::all_sites());
+    };
+    if !matches!(
+        settings.bypass_mode.as_str(),
+        "all" | "whitelist" | "blacklist"
+    ) {
+        return Err(EngineError::ConfigParseError(format!(
+            "Unsupported persisted bypass mode: {}",
+            settings.bypass_mode
+        )));
     }
-
-    let mut content = None;
-    let mut last_error = None;
-    for _ in 0..3 {
-        match std::fs::read_to_string(&settings_path) {
-            Ok(value) => {
-                content = Some(value);
-                break;
-            }
-            Err(error) => {
-                last_error = Some(error);
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    let content = content.ok_or_else(|| {
-        EngineError::IoError(format!(
-            "Settings could not be read after three attempts: {}",
-            last_error
-                .map(|error| error.to_string())
-                .unwrap_or_else(|| "unknown error".to_string())
-        ))
-    })?;
-    let config = parse_bypass_config(&content)?;
+    let raw_domains = if settings.bypass_mode == "whitelist" {
+        settings.whitelist_domains
+    } else {
+        settings.blacklist_domains
+    };
+    let domains =
+        crate::config::domain::canonicalize_domain_rules(&raw_domains).map_err(|error| {
+            EngineError::ConfigParseError(format!("Persisted bypass domain is invalid: {error}"))
+        })?;
+    let config = BypassConfig {
+        mode: settings.bypass_mode,
+        domain_list: domains.join("\n"),
+        proxy: settings.proxy_socks5,
+        kill_switch: settings.kill_switch,
+    };
     if let Ok(mut guard) = BYPASS_CONFIG_CACHE.write() {
         *guard = Some(config.clone());
     }
     Ok(config)
 }
 
-fn apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
+pub(crate) fn apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -475,12 +552,14 @@ fn apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
             let udp_added = run_netsh(&[
                     "advfirewall", "firewall", "add", "rule",
                     "name=VaneDNSKillSwitch", "dir=out", "action=block",
-                    "protocol=UDP", "remoteport=53"
+                    "protocol=UDP", "remoteport=53",
+                    "remoteip=0.0.0.0-127.0.0.0,127.0.0.2-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
                 ])?;
             let tcp_added = run_netsh(&[
                     "advfirewall", "firewall", "add", "rule",
                     "name=VaneDNSKillSwitch", "dir=out", "action=block",
-                    "protocol=TCP", "remoteport=53"
+                    "protocol=TCP", "remoteport=53",
+                    "remoteip=0.0.0.0-127.0.0.0,127.0.0.2-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
                 ])?;
             if !udp_added || !tcp_added {
                 let _ = run_netsh(&[
@@ -494,7 +573,34 @@ fn apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
                     "DNS kill switch could not be applied to Windows Firewall.".to_string(),
                 ));
             }
-            tracing::info!("DNS kill switch verified: TCP and UDP port 53 block rules were applied.");
+            let verification = std::process::Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "$r=@(Get-NetFirewallRule -DisplayName 'VaneDNSKillSwitch' -Enabled True -Direction Outbound -Action Block -ErrorAction SilentlyContinue); $p=@($r | Get-NetFirewallPortFilter | Where-Object { $_.RemotePort -eq '53' }); if($p.Count -ge 2){exit 0}else{exit 1}",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false);
+            if !verification {
+                let _ = run_netsh(&[
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    "name=VaneDNSKillSwitch",
+                ]);
+                return Err(EngineError::AuthorizationFailed(
+                    "DNS kill switch rules could not be verified after creation.".to_string(),
+                ));
+            }
+            tracing::info!(
+                "DNS kill switch verified: TCP and UDP port 53 block rules were applied."
+            );
         } else {
             tracing::info!("DNS kill switch cleanup completed.");
         }
@@ -503,25 +609,43 @@ fn apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
     #[cfg(target_os = "linux")]
     {
         let _ = std::process::Command::new("iptables")
-            .args(&["-D", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "DROP"])
+            .args(["-D", "OUTPUT", "!", "-d", "127.0.0.1", "-p", "udp", "--dport", "53", "-j", "DROP"])
             .status();
         let _ = std::process::Command::new("iptables")
-            .args(&["-D", "OUTPUT", "-p", "tcp", "--dport", "53", "-j", "DROP"])
+            .args(["-D", "OUTPUT", "!", "-d", "127.0.0.1", "-p", "tcp", "--dport", "53", "-j", "DROP"])
+            .status();
+        let _ = std::process::Command::new("ip6tables")
+            .args(["-D", "OUTPUT", "!", "-d", "::1", "-p", "udp", "--dport", "53", "-j", "DROP"])
+            .status();
+        let _ = std::process::Command::new("ip6tables")
+            .args(["-D", "OUTPUT", "!", "-d", "::1", "-p", "tcp", "--dport", "53", "-j", "DROP"])
             .status();
 
         if enabled {
             tracing::info!("DNS Kill Switch aktif ediliyor (iptables)...");
             let udp_status = std::process::Command::new("iptables")
-                .args(&["-A", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "DROP"])
+                .args(["-A", "OUTPUT", "!", "-d", "127.0.0.1", "-p", "udp", "--dport", "53", "-j", "DROP"])
                 .status()?;
             let tcp_status = std::process::Command::new("iptables")
-                .args(&["-A", "OUTPUT", "-p", "tcp", "--dport", "53", "-j", "DROP"])
+                .args(["-A", "OUTPUT", "!", "-d", "127.0.0.1", "-p", "tcp", "--dport", "53", "-j", "DROP"])
                 .status()?;
-            if !udp_status.success() || !tcp_status.success() {
+            let udp6_status = std::process::Command::new("ip6tables")
+                .args(["-A", "OUTPUT", "!", "-d", "::1", "-p", "udp", "--dport", "53", "-j", "DROP"])
+                .status()?;
+            let tcp6_status = std::process::Command::new("ip6tables")
+                .args(["-A", "OUTPUT", "!", "-d", "::1", "-p", "tcp", "--dport", "53", "-j", "DROP"])
+                .status()?;
+            if !udp_status.success()
+                || !tcp_status.success()
+                || !udp6_status.success()
+                || !tcp6_status.success()
+            {
+                let _ = apply_kill_switch(false);
                 return Err(EngineError::AuthorizationFailed(
-                    "DNS kill switch could not be applied with iptables.".to_string(),
+                    "DNS kill switch could not verify IPv4 and IPv6 iptables rules.".to_string(),
                 ));
             }
+            tracing::info!("DNS kill switch verified: IPv4/IPv6 TCP and UDP port 53 rules are active while loopback remains allowed.");
         }
     }
 
@@ -597,10 +721,12 @@ async fn spawn_and_run(
     _cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<ProcessHandle, EngineError> {
     let winws_path = EngineManager::resolve_binary_path(app)?;
-    let working_dir = winws_path.parent()
-        .ok_or_else(|| EngineError::BinaryNotFound(
-            format!("Binary path'in parent klasörü alınamadı: {:?}", winws_path)
-        ))?;
+    let working_dir = winws_path.parent().ok_or_else(|| {
+        EngineError::BinaryNotFound(format!(
+            "Binary path'in parent klasörü alınamadı: {:?}",
+            winws_path
+        ))
+    })?;
 
     let mut prepared_args = EngineManager::prepare_args(&preset.args);
 
@@ -610,28 +736,50 @@ async fn spawn_and_run(
     let domain_list = bypass_config.domain_list;
     let kill_switch = bypass_config.kill_switch;
     let _proxy_socks5 = bypass_config.proxy;
-    
+
     if bypass_mode == "whitelist" || bypass_mode == "blacklist" {
-        let app_data = app.path().app_data_dir()
-            .map_err(|e| EngineError::IoError(format!("Pattern storage path is unavailable: {}", e)))?;
-        std::fs::create_dir_all(&app_data)
-            .map_err(|e| EngineError::IoError(format!("Pattern storage could not be created: {}", e)))?;
+        let app_data = app.path().app_data_dir().map_err(|e| {
+            EngineError::IoError(format!("Pattern storage path is unavailable: {}", e))
+        })?;
+        std::fs::create_dir_all(&app_data).map_err(|e| {
+            EngineError::IoError(format!("Pattern storage could not be created: {}", e))
+        })?;
         let domains_file_path = app_data.join("domains.txt");
-        std::fs::write(&domains_file_path, &domain_list)
-            .map_err(|e| EngineError::IoError(format!("Pattern list could not be written: {}", e)))?;
+        crate::settings::atomic_replace_bytes(&domains_file_path, domain_list.as_bytes())
+            .map_err(|e| EngineError::IoError(format!("Pattern list could not be written: {e}")))?;
         let file_path_str = domains_file_path.to_string_lossy().to_string();
-        let domain_count = domain_list.lines().filter(|line| !line.trim().is_empty()).count();
+        let domain_count = domain_list
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
         if bypass_mode == "whitelist" {
             prepared_args.push(format!("--hostlist={}", file_path_str));
-            tracing::info!("Pattern verified: DPI bypass will run only for {} whitelisted domains.", domain_count);
+            tracing::info!(
+                "Pattern verified: DPI bypass will run only for {} whitelisted domains.",
+                domain_count
+            );
         } else {
             prepared_args.push(format!("--hostlist-exclude={}", file_path_str));
-            tracing::info!("Pattern verified: {} blacklisted domains will be excluded from DPI bypass.", domain_count);
+            tracing::info!(
+                "Pattern verified: {} blacklisted domains will be excluded from DPI bypass.",
+                domain_count
+            );
         }
     } else {
         tracing::info!("Pattern verified: DPI bypass will run for all sites.");
     }
 
+    if kill_switch {
+        let forwarder_active = app
+            .try_state::<crate::AppState>()
+            .and_then(|state| state.forwarder.lock().ok().map(|guard| guard.is_some()))
+            .unwrap_or(false);
+        if !forwarder_active {
+            return Err(EngineError::ConfigParseError(
+                "DNS Kill Switch requires the encrypted local DNS forwarder to be running.".into(),
+            ));
+        }
+    }
     apply_kill_switch(kill_switch)?;
     let mut kill_switch_rollback = KillSwitchRollback {
         active: kill_switch,
@@ -650,7 +798,7 @@ async fn spawn_and_run(
         let args_str = escaped_args.join(" ");
         let binary_path_escaped = winws_path.to_string_lossy().replace('\'', "'\\''");
         let binary_path_str = format!("'{}'", binary_path_escaped);
-        
+
         let script = format!(
             "clean_up() {{ \
                  if [ -n \"$ENGINE_PID\" ]; then kill \"$ENGINE_PID\" 2>/dev/null; fi; \
@@ -678,9 +826,7 @@ async fn spawn_and_run(
         );
 
         let can_run_directly = {
-            let uid_output = std::process::Command::new("id")
-                .arg("-u")
-                .output();
+            let uid_output = std::process::Command::new("id").arg("-u").output();
             let is_root = match uid_output {
                 Ok(out) => {
                     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -688,16 +834,17 @@ async fn spawn_and_run(
                 }
                 _ => false,
             };
-            is_root || std::process::Command::new("iptables")
-                .args(["-t", "mangle", "-L"])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
+            is_root
+                || std::process::Command::new("iptables")
+                    .args(["-t", "mangle", "-L"])
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
                 || std::process::Command::new("nft")
-                .args(["list", "tables"])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
+                    .args(["list", "tables"])
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
         };
 
         let mut root_cmd = if can_run_directly {
@@ -708,21 +855,27 @@ async fn spawn_and_run(
             cmd
         };
 
-        root_cmd.arg("-c")
+        root_cmd
+            .arg("-c")
             .arg(&script)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = tokio::process::Command::from(root_cmd).spawn().map_err(|e| {
-            EngineError::SpawnFailed(format!("Linux Root Wrapper could not be started: {}", e))
-        })?;
+        let mut child = tokio::process::Command::from(root_cmd)
+            .spawn()
+            .map_err(|e| {
+                EngineError::SpawnFailed(format!("Linux Root Wrapper could not be started: {}", e))
+            })?;
 
-        let stdout = child.stdout.take().ok_or_else(|| EngineError::IoError("Stdout alınamadı".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| EngineError::IoError("Stdout alınamadı".into()))?;
         let mut reader = tokio::io::BufReader::new(stdout);
         let mut line = String::new();
         use tokio::io::AsyncBufReadExt;
-        
+
         tokio::select! {
             res = reader.read_line(&mut line) => {
                 match res {
@@ -746,8 +899,14 @@ async fn spawn_and_run(
         let pid = child.id().unwrap_or(0);
         tracing::info!("Engine process spawned successfully, PID: {}", pid);
 
-        let stdout = child.stdout.take().ok_or_else(|| EngineError::IoError("stdout pipe oluşturulamadı".into()))?;
-        let stderr = child.stderr.take().ok_or_else(|| EngineError::IoError("stderr pipe oluşturulamadı".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| EngineError::IoError("stdout pipe oluşturulamadı".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| EngineError::IoError("stderr pipe oluşturulamadı".into()))?;
 
         crate::engine::logger::spawn_log_reader(stdout, app.clone(), None);
         crate::engine::logger::spawn_log_reader(stderr, app.clone(), Some("HATA: "));
@@ -760,18 +919,21 @@ async fn spawn_and_run(
     #[cfg(target_os = "windows")]
     {
         let mut command = std::process::Command::new(&winws_path);
-        command.args(&prepared_args)
+        command
+            .args(&prepared_args)
             .current_dir(working_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        
+
         use std::os::windows::process::CommandExt;
         command.creation_flags(CREATE_NO_WINDOW);
-        
-        let mut child = tokio::process::Command::from(command).spawn().map_err(|e| {
-            tracing::error!("Process could not be started: {}", e);
-            EngineError::SpawnFailed(e.to_string())
-        })?;
+
+        let mut child = tokio::process::Command::from(command)
+            .spawn()
+            .map_err(|e| {
+                tracing::error!("Process could not be started: {}", e);
+                EngineError::SpawnFailed(e.to_string())
+            })?;
 
         let pid = child.id().unwrap_or(0);
         tracing::info!("Engine process spawned successfully, PID: {}", pid);
@@ -785,14 +947,21 @@ async fn spawn_and_run(
                 tracing::error!("Job Object could not be assigned: {}", e);
                 let _ = child.start_kill();
                 let _ = child.wait().await;
-                return Err(EngineError::IoError(
-                    format!("Kernel-level process guard (Job Object) could not be created: {}", e)
-                ));
+                return Err(EngineError::IoError(format!(
+                    "Kernel-level process guard (Job Object) could not be created: {}",
+                    e
+                )));
             }
         };
 
-        let stdout = child.stdout.take().ok_or_else(|| EngineError::IoError("stdout pipe oluşturulamadı".into()))?;
-        let stderr = child.stderr.take().ok_or_else(|| EngineError::IoError("stderr pipe oluşturulamadı".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| EngineError::IoError("stdout pipe oluşturulamadı".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| EngineError::IoError("stderr pipe oluşturulamadı".into()))?;
 
         crate::engine::logger::spawn_log_reader(stdout, app.clone(), None);
         crate::engine::logger::spawn_log_reader(stderr, app.clone(), Some("HATA: "));
@@ -833,13 +1002,25 @@ fn watch_process(
                     4 => 16,
                     _ => {
                         tracing::error!("Engine restart limit reached. Transitioning to Failed.");
-                        set_state_failed(&state, EngineError::IoError("Engine crashed repeatedly".into()));
-                        set_status_error(&status, &app, "Süreç çöktü ve yeniden başlatılamadı.".into(), Some("CRASH_RESTART_FAILED".into()));
+                        set_state_failed(
+                            &state,
+                            EngineError::IoError("Engine crashed repeatedly".into()),
+                        );
+                        set_status_error(
+                            &status,
+                            &app,
+                            "Süreç çöktü ve yeniden başlatılamadı.".into(),
+                            Some("CRASH_RESTART_FAILED".into()),
+                        );
                         break;
                     }
                 };
 
-                tracing::info!("Attempting engine restart in {}s (attempt {}/5)...", backoff_secs, attempt + 1);
+                tracing::info!(
+                    "Attempting engine restart in {}s (attempt {}/5)...",
+                    backoff_secs,
+                    attempt + 1
+                );
                 tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
 
                 let still_running = is_state_running_with_pid(&state, pid);
@@ -852,7 +1033,7 @@ fn watch_process(
                     match spawn_and_run(&preset, &app, rx).await {
                         Ok(new_handle) => {
                             let new_pid = new_handle.pid();
-                            
+
                             let cancelled = is_status_stopped(&status);
                             if cancelled {
                                 drop(new_handle);
@@ -870,7 +1051,14 @@ fn watch_process(
                             let app_clone = app.clone();
                             let preset_clone = preset.clone();
                             tokio::spawn(async move {
-                                watch_process(new_pid, app_clone, state_clone, status_clone, preset_clone).await;
+                                watch_process(
+                                    new_pid,
+                                    app_clone,
+                                    state_clone,
+                                    status_clone,
+                                    preset_clone,
+                                )
+                                .await;
                             });
                             break;
                         }
@@ -884,7 +1072,8 @@ fn watch_process(
                 }
             }
         }
-    }.boxed()
+    }
+    .boxed()
 }
 
 // Non-async helper functions to perform Mutex operations and drop guards immediately
@@ -923,7 +1112,12 @@ fn set_state_idle(state: &Mutex<EngineState>) {
     }
 }
 
-fn set_status_error(status: &Mutex<EngineStatus>, app: &AppHandle, msg: String, code: Option<String>) {
+fn set_status_error(
+    status: &Mutex<EngineStatus>,
+    app: &AppHandle,
+    msg: String,
+    code: Option<String>,
+) {
     if let Ok(mut st) = status.lock() {
         *st = EngineStatus::Error { message: msg, code };
         let _ = app.emit("engine_status", &*st);
@@ -961,9 +1155,9 @@ fn set_status_stopped(status: &Mutex<EngineStatus>, app: &AppHandle) {
 
 #[cfg(target_os = "windows")]
 fn is_process_alive(pid: u32) -> bool {
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
-    use windows::Win32::System::Threading::GetExitCodeProcess;
     use windows::Win32::Foundation::{CloseHandle, FALSE};
+    use windows::Win32::System::Threading::GetExitCodeProcess;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
     unsafe {
         let handle = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) {

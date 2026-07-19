@@ -45,18 +45,18 @@ export function PacketTrafficCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'Harici TTL Algılama (TTL Ext)' : 'External TTL Evasion'}</label>
-            <span>{isTr ? 'Hedef mesafe tespiti için ek TTL farkı. (--dpi-desync-ttl-ext)' : 'External hop detection TTL offset. (--dpi-desync-ttl-ext)'}</span>
+            <span>{isTr ? 'Paketle gelen winws bu bayrağı desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support this flag.'}</span>
           </div>
-          <NumberInput value={c.fakeTtlExt} min={0} max={64} onChange={(v) => update('fakeTtlExt', v)} />
+          <NumberInput disabled value={c.fakeTtlExt} min={0} max={64} onChange={(v) => update('fakeTtlExt', v)} />
         </div>
 
         {/* MSS Fix */}
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'MSS Boyutu Düzeltmesi' : 'MSS Fix'}</label>
-            <span>{isTr ? 'Parçalanmış paketler için maksimum segment boyutu (MSS). (--mss)' : 'MTU/MSS size for fragmented packets. (--mss)'}</span>
+            <span>{isTr ? 'Paketle gelen winws --mss bayrağını desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support --mss.'}</span>
           </div>
-          <NumberInput value={c.mssFix} min={800} max={1500} onChange={(v) => update('mssFix', v)} />
+          <NumberInput disabled value={c.mssFix} min={800} max={1500} onChange={(v) => update('mssFix', v)} />
         </div>
 
         {/* Desync Repeats */}
@@ -72,7 +72,7 @@ export function PacketTrafficCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'TCP Pencere Boyutu' : 'TCP Receiver Window'}</label>
-            <span>{isTr ? 'Verilerin küçük gelmesini sağlamak için alıcı penceresini küçültür. (--tcp-window-size)' : 'Reduce TCP window size to force smaller packets. (--tcp-window-size)'}</span>
+            <span>{isTr ? 'Sunucudan gelen veriyi küçültmek için alıcı penceresini ayarlar. (--wssize)' : 'Adjust the receive window to reduce server-to-client chunks. (--wssize)'}</span>
           </div>
           <NumberInput value={c.tcpWindowSize} min={0} max={65535} onChange={(v) => update('tcpWindowSize', v)} />
         </div>

@@ -2,7 +2,6 @@ import { useCallback, useState, useEffect } from 'react';
 import { motion, Variants } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { open } from '@tauri-apps/plugin-shell';
 import { Settings, AlertCircle, GitBranch, X } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { useEngineStore } from '../store/engineStore';
@@ -102,7 +101,7 @@ export function WidgetView() {
   }, []);
 
   const openGithub = () => {
-    open('https://github.com/lulushuz/Vane');
+    invoke('open_url', { url: 'https://github.com/lulushuz/Vane' });
   };
 
   // Animated Radio SVG Variants

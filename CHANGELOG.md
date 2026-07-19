@@ -7,26 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [2.0.8] - 2026-07-19
 
 ### Security
 - Whitelist startup is now fail-closed when persisted settings are corrupt or the verified whitelist is empty.
 - Domain rules are canonicalized and validated in Rust; hidden service alias expansion was removed.
 - DNS Kill Switch creation checks command results and is rolled back when engine startup fails.
 - Unsupported TPWS and IPSet arguments are rejected instead of being passed to the wrong binary.
+- Preset-supplied hostlist arguments are rejected so the Pattern screen remains the only authority for DPI scope.
+- Health-check targets accept hostnames only, preventing arbitrary URL/network probing through IPC.
+- Remote preset and AdBlock downloads now have streaming size/type/validity limits and atomic cache replacement.
+- Unused broad shell, process, filesystem, and Store frontend permissions were removed.
 
 ### Fixed
 - Serialized Pattern and DNS synchronization to prevent overlapping restarts and stale IPC responses.
 - Removed competing Rust writes to the Zustand settings file and serialized Store writes.
+- Replaced the frontend Store plugin with a Rust-owned, atomically written settings repository, last-known-good backup recovery, schema migration, and stale multi-window merge protection.
+- Added a persisted DNS restore snapshot so an interrupted forwarder session restores the exact previous adapter configuration on the next launch.
 - Fixed Watchdog being started even when disabled.
 - Replaced Watchdog HTTP `HEAD` checks with real DoH/DoT DNS resolution probes.
+- Fixed Watchdog recovery resetting every adapter to DHCP instead of restoring the user's previous static/DHCP configuration.
+- Fixed DNS TCP forwarding, full-size EDNS responses, negative DoT answers, cache TTL aging, bounded LRU eviction, and cache keys that ignored DNS query options.
+- Fixed SOCKS5 leaking resolver lookups or silently falling back to a direct connection; DoH now uses SOCKS5H and incompatible DoT+proxy configurations fail closed.
+- Fixed Kill Switch rules blocking Vane's own loopback resolver and added firewall rule verification/rollback.
+- Fixed DNS provider selection being persisted before Windows confirmed that the configuration was applied.
+- Fixed Advanced numeric/port/cutoff validation, Unicode panic paths, unsafe preset hostlist overrides, unsupported custom payload inputs, and controls that emitted flags absent from the bundled winws.
+- Bound TCP Receiver Window to the real `--wssize` flag and replaced invalid built-in `split`/`split2`/OOB strategies with supported bundled-engine modes.
+- Fixed custom preset corruption recovery and made preset/domain/cache writes atomic.
 - Preserved values containing `=` and safe unknown arguments when editing Advanced presets; invalid numeric arguments are now omitted with an EN/TR warning.
 - Added CI verification for frontend builds, Rust tests, and warning-free Clippy on Windows and Linux.
 
 ### Changed
 - TPWS and IPSet controls are visibly unavailable until their required binary/file-import implementations exist.
-
-## [2.0.8] - 2026-07-13
+- Custom payload controls are visibly unavailable until a safe binary payload picker and format validator are implemented.
 
 ### Added
 - Added accessible custom select menus for **Bypass Pattern** and **DNS Transport Protocol** controls.

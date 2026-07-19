@@ -1,7 +1,27 @@
+use crate::config::preset::Preset;
+use futures::StreamExt;
+use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use crate::config::preset::Preset;
-use minisign_verify::{PublicKey, Signature};
+
+async fn read_limited_text(response: reqwest::Response, maximum: usize) -> Result<String, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum as u64)
+    {
+        return Err(format!("response exceeds {maximum} bytes"));
+    }
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        if bytes.len() + chunk.len() > maximum {
+            return Err(format!("response exceeds {maximum} bytes"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    String::from_utf8(bytes).map_err(|e| e.to_string())
+}
 
 /// The remote URL serving the dynamic presets manifest.
 /// Points to the raw presets.json in the lulushuz/Vane-Presets GitHub repository.
@@ -77,7 +97,7 @@ pub async fn fetch_remote_presets(
         }
     };
 
-    let text = match response.text().await {
+    let text = match read_limited_text(response, 1024 * 1024).await {
         Ok(t) => t,
         Err(e) => {
             tracing::warn!("Failed to read remote presets response: {}", e);
@@ -104,7 +124,7 @@ pub async fn fetch_remote_presets(
             }
         };
 
-        let sig_text = match sig_response.text().await {
+        let sig_text = match read_limited_text(sig_response, 64 * 1024).await {
             Ok(t) => t,
             Err(_) => return RemoteFetchOutcome::SignatureInvalid,
         };
@@ -135,7 +155,9 @@ pub async fn fetch_remote_presets(
         tracing::debug!("Remote presets signature verification passed.");
         signature_data = sig_text;
     } else {
-        tracing::warn!("Remote presets signature verification is DISABLED (MANIFEST_PUBLIC_KEY not set).");
+        tracing::warn!(
+            "Remote presets signature verification is DISABLED (MANIFEST_PUBLIC_KEY not set)."
+        );
     }
     // ────────────────────────────────────────────
 
@@ -150,7 +172,10 @@ pub async fn fetch_remote_presets(
     // Skip disk write if the version hasn't changed — reduces I/O churn.
     if let Some(cached) = cached_version {
         if cached == manifest.version {
-            tracing::debug!("Remote presets are up to date (v{}), cache is valid.", manifest.version);
+            tracing::debug!(
+                "Remote presets are up to date (v{}), cache is valid.",
+                manifest.version
+            );
             return RemoteFetchOutcome::VersionUnchanged;
         }
     }
@@ -168,28 +193,38 @@ pub async fn fetch_remote_presets(
 /// Returns `None` if the cache file doesn't exist or is corrupted.
 /// Corruption results in a warning log — not a hard failure.
 pub fn load_cached_presets(app_data: &Path) -> Option<RemotePresetsManifest> {
-    if !MANIFEST_PUBLIC_KEY.is_empty() {
+    let manifest = if !MANIFEST_PUBLIC_KEY.is_empty() {
         if let Ok(pub_key) = PublicKey::from_base64(MANIFEST_PUBLIC_KEY) {
-            return load_cached_presets_verified(app_data, &pub_key).ok();
+            load_cached_presets_verified(app_data, &pub_key).ok()
+        } else {
+            None
         }
-    }
-    let cache_path = app_data.join("remote_presets_cache.json");
-    let content = std::fs::read_to_string(cache_path).ok()?;
-    serde_json::from_str(&content).ok()
+    } else {
+        let cache_path = app_data.join("remote_presets_cache.json");
+        let content = std::fs::read_to_string(cache_path).ok()?;
+        serde_json::from_str(&content).ok()
+    }?;
+    crate::config::loader::validate_remote_presets(&manifest.presets).ok()?;
+    Some(manifest)
 }
 
 /// Atomically writes the manifest and signature to the cache files.
 ///
 /// Uses a temp file + rename pattern to prevent partial writes from
 /// leaving the cache in a corrupted state on power loss or crash.
-pub fn save_cached_presets(manifest: &RemotePresetsManifest, signature: &str, app_data: &Path) -> Result<(), String> {
+pub fn save_cached_presets(
+    manifest: &RemotePresetsManifest,
+    signature: &str,
+    app_data: &Path,
+) -> Result<(), String> {
     let content = serde_json::to_string_pretty(manifest)
         .map_err(|e| format!("Serialization error: {}", e))?;
-    
+
     // We block_on the async save_cached_presets_with_sig for compatibility
     tauri::async_runtime::block_on(async {
         save_cached_presets_with_sig(manifest, &content, signature, app_data).await
-    }).map_err(|e| e.to_string())
+    })
+    .map_err(|e| e.to_string())
 }
 
 pub async fn save_cached_presets_with_sig(
@@ -199,15 +234,11 @@ pub async fn save_cached_presets_with_sig(
     dir: &Path,
 ) -> Result<(), PresetError> {
     let cache_path = dir.join("remote_presets_cache.json");
-    let temp_path = dir.join("remote_presets_cache.tmp");
     let sig_path = dir.join("remote_presets_cache.json.minisig");
-    let temp_sig_path = dir.join("remote_presets_cache.json.minisig.tmp");
-
-    std::fs::write(&temp_path, raw_json)?;
-    std::fs::write(&temp_sig_path, signature)?;
-
-    std::fs::rename(&temp_path, &cache_path)?;
-    std::fs::rename(&temp_sig_path, &sig_path)?;
+    crate::settings::atomic_replace_bytes(&sig_path, signature.as_bytes())
+        .map_err(|error| PresetError::General(error))?;
+    crate::settings::atomic_replace_bytes(&cache_path, raw_json.as_bytes())
+        .map_err(|error| PresetError::General(error))?;
 
     tracing::debug!("Remote presets cache and signature successfully written.");
     Ok(())
@@ -224,29 +255,36 @@ pub fn load_cached_presets_verified(
     let sig_exists = sig_path.exists();
 
     match (cache_exists, sig_exists) {
-        (false, false) => {
-            Err(PresetError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "Önbellek dosyası bulunamadı")))
-        }
+        (false, false) => Err(PresetError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Önbellek dosyası bulunamadı",
+        ))),
         (true, false) => {
             // JSON exists but signature missing - clean it up (legacy or tamper)
             let _ = std::fs::remove_file(&cache_path);
-            Err(PresetError::Verification("Önbellek imza dosyası eksik, önbellek silindi".into()))
+            Err(PresetError::Verification(
+                "Önbellek imza dosyası eksik, önbellek silindi".into(),
+            ))
         }
         (false, true) => {
             // Signature exists but JSON missing - clean it up
             let _ = std::fs::remove_file(&sig_path);
-            Err(PresetError::Verification("Önbellek JSON dosyası eksik, imza silindi".into()))
+            Err(PresetError::Verification(
+                "Önbellek JSON dosyası eksik, imza silindi".into(),
+            ))
         }
         (true, true) => {
             let content = std::fs::read_to_string(&cache_path)?;
             let sig_content = std::fs::read_to_string(&sig_path)?;
 
-            let signature = Signature::decode(&sig_content)
-                .map_err(|e| {
-                    let _ = std::fs::remove_file(&cache_path);
-                    let _ = std::fs::remove_file(&sig_path);
-                    PresetError::Verification(format!("Önbellek imzası çözümlenemedi, dosyalar silindi: {}", e))
-                })?;
+            let signature = Signature::decode(&sig_content).map_err(|e| {
+                let _ = std::fs::remove_file(&cache_path);
+                let _ = std::fs::remove_file(&sig_path);
+                PresetError::Verification(format!(
+                    "Önbellek imzası çözümlenemedi, dosyalar silindi: {}",
+                    e
+                ))
+            })?;
 
             if let Err(e) = public_key.verify(content.as_bytes(), &signature, false) {
                 let _ = std::fs::remove_file(&cache_path);
@@ -258,7 +296,10 @@ pub fn load_cached_presets_verified(
             }
 
             let manifest = serde_json::from_str::<PresetManifest>(&content)?;
-            tracing::info!("Verified remote presets loaded from cache: v{}", manifest.version);
+            tracing::info!(
+                "Verified remote presets loaded from cache: v{}",
+                manifest.version
+            );
             Ok(manifest)
         }
     }

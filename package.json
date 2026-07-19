@@ -12,10 +12,6 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.0",
-    "@tauri-apps/plugin-fs": "^2.5.0",
-    "@tauri-apps/plugin-process": "^2",
-    "@tauri-apps/plugin-shell": "^2.3.5",
-    "@tauri-apps/plugin-store": "^2.4.2",
     "framer-motion": "^11",
     "lucide-react": "^1.8.0",
     "react": "^18",

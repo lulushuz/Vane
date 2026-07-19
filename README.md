@@ -625,34 +625,19 @@ Full reference for all zapret parameters exposed in Vane's Advanced tab:
 
 | Parameter | Values | Default | Description |
 |-----------|--------|---------|-------------|
-| `--dpi-desync` | `split`,`split2`,`disorder`,`disorder2`,`fake`,`multisplit`,`multidisorder`... | — | Primary desync method(s), comma-separated |
-| `--dpi-desync2` | Same as above | — | Secondary desync method for established connections |
+| `--dpi-desync` | `fake`,`multisplit`,`multidisorder`,`fakedsplit`,`fakeddisorder`... | — | Primary desync method(s), comma-separated |
 | `--dpi-desync-split-pos` | Marker or integer list | `2` | Split position(s) |
 | `--dpi-desync-split-http-req` | `none`,`method`,`host` | `none` | Specific HTTP request split position |
-| `--dpi-desync-split-pos-http-req` | Integer | — | Byte offset for HTTP request split |
-| `--dpi-desync-split-tls` | `none`,`sni`,`snh` | `none` | Specific TLS split position |
-| `--dpi-desync-split-pos-tls` | Integer | — | Byte offset for TLS split |
-| `--dpi-desync-fooling` | `badsum`,`badseq`,`md5sig`,`ts`,`datanoack`,`hopbyhop`,`destopt` | — | Fake packet fooling mode(s) |
+| `--dpi-desync-split-tls` | `none`,`sni`,`sniext` | `none` | Specific TLS split position |
+| `--dpi-desync-fooling` | `badsum`,`badseq`,`md5sig`,`ts`,`datanoack`,`hopbyhop`,`hopbyhop2` | — | Fake packet fooling mode(s) |
 | `--dpi-desync-autottl` | `[-]N:N-N` | — | Auto-calculate TTL bounds |
 | `--dpi-desync-ttl` | Integer | — | Fixed TTL for fake packets |
-| `--dpi-desync-ttl-ext` | Integer | — | Additional TTL offset |
 | `--dpi-desync-repeats` | Integer | `1` | Number of fake packets per real packet |
 | `--dpi-desync-any-protocol` | Flag | Off | Apply desync to all TCP connections (not just HTTP/TLS) |
 | `--dpi-desync-cutoff` | `d1`-`d9`, `s1`-`sN` | — | Apply desync only to first N data/SYN packets |
-| `--dpi-desync-fake-tls-sni` | domain | — | Custom SNI in fake TLS ClientHello |
-| `--dpi-desync-fake-http` | string or file path | — | Custom HTTP payload for fake packets |
-| `--dpi-desync-fake-tls` | string or file path | — | Custom TLS ClientHello payload |
-| `--dpi-desync-fake-quic` | string or file path | — | Custom QUIC payload |
-| `--dpi-desync-http` | same as `--dpi-desync` | — | Override method for HTTP connections |
-| `--dpi-desync-https` | same as `--dpi-desync` | — | Override method for HTTPS/TLS connections |
-| `--dpi-desync-quic` | same as `--dpi-desync` | — | Override method for QUIC/UDP connections |
-| `--mss` | Integer | — | TCP Maximum Segment Size override |
-| `--tcp-window-size` | Integer | — | TCP Window Size for sent packets |
-| `--wssize` | `N:N` | — | Window scale factor advertised to server |
+| `--wssize` | Integer | — | Receive window advertised to the server |
 | `--wf-tcp` | port list | — | TCP ports to intercept |
 | `--wf-udp` | port list | — | UDP ports to intercept |
-| `--ipset` | file path | — | IP allowlist/blocklist file |
-| `--bind-addr` | IP address | — | Bind to specific network interface |
 | `--ipcache-lifetime` | Seconds | 7200 | IP cache entry TTL |
 | `--dup` | Integer | — | Number of duplicate packets per original |
 
@@ -853,43 +838,22 @@ The following parameters are exposed in Vane's Advanced Settings tab:
 
 | Setting | Parameter | Values | Description |
 |---------|-----------|--------|-------------|
-| Desync Method | `--dpi-desync` | `split`, `disorder`, `fake`, `multisplit`, `multidisorder`... | Primary bypass method |
-| Secondary Method | `--dpi-desync2` | Same as above | Applied after first method |
+| Desync Method | `--dpi-desync` | `fake`, `multisplit`, `multidisorder`, `fakedsplit`... | Primary bypass method |
 | Split Position | `--dpi-desync-split-pos` | Marker or integer list | Where to cut the TCP payload |
 | HTTP Split Target | `--dpi-desync-split-http-req` | `none`, `method`, `host` | HTTP-specific split anchor |
-| TLS Split Target | `--dpi-desync-split-tls` | `none`, `sni`, `snh` | TLS-specific split anchor |
+| TLS Split Target | `--dpi-desync-split-tls` | `none`, `sni`, `sniext` | TLS-specific split anchor |
 | Fooling Mode | `--dpi-desync-fooling` | `badsum`, `badseq`, `md5sig`, `ts`, `datanoack`... | Prevent fake reaching server |
 | Auto TTL | `--dpi-desync-autottl` | `[-]N:N-N` | Dynamically calibrate TTL |
 | Fixed TTL | `--dpi-desync-ttl` | Integer | Fixed fake TTL value |
-| Extended TTL | `--dpi-desync-ttl-ext` | Integer | Offset added to TTL |
 | Fake Repeats | `--dpi-desync-repeats` | Integer | Number of fake packets |
 | Any Protocol | `--dpi-desync-any-protocol` | Flag | Apply to all TCP, not just HTTP/TLS |
 | Cutoff | `--dpi-desync-cutoff` | `d1`-`d9`, `s1`-`sN` | Limit desync to first N packets |
-
-### Per-Protocol Override
-
-| Setting | Parameter | Description |
-|---------|-----------|-------------|
-| HTTP Method | `--dpi-desync-http` | Override desync for HTTP traffic only |
-| HTTPS Method | `--dpi-desync-https` | Override desync for HTTPS/TLS traffic only |
-| QUIC Method | `--dpi-desync-quic` | Override desync for QUIC/UDP traffic only |
-
-### Fake Payload
-
-| Setting | Parameter | Description |
-|---------|-----------|-------------|
-| Custom TLS SNI | `--dpi-desync-fake-tls-sni` | Domain name for fake TLS ClientHello SNI |
-| Fake HTTP Payload | `--dpi-desync-fake-http` | String or path to file for HTTP fakes |
-| Fake TLS Payload | `--dpi-desync-fake-tls` | String or path to file for TLS fakes |
-| Fake QUIC Payload | `--dpi-desync-fake-quic` | String or path to file for QUIC fakes |
 
 ### Packet & Traffic
 
 | Setting | Parameter | Description |
 |---------|-----------|-------------|
-| MSS Override | `--mss` | TCP Maximum Segment Size |
-| TCP Window Size | `--tcp-window-size` | Override TCP window in sent packets |
-| Server Window Scale | `--wssize` | Restrict window advertised to server |
+| TCP Receiver Window | `--wssize` | Restrict the receive window advertised to the server |
 
 ### Protocol & Ports
 

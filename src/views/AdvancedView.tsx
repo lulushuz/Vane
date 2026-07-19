@@ -91,8 +91,8 @@ export function AdvancedView() {
     if (parsed.invalidArgs.length > 0) {
       appendLog(
         language === 'tr'
-          ? `[ADVANCED] ${parsed.invalidArgs.length} geçersiz sayısal argüman güvenlik için uygulanmadı: ${parsed.invalidArgs.join(', ')}`
-          : `[ADVANCED] ${parsed.invalidArgs.length} invalid numeric argument(s) were not applied for safety: ${parsed.invalidArgs.join(', ')}`,
+          ? `[ADVANCED] ${parsed.invalidArgs.length} geçersiz veya desteklenmeyen argüman güvenlik için uygulanmadı: ${parsed.invalidArgs.join(', ')}`
+          : `[ADVANCED] ${parsed.invalidArgs.length} invalid or unsupported argument(s) were not applied for safety: ${parsed.invalidArgs.join(', ')}`,
         'warn',
       );
     }
@@ -147,8 +147,14 @@ export function AdvancedView() {
       setSnapshot(advancedConfig);
       setIsDirty(false);
       if (isRunning) { await stopEngine(); await startEngine(newPreset.id); }
+      appendLog(language === 'tr'
+        ? `[ADVANCED] “${newPreset.label}” profili doğrulandı, atomik olarak kaydedildi ve seçildi.`
+        : `[ADVANCED] Profile “${newPreset.label}” was validated, saved atomically, and selected.`, 'info');
     } catch (e) {
       console.error('Save error:', e);
+      appendLog(language === 'tr'
+        ? `[ERROR] Gelişmiş ayarlar doğrulanamadı ve motora gönderilmedi: ${e}`
+        : `[ERROR] Advanced settings failed validation and were not sent to the engine: ${e}`, 'error');
     } finally {
       setIsApplying(false);
     }
@@ -221,8 +227,8 @@ export function AdvancedView() {
         if (parsed.invalidArgs.length > 0) {
           appendLog(
             language === 'tr'
-              ? `[ADVANCED] İçe aktarılan profildeki ${parsed.invalidArgs.length} geçersiz sayısal argüman uygulanmadı: ${parsed.invalidArgs.join(', ')}`
-              : `[ADVANCED] ${parsed.invalidArgs.length} invalid numeric argument(s) in the imported preset were not applied: ${parsed.invalidArgs.join(', ')}`,
+              ? `[ADVANCED] İçe aktarılan profildeki ${parsed.invalidArgs.length} geçersiz veya desteklenmeyen argüman uygulanmadı: ${parsed.invalidArgs.join(', ')}`
+              : `[ADVANCED] ${parsed.invalidArgs.length} invalid or unsupported argument(s) in the imported preset were not applied: ${parsed.invalidArgs.join(', ')}`,
             'warn',
           );
         }

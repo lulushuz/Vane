@@ -7,8 +7,14 @@ import styles from './PatternView.module.css';
 import { CustomSelect } from '../components/CustomSelect/CustomSelect';
 
 const isDomainValid = (domain: string): boolean => {
-  const regex = /^(?:\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(?:\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})+$/;
-  return regex.test(domain);
+  if (!domain || domain.length > 253 || !domain.includes('.') || !/^[\x00-\x7F]+$/.test(domain)) {
+    return false;
+  }
+  return domain.split('.').every((label) =>
+    label.length > 0
+    && label.length <= 63
+    && /^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(label),
+  );
 };
 
 export function PatternView() {

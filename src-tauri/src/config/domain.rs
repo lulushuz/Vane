@@ -88,7 +88,10 @@ pub fn canonicalize_domain_rules(inputs: &[String]) -> Result<Vec<String>, Domai
     let mut seen = HashSet::new();
     let mut rules = Vec::with_capacity(inputs.len());
     for input in inputs {
-        let rule = canonicalize_domain_rule(input, true)?;
+        // Zapret hostlists already include subdomains for a plain domain. A literal
+        // "*.example.com" does not express the UI's advertised semantics, so reject
+        // wildcards instead of silently broadening or weakening Pattern rules.
+        let rule = canonicalize_domain_rule(input, false)?;
         if seen.insert(rule.clone()) {
             rules.push(rule);
         }
@@ -97,18 +100,14 @@ pub fn canonicalize_domain_rules(inputs: &[String]) -> Result<Vec<String>, Domai
 }
 
 pub fn domain_rule_matches(rule: &str, host: &str) -> bool {
-    let Ok(rule) = canonicalize_domain_rule(rule, true) else {
+    let Ok(rule) = canonicalize_domain_rule(rule, false) else {
         return false;
     };
     let Ok(host) = canonicalize_domain_rule(host, false) else {
         return false;
     };
 
-    if let Some(base) = rule.strip_prefix("*.") {
-        host != base && host.ends_with(&format!(".{base}"))
-    } else {
-        host == rule || host.ends_with(&format!(".{rule}"))
-    }
+    host == rule || host.ends_with(&format!(".{rule}"))
 }
 
 #[cfg(test)]
@@ -140,13 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn accepts_explicit_punycode_and_valid_wildcard() {
-        let rules = canonicalize_domain_rules(&[
-            "xn--bcher-kva.de".to_string(),
-            "*.ROBLOX.com.".to_string(),
-        ])
-        .expect("valid rules");
-        assert_eq!(rules, vec!["xn--bcher-kva.de", "*.roblox.com"]);
+    fn accepts_explicit_punycode_and_rejects_wildcard() {
+        let rules = canonicalize_domain_rules(&["xn--bcher-kva.de".to_string()])
+            .expect("valid punycode rule");
+        assert_eq!(rules, vec!["xn--bcher-kva.de"]);
+        assert!(canonicalize_domain_rules(&["*.ROBLOX.com.".to_string()]).is_err());
     }
 
     #[test]
@@ -159,10 +156,8 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_matches_subdomains_but_not_apex() {
-        assert!(domain_rule_matches("*.roblox.com", "www.roblox.com"));
-        assert!(domain_rule_matches("*.roblox.com", "api.cdn.roblox.com"));
-        assert!(!domain_rule_matches("*.roblox.com", "roblox.com"));
+    fn wildcard_is_rejected_instead_of_being_misrepresented_to_zapret() {
+        assert!(!domain_rule_matches("*.roblox.com", "www.roblox.com"));
     }
 
     #[test]
