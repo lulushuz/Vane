@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::config::preset::Preset;
 use crate::engine::sanitizer::validate_preset_args;
 use crate::engine::{error::EngineError, process::ProcessHandle};
+#[cfg(target_os = "windows")]
 use crate::privilege::checker::is_elevated;
 
 #[cfg(target_os = "windows")]
@@ -721,6 +722,7 @@ async fn spawn_and_run(
     _cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<ProcessHandle, EngineError> {
     let winws_path = EngineManager::resolve_binary_path(app)?;
+    #[cfg(target_os = "windows")]
     let working_dir = winws_path.parent().ok_or_else(|| {
         EngineError::BinaryNotFound(format!(
             "Binary path'in parent klasörü alınamadı: {:?}",

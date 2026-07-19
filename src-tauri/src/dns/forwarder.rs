@@ -73,7 +73,7 @@ pub fn initialize_adblock(app_handle: &AppHandle) {
     if let Ok(app_data) = app_handle.path().app_data_dir() {
         let cache_path = app_data.join("adblock_cache.txt");
         if cache_path.exists() {
-            if let Ok(text) = std::fs::read_to_string(cache_path) {
+            if let Ok(text) = std::fs::read_to_string(&cache_path) {
                 let set = parse_hosts_file(&text);
                 if let Ok(mut guard) = ADBLOCK_LIST.write() {
                     *guard = Some(set);
@@ -841,7 +841,7 @@ async fn proxy_dns_query(
             response.set_recursion_desired(parsed.recursion_desired());
             response.set_recursion_available(true);
             response.set_checking_disabled(parsed.checking_disabled());
-            if let Some(edns) = parsed.edns() {
+            if let Some(edns) = parsed.extensions() {
                 response.set_edns(edns.clone());
             }
             response.add_query(query.clone());

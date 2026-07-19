@@ -133,7 +133,7 @@ pub async fn apply_dns_settings(
     secondary: String,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> ApplyDnsResult {
+) -> Result<ApplyDnsResult, String> {
     let _sync_guard = state.dns_sync.lock().await;
     if state
         .forwarder
@@ -141,26 +141,26 @@ pub async fn apply_dns_settings(
         .map(|guard| guard.is_some())
         .unwrap_or(true)
     {
-        return ApplyDnsResult {
+        return Ok(ApplyDnsResult {
             success: false,
             applied_adapters: Vec::new(),
             error: Some(
                 "Stop the local DNS forwarder before changing the system DNS provider.".into(),
             ),
-        };
+        });
     }
     let res = apply_dns(&primary, &secondary);
     if res.success {
         let _ = app.emit("dns_status_changed", ());
     }
-    res
+    Ok(res)
 }
 
 #[tauri::command]
 pub async fn reset_dns_settings(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> ApplyDnsResult {
+) -> Result<ApplyDnsResult, String> {
     let _sync_guard = state.dns_sync.lock().await;
     if state
         .forwarder
@@ -168,20 +168,20 @@ pub async fn reset_dns_settings(
         .map(|guard| guard.is_some())
         .unwrap_or(true)
     {
-        return ApplyDnsResult {
+        return Ok(ApplyDnsResult {
             success: false,
             applied_adapters: Vec::new(),
             error: Some(
                 "Stop the local DNS forwarder before resetting the system DNS configuration."
                     .into(),
             ),
-        };
+        });
     }
     let res = reset_dns_to_dhcp();
     if res.success {
         let _ = app.emit("dns_status_changed", ());
     }
-    res
+    Ok(res)
 }
 
 #[tauri::command]
