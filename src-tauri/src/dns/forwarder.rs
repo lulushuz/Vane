@@ -381,6 +381,17 @@ pub async fn spawn_doh_forwarder(
     })
 }
 
+pub(crate) async fn probe_dot_upstream(endpoint: DoHEndpoint) -> bool {
+    let Some(resolver) = get_or_create_dot_resolver(endpoint) else {
+        return false;
+    };
+    resolver
+        .lookup_ip("example.com.")
+        .await
+        .map(|response| response.iter().next().is_some())
+        .unwrap_or(false)
+}
+
 async fn run_forwarder_loop(
     app: AppHandle,
     socket: Arc<UdpSocket>,

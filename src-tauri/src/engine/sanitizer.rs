@@ -16,7 +16,6 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "--qnum=",
     "--wl=",
     "--hostlist=",
-    "--ipset=",
     "--dpi-desync=",
     "--dpi-desync-http=",
     "--dpi-desync-https=",
@@ -43,7 +42,6 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "--max-payload=",
     "--tcp-window-size=",
     "--bind-addr=",
-    "--socks=",
     "--http=",
     "--debug",
     "--debug2",
@@ -278,6 +276,16 @@ mod tests {
             "--wl=example.com".to_string(),
         ];
         assert!(validate_preset_args(&args).is_ok());
+    }
+
+    #[test]
+    fn unsupported_tpws_and_ipset_args_are_rejected() {
+        for arg in ["--socks=127.0.0.1:1080", "--ipset=targets.txt"] {
+            assert!(
+                validate_preset_args(&[arg.to_string()]).is_err(),
+                "unsupported feature was accepted: {arg}"
+            );
+        }
     }
 
     use proptest::prelude::*;

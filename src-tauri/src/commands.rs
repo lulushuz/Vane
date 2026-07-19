@@ -351,11 +351,18 @@ pub async fn start_doh_forwarder(
 
     let shutdown_clone = Arc::clone(&handle.shutdown);
     let client_clone = state.http_client.clone();
-    let endpoint_url = handle.endpoint.url().to_string();
+    let watchdog_endpoint = handle.endpoint;
+    let watchdog_protocol = crate::dns::forwarder::read_dns_settings(&app).protocol;
     let app_clone = app.clone();
 
     if watchdog {
-        crate::dns::spawn_dns_watchdog(client_clone, endpoint_url, shutdown_clone, app_clone);
+        crate::dns::spawn_dns_watchdog(
+            client_clone,
+            watchdog_endpoint,
+            watchdog_protocol,
+            shutdown_clone,
+            app_clone,
+        );
         handle.watchdog_enabled = true;
         tracing::info!("DNS watchdog was enabled and its health-check task was started.");
     } else {

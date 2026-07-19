@@ -5,7 +5,8 @@ use tauri::Emitter;
 
 pub fn spawn_dns_watchdog(
     client: reqwest::Client,
-    endpoint_url: String,
+    endpoint: crate::dns::forwarder::DoHEndpoint,
+    protocol: String,
     shutdown: Arc<AtomicBool>,
     app_handle: tauri::AppHandle,
 ) {
@@ -24,24 +25,30 @@ pub fn spawn_dns_watchdog(
                 break;
             }
 
-            // Perform connection check to DoH endpoint
-            let check_result = client.head(&endpoint_url)
-                .timeout(Duration::from_secs(3))
-                .send()
-                .await;
+            let reachable = if protocol == "dot" {
+                crate::dns::forwarder::probe_dot_upstream(endpoint).await
+            } else {
+                crate::dns::doh::resolve_doh(&client, endpoint.url(), "example.com")
+                    .await
+                    .success
+            };
 
-            match check_result {
-                Ok(resp) if resp.status().is_success() => {
+            match reachable {
+                true => {
                     fail_count = 0;
                 }
-                _ => {
+                false => {
                     fail_count += 1;
-                    tracing::warn!("DNS watchdog: DoH endpoint unreachable (fail count: {}/3)", fail_count);
+                    tracing::warn!(
+                        "DNS watchdog: {} upstream could not resolve the health-check domain (failure {}/3).",
+                        protocol.to_uppercase(),
+                        fail_count
+                    );
                 }
             }
 
             if fail_count >= 3 {
-                tracing::error!("CRITICAL: DoH resolver is unreachable for 15s. Reverting system DNS to DHCP!");
+                tracing::error!("CRITICAL: DNS upstream failed three real resolution checks. Reverting system DNS to DHCP!");
                 
                 // Revert system DNS to DHCP
                 let res = crate::dns::reset_dns_to_dhcp();

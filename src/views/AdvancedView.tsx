@@ -49,6 +49,7 @@ export function AdvancedView() {
     deletePreset,
     startEngine,
     stopEngine,
+    appendLog,
     language,
   } = useEngineStore();
 
@@ -87,11 +88,19 @@ export function AdvancedView() {
     if (!preset?.args) return;
 
     const parsed = parseArgsToConfig(preset.args);
+    if (parsed.invalidArgs.length > 0) {
+      appendLog(
+        language === 'tr'
+          ? `[ADVANCED] ${parsed.invalidArgs.length} geçersiz sayısal argüman güvenlik için uygulanmadı: ${parsed.invalidArgs.join(', ')}`
+          : `[ADVANCED] ${parsed.invalidArgs.length} invalid numeric argument(s) were not applied for safety: ${parsed.invalidArgs.join(', ')}`,
+        'warn',
+      );
+    }
     setAdvancedConfig(parsed);
     setSnapshot(parsed);
     setIsDirty(false);
     setProfileName(preset.isCustom ? preset.label : 'My Custom Preset');
-  }, [activePresetId, presets, setAdvancedConfig]);
+  }, [activePresetId, presets, setAdvancedConfig, appendLog, language]);
 
   const update = <K extends keyof AdvancedConfig>(key: K, value: AdvancedConfig[K]) => {
     setAdvancedConfig({ [key]: value } as Partial<AdvancedConfig>);
@@ -209,6 +218,14 @@ export function AdvancedView() {
         preset.id = slugify(preset.label || `imported-${Date.now()}`);
 
         const parsed = parseArgsToConfig(preset.args);
+        if (parsed.invalidArgs.length > 0) {
+          appendLog(
+            language === 'tr'
+              ? `[ADVANCED] İçe aktarılan profildeki ${parsed.invalidArgs.length} geçersiz sayısal argüman uygulanmadı: ${parsed.invalidArgs.join(', ')}`
+              : `[ADVANCED] ${parsed.invalidArgs.length} invalid numeric argument(s) in the imported preset were not applied: ${parsed.invalidArgs.join(', ')}`,
+            'warn',
+          );
+        }
         setAdvancedConfig(parsed);
         setProfileName(preset.label);
 

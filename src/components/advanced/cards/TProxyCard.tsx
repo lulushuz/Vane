@@ -9,7 +9,7 @@ interface Props {
   update: <K extends keyof AdvancedConfig>(key: K, value: AdvancedConfig[K]) => void;
 }
 
-export function TProxyCard({ config: c, update }: Props) {
+export function TProxyCard(_props: Props) {
   const { language } = useEngineStore();
   const isTr = language === 'tr';
 
@@ -24,23 +24,24 @@ export function TProxyCard({ config: c, update }: Props) {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'TPWS Proxy Modu' : 'TPWS Proxy Mode'}</label>
-            <span>{isTr ? 'Ham paket manipülasyonu yerine şeffaf SOCKS5 proxy sunucusu başlatır. (--socks)' : 'Starts a local SOCKS5 transparent proxy instead of raw packet diversion. (--socks)'}</span>
+            <span>{isTr ? 'Bu pakette TPWS ikilisi bulunmadığı için kullanılamaz.' : 'Unavailable because this package does not include a TPWS binary.'}</span>
           </div>
-          <Toggle checked={c.tpwsMode} onChange={(v) => update('tpwsMode', v)} />
+          <Toggle checked={false} onChange={() => undefined} disabled />
         </div>
 
         {/* IPSet Path */}
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <label>{isTr ? 'IPSet Dosya Yolu' : 'IPSet List Path'}</label>
-            <span>{isTr ? 'Sadece bu dosyadaki hedef IP adreslerine desync kuralları uygular. (--ipset)' : 'Only desynchronize connection requests targeting IP addresses in this file. (--ipset)'}</span>
+            <span>{isTr ? 'Güvenli dosya içe aktarma desteği eklenene kadar kullanılamaz.' : 'Unavailable until a safe file-import flow is implemented.'}</span>
           </div>
           <input 
             type="text" 
             className={styles.textInput} 
-            value={c.ipsetPath} 
-            onChange={(e) => update('ipsetPath', e.target.value)} 
-            placeholder="e.g. ipset_ranges.txt"
+            value=""
+            onChange={() => undefined}
+            placeholder={isTr ? 'Bu sürümde desteklenmiyor' : 'Not supported in this release'}
+            disabled
           />
         </div>
       </div>

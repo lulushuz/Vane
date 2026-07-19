@@ -97,6 +97,8 @@ export interface AdvancedConfig {
   ipsetPath: string;          // --ipset
   tpwsMode: boolean;          // Runs tpws instead of nfqws/winws
   bindInterface: string;      // --bind-addr
+  passthroughArgs: string[];  // UI tarafında henüz modellenmeyen doğrulanmış argümanlar
+  invalidArgs: string[];      // Ayrıştırılamayan bilinen argümanlar; motora gönderilmez
 }
 
 export const DEFAULT_ADVANCED_CONFIG: AdvancedConfig = {
@@ -129,6 +131,8 @@ export const DEFAULT_ADVANCED_CONFIG: AdvancedConfig = {
   ipsetPath: '',
   tpwsMode: false,
   bindInterface: '',
+  passthroughArgs: [],
+  invalidArgs: [],
 };
 
 /* 

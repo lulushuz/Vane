@@ -2,16 +2,48 @@ import { type AdvancedConfig, DEFAULT_ADVANCED_CONFIG } from '../store/engineSto
 
 const KNOWN_STRATEGIES = ['none', 'split', 'split2', 'disorder', 'fake', 'oob', 'syndata'];
 
+const valueAfterEquals = (arg: string): string => {
+  const separator = arg.indexOf('=');
+  return separator >= 0 ? arg.slice(separator + 1) : '';
+};
+
+const parseFiniteInteger = (value: string): number | null => {
+  if (!/^-?\d+$/.test(value.trim())) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+};
+
+const isPositiveSafeInteger = (value: number, minimum = 1): boolean =>
+  Number.isSafeInteger(value) && value >= minimum;
+
+const assignInteger = (
+  config: AdvancedConfig,
+  key: keyof AdvancedConfig,
+  arg: string,
+): void => {
+  const parsed = parseFiniteInteger(valueAfterEquals(arg));
+  if (parsed === null) {
+    config.invalidArgs.push(arg);
+  } else {
+    (config[key] as number) = parsed;
+  }
+};
+
 /**
  * winws argüman dizisini AdvancedConfig objesine dönüştürür.
  * Tanınmayan arg'lar sessizce atlanır.
  */
 export function parseArgsToConfig(args: string[]): AdvancedConfig {
-  const config: AdvancedConfig = { ...DEFAULT_ADVANCED_CONFIG, desyncFooling: [] };
+  const config: AdvancedConfig = {
+    ...DEFAULT_ADVANCED_CONFIG,
+    desyncFooling: [],
+    passthroughArgs: [],
+    invalidArgs: [],
+  };
 
   for (const arg of args) {
     if (arg.startsWith('--dpi-desync=')) {
-      const val = arg.split('=')[1];
+      const val = valueAfterEquals(arg);
       if (KNOWN_STRATEGIES.includes(val)) {
         config.desyncMethod = val;
       } else {
@@ -19,61 +51,62 @@ export function parseArgsToConfig(args: string[]): AdvancedConfig {
         config.customDesyncMethod = val;
       }
     } else if (arg.startsWith('--dpi-desync-http=')) {
-      config.desyncHttp = arg.split('=')[1];
+      config.desyncHttp = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync-https=')) {
-      config.desyncHttps = arg.split('=')[1];
+      config.desyncHttps = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync-quic=')) {
-      config.desyncQuic = arg.split('=')[1];
+      config.desyncQuic = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync-cutoff=')) {
-      config.desyncCutoff = arg.split('=')[1];
+      config.desyncCutoff = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync-split-pos=')) {
-      config.splitPosition = parseInt(arg.split('=')[1], 10);
+      assignInteger(config, 'splitPosition', arg);
     } else if (arg.startsWith('--dpi-desync-repeats=')) {
-      config.desyncRepeats = parseInt(arg.split('=')[1], 10);
+      assignInteger(config, 'desyncRepeats', arg);
     } else if (arg.startsWith('--dpi-desync-fooling=')) {
-      config.desyncFooling = arg.split('=')[1].split(',').map(s => s.trim());
+      config.desyncFooling = valueAfterEquals(arg).split(',').map(s => s.trim()).filter(Boolean);
     } else if (arg.startsWith('--dpi-desync-ttl=')) {
-      config.fakeTtl = parseInt(arg.split('=')[1], 10);
+      assignInteger(config, 'fakeTtl', arg);
       config.autoTtl = false;
     } else if (arg === '--dpi-desync-autottl') {
       config.autoTtl = true;
     } else if (arg.startsWith('--dpi-desync-ttl-ext=')) {
-      config.fakeTtlExt = parseInt(arg.split('=')[1], 10);
+      assignInteger(config, 'fakeTtlExt', arg);
     } else if (arg.startsWith('--dpi-desync-split-http-req=')) {
-      config.splitHttpReq = arg.split('=')[1];
+      config.splitHttpReq = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync-split-pos-http-req=')) {
-      config.splitPosHttpReq = parseInt(arg.split('=')[1], 10);
+      assignInteger(config, 'splitPosHttpReq', arg);
     } else if (arg.startsWith('--dpi-desync-split-tls=')) {
-      config.splitTls = arg.split('=')[1];
+      config.splitTls = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync-split-pos-tls=')) {
-      config.splitPosTls = parseInt(arg.split('=')[1], 10);
+      assignInteger(config, 'splitPosTls', arg);
     } else if (arg.startsWith('--dpi-desync-fake-tls-sni=')) {
-      config.fakeTlsSni = arg.split('=')[1];
+      config.fakeTlsSni = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync-fake-http=')) {
-      config.fakeHttpPayload = arg.split('=')[1];
+      config.fakeHttpPayload = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync-fake-tls=')) {
-      config.fakeTlsPayload = arg.split('=')[1];
+      config.fakeTlsPayload = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync-fake-quic=')) {
-      config.fakeQuicPayload = arg.split('=')[1];
+      config.fakeQuicPayload = valueAfterEquals(arg);
     } else if (arg.startsWith('--dpi-desync2=')) {
-      config.desync2 = arg.split('=')[1];
+      config.desync2 = valueAfterEquals(arg);
     } else if (arg.startsWith('--tcp-window-size=')) {
-      config.tcpWindowSize = parseInt(arg.split('=')[1], 10);
+      assignInteger(config, 'tcpWindowSize', arg);
     } else if (arg.startsWith('--ipset=')) {
-      config.ipsetPath = arg.split('=')[1];
+      config.invalidArgs.push(arg);
     } else if (arg.startsWith('--bind-addr=')) {
-      config.bindInterface = arg.split('=')[1];
+      config.bindInterface = valueAfterEquals(arg);
     } else if (arg.startsWith('--socks=')) {
-      config.tpwsMode = true;
-      config.bindInterface = arg.split('=')[1];
+      config.invalidArgs.push(arg);
     } else if (arg.startsWith('--mss=')) {
-      config.mssFix = parseInt(arg.split('=')[1], 10);
+      assignInteger(config, 'mssFix', arg);
     } else if (arg.startsWith('--wf-tcp=')) {
-      config.httpPorts = arg.split('=')[1].replace(/,/g, ', ');
+      config.httpPorts = valueAfterEquals(arg).replace(/,/g, ', ');
     } else if (arg.startsWith('--wf-udp=')) {
       config.quicUdpHandling = arg.includes('443');
     } else if (arg === '--dpi-desync-any-protocol') {
       config.anyProtocol = true;
+    } else {
+      config.passthroughArgs.push(arg);
     }
   }
 
@@ -86,32 +119,22 @@ export function parseArgsToConfig(args: string[]): AdvancedConfig {
 export function serializeConfigToArgs(config: AdvancedConfig): string[] {
   const args: string[] = [];
 
-  // Protocol & Ports (sadece TPWS modu kapalıyken geçerli)
-  if (!config.tpwsMode) {
-    if (config.httpPorts) {
-      args.push(`--wf-tcp=${config.httpPorts.replace(/\s+/g, '')}`);
-    }
-    if (config.quicUdpHandling) {
-      args.push('--wf-udp=443');
-    }
-  } else {
-    // tpws socks proxy modu
-    args.push(`--socks=${config.bindInterface || '127.0.0.1:1080'}`);
+  if (config.httpPorts) {
+    args.push(`--wf-tcp=${config.httpPorts.replace(/\s+/g, '')}`);
+  }
+  if (config.quicUdpHandling) {
+    args.push('--wf-udp=443');
   }
 
-  if (config.bindInterface && !config.tpwsMode) {
+  if (config.bindInterface) {
     args.push(`--bind-addr=${config.bindInterface}`);
   }
 
-  if (config.ipsetPath) {
-    args.push(`--ipset=${config.ipsetPath}`);
-  }
-
-  if (config.tcpWindowSize > 0) {
+  if (isPositiveSafeInteger(config.tcpWindowSize)) {
     args.push(`--tcp-window-size=${config.tcpWindowSize}`);
   }
 
-  if (config.mssFix > 0) {
+  if (isPositiveSafeInteger(config.mssFix)) {
     args.push(`--mss=${config.mssFix}`);
   }
 
@@ -148,24 +171,24 @@ export function serializeConfigToArgs(config: AdvancedConfig): string[] {
     }
 
     // Bölme (split) konumları
-    if (config.splitPosition > 0) {
+    if (isPositiveSafeInteger(config.splitPosition)) {
       args.push(`--dpi-desync-split-pos=${config.splitPosition}`);
     }
     if (config.splitHttpReq && config.splitHttpReq !== 'none') {
       args.push(`--dpi-desync-split-http-req=${config.splitHttpReq}`);
     }
-    if (config.splitPosHttpReq > 0) {
+    if (isPositiveSafeInteger(config.splitPosHttpReq)) {
       args.push(`--dpi-desync-split-pos-http-req=${config.splitPosHttpReq}`);
     }
     if (config.splitTls && config.splitTls !== 'none') {
       args.push(`--dpi-desync-split-tls=${config.splitTls}`);
     }
-    if (config.splitPosTls > 0) {
+    if (isPositiveSafeInteger(config.splitPosTls)) {
       args.push(`--dpi-desync-split-pos-tls=${config.splitPosTls}`);
     }
 
     // Tekrar ve Evasion Fooling
-    if (config.desyncRepeats > 1) {
+    if (isPositiveSafeInteger(config.desyncRepeats, 2)) {
       args.push(`--dpi-desync-repeats=${config.desyncRepeats}`);
     }
     if (config.desyncFooling.length > 0) {
@@ -175,10 +198,10 @@ export function serializeConfigToArgs(config: AdvancedConfig): string[] {
     // TTL Evasion
     if (config.autoTtl) {
       args.push('--dpi-desync-autottl');
-    } else if (config.fakeTtl > 0) {
+    } else if (isPositiveSafeInteger(config.fakeTtl)) {
       args.push(`--dpi-desync-ttl=${config.fakeTtl}`);
     }
-    if (config.fakeTtlExt > 0) {
+    if (isPositiveSafeInteger(config.fakeTtlExt)) {
       args.push(`--dpi-desync-ttl-ext=${config.fakeTtlExt}`);
     }
 
@@ -195,6 +218,10 @@ export function serializeConfigToArgs(config: AdvancedConfig): string[] {
     if (config.fakeQuicPayload) {
       args.push(`--dpi-desync-fake-quic=${config.fakeQuicPayload}`);
     }
+  }
+
+  for (const arg of config.passthroughArgs ?? []) {
+    if (!args.includes(arg)) args.push(arg);
   }
 
   return args;
