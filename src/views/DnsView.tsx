@@ -19,6 +19,7 @@ interface ForwarderStatus {
   protocol: 'doh' | 'dot';
   adblock: boolean;
   cache: boolean;
+  watchdogEnabled: boolean;
 }
 
 const CloudflareIcon = ({ size = 24 }: { size?: number }) => (
@@ -97,6 +98,7 @@ export function DnsView() {
     setDnsProtocol,
     setDnsAdBlock,
     setDnsCache,
+    watchdog,
     appendLog,
     language,
   } = useEngineStore();
@@ -135,11 +137,11 @@ export function DnsView() {
           ? '[DNS] DNS yönlendiricisinin durduğu ve sistem DNS ayarının geri yüklendiği doğrulandı.'
           : '[DNS] Verified that the DNS forwarder stopped and the system DNS setting was restored.', 'info');
       } else {
-        const st = await invoke<ForwarderStatus>('start_doh_forwarder');
+        const st = await invoke<ForwarderStatus>('start_doh_forwarder', { watchdog });
         setForwarder(st);
         appendLog(language === 'tr'
-          ? `[DNS] DNS yönlendiricisi doğrulandı: ${st.protocol.toUpperCase()}, önbellek ${st.cache ? 'açık' : 'kapalı'}, reklam filtresi ${st.adblock ? 'açık' : 'kapalı'}.`
-          : `[DNS] DNS forwarder verified: ${st.protocol.toUpperCase()}, cache ${st.cache ? 'on' : 'off'}, ad filter ${st.adblock ? 'on' : 'off'}.`, 'info');
+          ? `[DNS] DNS yönlendiricisi doğrulandı: ${st.protocol.toUpperCase()}, önbellek ${st.cache ? 'açık' : 'kapalı'}, reklam filtresi ${st.adblock ? 'açık' : 'kapalı'}, bağlantı gözlemcisi ${st.watchdogEnabled ? 'çalışıyor' : 'kapalı'}.`
+          : `[DNS] DNS forwarder verified: ${st.protocol.toUpperCase()}, cache ${st.cache ? 'on' : 'off'}, ad filter ${st.adblock ? 'on' : 'off'}, connection watchdog ${st.watchdogEnabled ? 'running' : 'off'}.`, 'info');
       }
     } catch (e: any) {
       appendLog(language === 'tr' ? `[ERROR] DNS yönlendiricisi işlemi başarısız: ${e}` : `[ERROR] DNS forwarder operation failed: ${e}`, 'error');

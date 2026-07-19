@@ -300,9 +300,16 @@ pub struct ForwarderStatus {
     pub protocol: String,
     pub adblock: bool,
     pub cache: bool,
+    pub watchdog_enabled: bool,
 }
 
-fn forwarder_status(active: bool, port: u16, endpoint: String, app: &AppHandle) -> ForwarderStatus {
+fn forwarder_status(
+    active: bool,
+    port: u16,
+    endpoint: String,
+    watchdog_enabled: bool,
+    app: &AppHandle,
+) -> ForwarderStatus {
     let settings = crate::dns::forwarder::read_dns_settings(app);
     ForwarderStatus {
         active,
@@ -311,11 +318,13 @@ fn forwarder_status(active: bool, port: u16, endpoint: String, app: &AppHandle) 
         protocol: settings.protocol,
         adblock: settings.adblock,
         cache: settings.cache,
+        watchdog_enabled,
     }
 }
 
 #[tauri::command]
 pub async fn start_doh_forwarder(
+    watchdog: bool,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ForwarderStatus, String> {
@@ -327,7 +336,7 @@ pub async fn start_doh_forwarder(
         }
     }
 
-    let handle = spawn_doh_forwarder(
+    let mut handle = spawn_doh_forwarder(
         app.clone(),
         state.http_client.clone(),
         DOH_FORWARDER_DEFAULT_PORT,
@@ -345,8 +354,13 @@ pub async fn start_doh_forwarder(
     let endpoint_url = handle.endpoint.url().to_string();
     let app_clone = app.clone();
 
-    // Start the Fail-Safe DNS Watchdog!
-    crate::dns::spawn_dns_watchdog(client_clone, endpoint_url, shutdown_clone, app_clone);
+    if watchdog {
+        crate::dns::spawn_dns_watchdog(client_clone, endpoint_url, shutdown_clone, app_clone);
+        handle.watchdog_enabled = true;
+        tracing::info!("DNS watchdog was enabled and its health-check task was started.");
+    } else {
+        tracing::info!("DNS watchdog was disabled; no health-check task was started.");
+    }
 
     let status = {
         let mut guard = state.forwarder.lock()
@@ -362,7 +376,7 @@ pub async fn start_doh_forwarder(
         let endpoint = handle.endpoint.url().to_string();
         *guard = Some(handle);
 
-        forwarder_status(true, port, endpoint, &app)
+        forwarder_status(true, port, endpoint, watchdog, &app)
     };
 
     tracing::info!(
@@ -399,8 +413,20 @@ pub async fn stop_doh_forwarder(
 pub fn get_doh_forwarder_status(app: AppHandle, state: State<'_, AppState>) -> ForwarderStatus {
     let guard = state.forwarder.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_ref() {
-        Some(h) => forwarder_status(true, h.port, h.endpoint.url().to_string(), &app),
-        None => forwarder_status(false, DOH_FORWARDER_DEFAULT_PORT, DoHEndpoint::Cloudflare.url().to_string(), &app),
+        Some(h) => forwarder_status(
+            true,
+            h.port,
+            h.endpoint.url().to_string(),
+            h.watchdog_enabled,
+            &app,
+        ),
+        None => forwarder_status(
+            false,
+            DOH_FORWARDER_DEFAULT_PORT,
+            DoHEndpoint::Cloudflare.url().to_string(),
+            false,
+            &app,
+        ),
     }
 }
 
@@ -554,39 +580,6 @@ pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_network_stats() -> (u64, u64) {
     crate::network::get_total_network_bytes()
-}#[tauri::command]
-fn save_settings_to_disk(app: &AppHandle, update_fn: impl FnOnce(&mut serde_json::Value)) -> Result<(), String> {
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let settings_path = app_data.join("settings.json");
-    
-    let mut file_json = if settings_path.exists() {
-        let content = std::fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
-        serde_json::from_str::<serde_json::Value>(&content).unwrap_or_else(|_| serde_json::json!({}))
-    } else {
-        serde_json::json!({})
-    };
-
-    let mut vane_settings = if let Some(serde_json::Value::String(s)) = file_json.get("vane-settings") {
-        serde_json::from_str::<serde_json::Value>(s).unwrap_or_else(|_| serde_json::json!({"state": {}, "version": 0}))
-    } else {
-        serde_json::json!({"state": {}, "version": 0})
-    };
-
-    if let Some(state) = vane_settings.get_mut("state") {
-        update_fn(state);
-    } else {
-        let mut state_obj = serde_json::json!({});
-        update_fn(&mut state_obj);
-        vane_settings["state"] = state_obj;
-    }
-
-    let serialized = serde_json::to_string(&vane_settings).map_err(|e| e.to_string())?;
-    file_json["vane-settings"] = serde_json::Value::String(serialized);
-
-    let final_content = serde_json::to_string_pretty(&file_json).map_err(|e| e.to_string())?;
-    std::fs::write(&settings_path, final_content).map_err(|e| e.to_string())?;
-    
-    Ok(())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -600,7 +593,7 @@ pub struct DnsConfigStatus {
 }
 
 #[tauri::command]
-pub fn sync_dns_settings(
+pub async fn sync_dns_settings(
     protocol: String,
     adblock: bool,
     cache: bool,
@@ -608,6 +601,7 @@ pub fn sync_dns_settings(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<DnsConfigStatus, String> {
+    let _sync_guard = state.dns_sync.lock().await;
     if protocol != "doh" && protocol != "dot" {
         return Err(format!("Unsupported DNS transport protocol: {}", protocol));
     }
@@ -619,13 +613,6 @@ pub fn sync_dns_settings(
     };
     crate::dns::forwarder::update_dns_settings_cache(settings.clone());
 
-    let persisted = settings.clone();
-    save_settings_to_disk(&app, move |state| {
-        state["dnsProtocol"] = serde_json::Value::String(persisted.protocol);
-        state["dnsAdBlock"] = serde_json::Value::Bool(adblock);
-        state["dnsCache"] = serde_json::Value::Bool(cache);
-        state["proxySocks5"] = serde_json::Value::String(socks5_proxy);
-    })?;
     let verified = crate::dns::forwarder::read_dns_settings(&app);
     let forwarder_active = state.forwarder.lock()
         .map_err(|_| "Forwarder lock poisoned.".to_string())?
@@ -668,25 +655,30 @@ pub async fn sync_bypass_config(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<BypassConfigStatus, String> {
+    let _sync_guard = state.bypass_sync.lock().await;
     if mode != "all" && mode != "whitelist" && mode != "blacklist" {
         return Err(format!("Unsupported bypass mode: {}", mode));
     }
-    crate::engine::manager::update_bypass_config_cache(mode.clone(), list.clone(), proxy.clone(), kill_switch);
-
-    let whitelist_clone = whitelist_domains.clone();
-    let blacklist_clone = blacklist_domains.clone();
-    let mode_clone = mode.clone();
-    let list_clone = list.clone();
-    let proxy_clone = proxy.clone();
-    
-    save_settings_to_disk(&app, move |state| {
-        state["bypassMode"] = serde_json::Value::String(mode_clone);
-        state["domainList"] = serde_json::Value::String(list_clone);
-        state["proxySocks5"] = serde_json::Value::String(proxy_clone);
-        state["killSwitch"] = serde_json::Value::Bool(kill_switch);
-        state["whitelistDomains"] = serde_json::to_value(whitelist_clone).unwrap_or(serde_json::Value::Array(vec![]));
-        state["blacklistDomains"] = serde_json::to_value(blacklist_clone).unwrap_or(serde_json::Value::Array(vec![]));
-    })?;
+    let whitelist_domains = crate::config::domain::canonicalize_domain_rules(&whitelist_domains)
+        .map_err(|error| format!("Invalid whitelist domain: {error}"))?;
+    let blacklist_domains = crate::config::domain::canonicalize_domain_rules(&blacklist_domains)
+        .map_err(|error| format!("Invalid blacklist domain: {error}"))?;
+    let canonical_list = match mode.as_str() {
+        "whitelist" => whitelist_domains.join("\n"),
+        "blacklist" => blacklist_domains.join("\n"),
+        _ => String::new(),
+    };
+    if list.trim() != canonical_list {
+        tracing::warn!(
+            "Pattern list received from the interface did not match the canonical domain rules; the verified domain arrays were used."
+        );
+    }
+    crate::engine::manager::update_bypass_config_cache(
+        mode.clone(),
+        canonical_list.clone(),
+        proxy.clone(),
+        kill_switch,
+    );
 
     let status = state.engine_manager.current_status();
     let mut engine_restarted = false;

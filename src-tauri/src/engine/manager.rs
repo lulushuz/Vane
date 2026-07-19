@@ -229,7 +229,9 @@ impl EngineManager {
     }
 
     pub fn stop(&self, dispatcher: &impl EngineEventDispatcher) -> Result<(), EngineError> {
-        apply_kill_switch(false);
+        if let Err(error) = apply_kill_switch(false) {
+            tracing::error!("Engine stop continued, but DNS kill-switch cleanup failed: {error}");
+        }
 
         let mut state_lock = self.state.lock()
             .map_err(|_| {
@@ -294,110 +296,207 @@ impl EngineManager {
 
 use std::sync::RwLock;
 
-static BYPASS_CONFIG_CACHE: RwLock<Option<(String, String, String, bool)>> = RwLock::new(None);
+#[derive(Clone, Debug)]
+struct BypassConfig {
+    mode: String,
+    domain_list: String,
+    proxy: String,
+    kill_switch: bool,
+}
+
+impl BypassConfig {
+    fn all_sites() -> Self {
+        Self {
+            mode: "all".to_string(),
+            domain_list: String::new(),
+            proxy: String::new(),
+            kill_switch: false,
+        }
+    }
+
+    fn validate_for_start(&self) -> Result<(), EngineError> {
+        if self.mode == "whitelist" && self.domain_list.is_empty() {
+            return Err(EngineError::ConfigParseError(
+                "Whitelist mode is selected, but the whitelist has no valid domains. DPI bypass was not started."
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+static BYPASS_CONFIG_CACHE: RwLock<Option<BypassConfig>> = RwLock::new(None);
 
 pub fn update_bypass_config_cache(mode: String, list: String, proxy: String, kill_switch: bool) {
     if let Ok(mut guard) = BYPASS_CONFIG_CACHE.write() {
-        *guard = Some((mode, list, proxy, kill_switch));
+        *guard = Some(BypassConfig {
+            mode,
+            domain_list: list,
+            proxy,
+            kill_switch,
+        });
     }
 }
 
-fn read_bypass_config(app: &AppHandle) -> (String, String, String, bool) {
+fn parse_bypass_config(content: &str) -> Result<BypassConfig, EngineError> {
+    let file_json = serde_json::from_str::<serde_json::Value>(content)
+        .map_err(|error| EngineError::ConfigParseError(format!("Settings JSON is invalid: {error}")))?;
+    let zustand_raw = file_json.get("vane-settings").ok_or_else(|| {
+        EngineError::ConfigParseError("The persisted Vane settings entry is missing.".to_string())
+    })?;
+    let zustand_json = match zustand_raw {
+        serde_json::Value::String(value) => serde_json::from_str::<serde_json::Value>(value)
+            .map_err(|error| {
+                EngineError::ConfigParseError(format!("Persisted Vane settings are invalid: {error}"))
+            })?,
+        object => object.clone(),
+    };
+    let state = zustand_json.get("state").ok_or_else(|| {
+        EngineError::ConfigParseError("The persisted Vane settings state is missing.".to_string())
+    })?;
+    let mode = state
+        .get("bypassMode")
+        .and_then(|value| value.as_str())
+        .unwrap_or("all")
+        .to_string();
+    if !matches!(mode.as_str(), "all" | "whitelist" | "blacklist") {
+        return Err(EngineError::ConfigParseError(format!(
+            "Unsupported persisted bypass mode: {mode}"
+        )));
+    }
+
+    let array_key = if mode == "whitelist" {
+        "whitelistDomains"
+    } else {
+        "blacklistDomains"
+    };
+    let raw_domains: Vec<String> = state
+        .get(array_key)
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    let domains = crate::config::domain::canonicalize_domain_rules(&raw_domains).map_err(|error| {
+        EngineError::ConfigParseError(format!("Persisted bypass domain is invalid: {error}"))
+    })?;
+
+    Ok(BypassConfig {
+        mode,
+        domain_list: domains.join("\n"),
+        proxy: state
+            .get("proxySocks5")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
+        kill_switch: state
+            .get("killSwitch")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+    })
+}
+
+fn read_bypass_config(app: &AppHandle) -> Result<BypassConfig, EngineError> {
     if let Ok(guard) = BYPASS_CONFIG_CACHE.read() {
         if let Some(ref cached) = *guard {
-            return cached.clone();
+            return Ok(cached.clone());
         }
     }
 
-    let default_res = ("all".to_string(), "".to_string(), "".to_string(), false);
-    let Ok(app_data) = app.path().app_data_dir() else { return default_res; };
+    let app_data = app.path().app_data_dir().map_err(|error| {
+        EngineError::IoError(format!("Settings storage path is unavailable: {error}"))
+    })?;
     let settings_path = app_data.join("settings.json");
     if !settings_path.exists() {
-        return default_res;
+        return Ok(BypassConfig::all_sites());
     }
 
-    let mut content = String::new();
+    let mut content = None;
+    let mut last_error = None;
     for _ in 0..3 {
-        if let Ok(c) = std::fs::read_to_string(&settings_path) {
-            content = c;
-            break;
+        match std::fs::read_to_string(&settings_path) {
+            Ok(value) => {
+                content = Some(value);
+                break;
+            }
+            Err(error) => {
+                last_error = Some(error);
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-
-    if content.is_empty() {
-        return default_res;
-    }
-
-    let Ok(file_json) = serde_json::from_str::<serde_json::Value>(&content) else { return default_res; };
-    let Some(zustand_raw) = file_json.get("vane-settings") else { return default_res; };
-    let Ok(zustand_json) = (match zustand_raw {
-        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(&s),
-        obj => Ok(obj.clone()),
-    }) else { return default_res; };
-
-    let state = zustand_json.get("state");
-    let mode = state
-        .and_then(|s| s.get("bypassMode"))
-        .and_then(|m| m.as_str())
-        .unwrap_or("all")
-        .to_string();
-    let list = state
-        .and_then(|s| s.get("domainList"))
-        .and_then(|l| l.as_str())
-        .unwrap_or("")
-        .to_string();
-    let proxy = state
-        .and_then(|s| s.get("proxySocks5"))
-        .and_then(|p| p.as_str())
-        .unwrap_or("")
-        .to_string();
-    let kill_switch = state
-        .and_then(|s| s.get("killSwitch"))
-        .and_then(|k| k.as_bool())
-        .unwrap_or(false);
-
-    let res = (mode, list, proxy, kill_switch);
+    let content = content.ok_or_else(|| {
+        EngineError::IoError(format!(
+            "Settings could not be read after three attempts: {}",
+            last_error
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "unknown error".to_string())
+        ))
+    })?;
+    let config = parse_bypass_config(&content)?;
     if let Ok(mut guard) = BYPASS_CONFIG_CACHE.write() {
-        *guard = Some(res.clone());
+        *guard = Some(config.clone());
     }
-    res
+    Ok(config)
 }
 
-fn apply_kill_switch(enabled: bool) {
+fn apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        let _ = std::process::Command::new("netsh")
-            .args(&["advfirewall", "firewall", "delete", "rule", "name=VaneDNSKillSwitch"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+        let run_netsh = |args: &[&str]| -> Result<bool, EngineError> {
+            std::process::Command::new("netsh")
+                .args(args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .status()
+                .map(|status| status.success())
+                .map_err(|error| {
+                    EngineError::IoError(format!("Windows Firewall command failed: {error}"))
+                })
+        };
+
+        let removed = run_netsh(&[
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            "name=VaneDNSKillSwitch",
+        ])?;
+        if !removed {
+            tracing::debug!("No existing Vane DNS kill-switch rule was removed.");
+        }
 
         if enabled {
-            tracing::info!("DNS Kill Switch aktif ediliyor...");
-            let _ = std::process::Command::new("netsh")
-                .args(&[
+            let udp_added = run_netsh(&[
                     "advfirewall", "firewall", "add", "rule",
                     "name=VaneDNSKillSwitch", "dir=out", "action=block",
                     "protocol=UDP", "remoteport=53"
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
-
-            let _ = std::process::Command::new("netsh")
-                .args(&[
+                ])?;
+            let tcp_added = run_netsh(&[
                     "advfirewall", "firewall", "add", "rule",
                     "name=VaneDNSKillSwitch", "dir=out", "action=block",
                     "protocol=TCP", "remoteport=53"
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
+                ])?;
+            if !udp_added || !tcp_added {
+                let _ = run_netsh(&[
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    "name=VaneDNSKillSwitch",
+                ]);
+                return Err(EngineError::AuthorizationFailed(
+                    "DNS kill switch could not be applied to Windows Firewall.".to_string(),
+                ));
+            }
+            tracing::info!("DNS kill switch verified: TCP and UDP port 53 block rules were applied.");
+        } else {
+            tracing::info!("DNS kill switch cleanup completed.");
         }
     }
 
@@ -412,13 +511,83 @@ fn apply_kill_switch(enabled: bool) {
 
         if enabled {
             tracing::info!("DNS Kill Switch aktif ediliyor (iptables)...");
-            let _ = std::process::Command::new("iptables")
+            let udp_status = std::process::Command::new("iptables")
                 .args(&["-A", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "DROP"])
-                .status();
-            let _ = std::process::Command::new("iptables")
+                .status()?;
+            let tcp_status = std::process::Command::new("iptables")
                 .args(&["-A", "OUTPUT", "-p", "tcp", "--dport", "53", "-j", "DROP"])
-                .status();
+                .status()?;
+            if !udp_status.success() || !tcp_status.success() {
+                return Err(EngineError::AuthorizationFailed(
+                    "DNS kill switch could not be applied with iptables.".to_string(),
+                ));
+            }
         }
+    }
+
+    Ok(())
+}
+
+struct KillSwitchRollback {
+    active: bool,
+}
+
+impl KillSwitchRollback {
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for KillSwitchRollback {
+    fn drop(&mut self) {
+        if self.active {
+            tracing::warn!("Engine startup failed; rolling back the DNS kill switch.");
+            let _ = apply_kill_switch(false);
+        }
+    }
+}
+
+#[cfg(test)]
+mod bypass_config_tests {
+    use super::parse_bypass_config;
+
+    #[test]
+    fn corrupt_settings_are_rejected_instead_of_falling_back_to_all() {
+        assert!(parse_bypass_config("{not-json").is_err());
+    }
+
+    #[test]
+    fn whitelist_is_built_from_verified_array_not_legacy_domain_list() {
+        let settings = serde_json::json!({
+            "vane-settings": serde_json::json!({
+                "state": {
+                    "bypassMode": "whitelist",
+                    "domainList": "attacker.example",
+                    "whitelistDomains": [" Roblox.COM. "],
+                    "blacklistDomains": [],
+                    "proxySocks5": "",
+                    "killSwitch": false
+                }
+            }).to_string()
+        });
+        let config = parse_bypass_config(&settings.to_string()).expect("valid settings");
+        assert_eq!(config.domain_list, "roblox.com");
+        assert!(config.validate_for_start().is_ok());
+    }
+
+    #[test]
+    fn empty_whitelist_is_fail_closed() {
+        let settings = serde_json::json!({
+            "vane-settings": serde_json::json!({
+                "state": {
+                    "bypassMode": "whitelist",
+                    "whitelistDomains": [],
+                    "blacklistDomains": []
+                }
+            }).to_string()
+        });
+        let config = parse_bypass_config(&settings.to_string()).expect("valid settings");
+        assert!(config.validate_for_start().is_err());
     }
 }
 
@@ -435,11 +604,13 @@ async fn spawn_and_run(
 
     let mut prepared_args = EngineManager::prepare_args(&preset.args);
 
-    let (bypass_mode, domain_list, _proxy_socks5, kill_switch) = read_bypass_config(app);
+    let bypass_config = read_bypass_config(app)?;
+    bypass_config.validate_for_start()?;
+    let bypass_mode = bypass_config.mode;
+    let domain_list = bypass_config.domain_list;
+    let kill_switch = bypass_config.kill_switch;
+    let _proxy_socks5 = bypass_config.proxy;
     
-    // Apply DNS Kill Switch
-    apply_kill_switch(kill_switch);
-
     if bypass_mode == "whitelist" || bypass_mode == "blacklist" {
         let app_data = app.path().app_data_dir()
             .map_err(|e| EngineError::IoError(format!("Pattern storage path is unavailable: {}", e)))?;
@@ -460,6 +631,11 @@ async fn spawn_and_run(
     } else {
         tracing::info!("Pattern verified: DPI bypass will run for all sites.");
     }
+
+    apply_kill_switch(kill_switch)?;
+    let mut kill_switch_rollback = KillSwitchRollback {
+        active: kill_switch,
+    };
 
     #[cfg(target_os = "linux")]
     let mut cancel_rx = _cancel_rx;
@@ -577,6 +753,7 @@ async fn spawn_and_run(
         crate::engine::logger::spawn_log_reader(stderr, app.clone(), Some("HATA: "));
 
         let handle = ProcessHandle::new(child, pid, None);
+        kill_switch_rollback.disarm();
         Ok(handle)
     }
 
@@ -621,6 +798,7 @@ async fn spawn_and_run(
         crate::engine::logger::spawn_log_reader(stderr, app.clone(), Some("HATA: "));
 
         let handle = ProcessHandle::new(child, pid, job_guard);
+        kill_switch_rollback.disarm();
         Ok(handle)
     }
 }

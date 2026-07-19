@@ -40,6 +40,8 @@ pub struct AppState {
    Wrapped in Mutex so commands can start/stop it from different threads. 
 */
     pub forwarder: Mutex<Option<ForwarderHandle>>,
+    pub bypass_sync: tokio::sync::Mutex<()>,
+    pub dns_sync: tokio::sync::Mutex<()>,
 }
 
 
@@ -335,6 +337,8 @@ pub fn run() {
                 config_loader: Mutex::new(loader),
                 http_client,
                 forwarder: Mutex::new(None),
+                bypass_sync: tokio::sync::Mutex::new(()),
+                dns_sync: tokio::sync::Mutex::new(()),
             });
 
             // Auto-start: if launched via Task Scheduler / systemd, resume the last DPI preset.

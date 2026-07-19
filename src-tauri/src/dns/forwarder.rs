@@ -320,6 +320,7 @@ pub struct ForwarderHandle {
     pub port: u16,
     pub endpoint: DoHEndpoint,
     pub shutdown: Arc<AtomicBool>,
+    pub watchdog_enabled: bool,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -371,7 +372,13 @@ pub async fn spawn_doh_forwarder(
         run_forwarder_loop(app_clone, socket, client, endpoint, fallback_dns, shutdown_clone).await;
     });
 
-    Ok(ForwarderHandle { port, endpoint, shutdown, task })
+    Ok(ForwarderHandle {
+        port,
+        endpoint,
+        shutdown,
+        watchdog_enabled: false,
+        task,
+    })
 }
 
 async fn run_forwarder_loop(

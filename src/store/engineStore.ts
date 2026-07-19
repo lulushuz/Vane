@@ -139,11 +139,19 @@ export const DEFAULT_ADVANCED_CONFIG: AdvancedConfig = {
 */
 
 const STORE_FILE = 'settings.json';
+let storeWriteQueue: Promise<void> = Promise.resolve();
+
+const enqueueStoreWrite = (operation: () => Promise<void>): Promise<void> => {
+  const queued = storeWriteQueue.then(operation, operation);
+  storeWriteQueue = queued.catch(() => undefined);
+  return queued;
+};
 
 function createTauriStorage(): StateStorage {
   return {
     getItem: async (key: string): Promise<string | null> => {
       try {
+        await storeWriteQueue;
         const store = await load(STORE_FILE, { autoSave: false } as any);
         const value = await store.get<string>(key);
         return value ?? null;
@@ -152,20 +160,24 @@ function createTauriStorage(): StateStorage {
       }
     },
     setItem: async (key: string, value: string): Promise<void> => {
-      try {
-        const store = await load(STORE_FILE, { autoSave: false } as any);
-        await store.set(key, value);
-        await store.save();
-      } catch (e) {
-        console.error('Tauri Store yazma hatası:', e);
-      }
+      return enqueueStoreWrite(async () => {
+        try {
+          const store = await load(STORE_FILE, { autoSave: false } as any);
+          await store.set(key, value);
+          await store.save();
+        } catch (e) {
+          console.error('Tauri Store yazma hatası:', e);
+        }
+      });
     },
     removeItem: async (key: string): Promise<void> => {
-      try {
-        const store = await load(STORE_FILE, { autoSave: false } as any);
-        await store.delete(key);
-        await store.save();
-      } catch { /* ignore */ }
+      return enqueueStoreWrite(async () => {
+        try {
+          const store = await load(STORE_FILE, { autoSave: false } as any);
+          await store.delete(key);
+          await store.save();
+        } catch { /* ignore */ }
+      });
     },
   };
 }
@@ -244,29 +256,8 @@ interface EngineStore {
 let logCounter = 0;
 let bypassSyncTimeout: any = null;
 let dnsSyncTimeout: any = null;
-
-const DOMAIN_ALIASES: Record<string, string[]> = {
-  'discord.com': ['discordapp.com', 'discordapp.net', 'discord.gg'],
-  'roblox.com': ['robloxlabs.com', 'rbxcdn.com'],
-  'youtube.com': ['youtu.be', 'ytimg.com', 'ggpht.com']
-};
-
-const VALID_DOMAIN = /^(?:\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(?:\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})+$/;
-
-const cleanDomainsHelper = (domains: string[]): string => {
-  const validDomains = domains.map((domain) => domain.trim().toLowerCase()).filter((domain) => VALID_DOMAIN.test(domain));
-  const resultSet = new Set<string>(validDomains);
-  for (const domain of validDomains) {
-    const cleanDomain = domain.replace(/^\*\./, '');
-    if (DOMAIN_ALIASES[cleanDomain]) {
-      for (const alias of DOMAIN_ALIASES[cleanDomain]) {
-        resultSet.add(alias);
-        resultSet.add(`*.${alias}`);
-      }
-    }
-  }
-  return Array.from(resultSet).join('\n');
-};
+let bypassSyncRevision = 0;
+let dnsSyncRevision = 0;
 
 export const useEngineStore = create<EngineStore>()(
   persist(
@@ -372,6 +363,7 @@ export const useEngineStore = create<EngineStore>()(
         } catch (err) { /* ignore */ }
       },
       syncBypassToBackend: () => {
+        const revision = ++bypassSyncRevision;
         if (bypassSyncTimeout) clearTimeout(bypassSyncTimeout);
         bypassSyncTimeout = setTimeout(() => {
           const state = get();
@@ -379,18 +371,26 @@ export const useEngineStore = create<EngineStore>()(
           const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
           const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
           const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
-          const cleanedList = cleanDomainsHelper(activeDomains);
-          
-          set({ domainList: cleanedList });
 
           invoke('sync_bypass_config', {
             mode: state.bypassMode,
-            list: cleanedList,
+            list: activeDomains.join('\n'),
             proxy: state.proxySocks5,
             killSwitch: state.killSwitch,
             whitelistDomains: wl,
             blacklistDomains: bl,
           }).then((verified: any) => {
+            if (revision !== bypassSyncRevision) return;
+            const verifiedActiveDomains = verified.mode === 'whitelist'
+              ? verified.whitelistDomains
+              : verified.mode === 'blacklist'
+                ? verified.blacklistDomains
+                : [];
+            set({
+              whitelistDomains: verified.whitelistDomains,
+              blacklistDomains: verified.blacklistDomains,
+              domainList: verifiedActiveDomains.join('\n'),
+            });
             const tr = get().language === 'tr';
             const modeKey = (verified.mode || 'all') as 'all' | 'whitelist' | 'blacklist';
             const modeText = tr
@@ -412,6 +412,7 @@ export const useEngineStore = create<EngineStore>()(
         }, 100);
       },
       syncDnsToBackend: () => {
+        const revision = ++dnsSyncRevision;
         if (dnsSyncTimeout) clearTimeout(dnsSyncTimeout);
         dnsSyncTimeout = setTimeout(() => {
           const state = get();
@@ -423,6 +424,7 @@ export const useEngineStore = create<EngineStore>()(
             cache: state.dnsCache,
             socks5Proxy: state.proxySocks5,
           }).then((verified) => {
+            if (revision !== dnsSyncRevision) return;
             const tr = get().language === 'tr';
             const activeText = verified.forwarderActive
               ? (tr ? 'Çalışan yönlendirici yeni ayarı kullanıyor.' : 'The running forwarder is using the new setting.')
@@ -496,6 +498,8 @@ export const useEngineStore = create<EngineStore>()(
         get().appendLog(get().language === 'tr' ? `[ENGINE] “${id}” profiliyle DPI bypass başlatılıyor...` : `[ENGINE] Starting DPI bypass with profile “${id}”...`, 'info');
 
         try {
+          ++bypassSyncRevision;
+          ++dnsSyncRevision;
           if (bypassSyncTimeout) clearTimeout(bypassSyncTimeout);
           if (dnsSyncTimeout) clearTimeout(dnsSyncTimeout);
           const current = get();
@@ -504,7 +508,7 @@ export const useEngineStore = create<EngineStore>()(
           const activeDomains = current.bypassMode === 'whitelist' ? wl : bl;
           await invoke<BypassConfigStatus>('sync_bypass_config', {
             mode: current.bypassMode,
-            list: cleanDomainsHelper(activeDomains),
+            list: activeDomains.join('\n'),
             proxy: current.proxySocks5,
             killSwitch: current.killSwitch,
             whitelistDomains: wl,
