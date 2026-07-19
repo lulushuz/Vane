@@ -102,11 +102,9 @@ fn validate_single_arg(arg: &str) -> Result<(), EngineError> {
         )));
     }
 
-    if arg.starts_with("--hostlist=") {
-        let val = &arg["--hostlist=".len()..];
+    if let Some(val) = arg.strip_prefix("--hostlist=") {
         validate_hostlist_value(val)?;
-    } else if arg.starts_with("--wl=") {
-        let val = &arg["--wl=".len()..];
+    } else if let Some(val) = arg.strip_prefix("--wl=") {
         if validate_ip_or_domain(val).is_err() {
             validate_hostlist_value(val)?;
         }
@@ -138,10 +136,10 @@ fn validate_hostlist_value(val: &str) -> Result<(), EngineError> {
         return Err(EngineError::InvalidPreset("Mutlak yol (Linux) kabul edilmiyor".into()));
     }
     let chars: Vec<char> = val.chars().collect();
-    if chars.len() >= 2 {
-        if chars[1] == ':' && chars[0].is_ascii_alphabetic() {
-            return Err(EngineError::InvalidPreset("Sürücü harfi içeren mutlak yol kabul edilmiyor".into()));
-        }
+    if chars.len() >= 2 && chars[1] == ':' && chars[0].is_ascii_alphabetic() {
+        return Err(EngineError::InvalidPreset(
+            "Sürücü harfi içeren mutlak yol kabul edilmiyor".into(),
+        ));
     }
     Ok(())
 }

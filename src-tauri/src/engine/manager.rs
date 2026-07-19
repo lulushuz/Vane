@@ -56,7 +56,7 @@ impl EngineEventDispatcher for AppHandle {
 pub enum EngineState {
     Idle,
     Starting { cancel: tokio::sync::oneshot::Sender<()> },
-    Running { handle: ProcessHandle },
+    Running { handle: Box<ProcessHandle> },
     Stopping,
     Failed(EngineError),
 }
@@ -905,7 +905,9 @@ fn set_state_starting(state: &Mutex<EngineState>, cancel_tx: tokio::sync::onesho
 
 fn set_state_running(state: &Mutex<EngineState>, handle: ProcessHandle) {
     if let Ok(mut sl) = state.lock() {
-        *sl = EngineState::Running { handle };
+        *sl = EngineState::Running {
+            handle: Box::new(handle),
+        };
     }
 }
 

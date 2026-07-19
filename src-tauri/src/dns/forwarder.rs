@@ -47,10 +47,8 @@ pub fn parse_hosts_file(content: &str) -> HashSet<String> {
         if parts.len() >= 2 {
             let ip = parts[0];
             let domain = parts[1].to_lowercase();
-            if ip == "0.0.0.0" || ip == "127.0.0.1" {
-                if domain != "localhost" {
-                    set.insert(domain);
-                }
+            if (ip == "0.0.0.0" || ip == "127.0.0.1") && domain != "localhost" {
+                set.insert(domain);
             }
         }
     }
@@ -284,7 +282,7 @@ pub fn read_dns_settings(app: &AppHandle) -> DnsSettings {
     let Ok(file_json) = serde_json::from_str::<serde_json::Value>(&content) else { return default_settings; };
     let Some(zustand_raw) = file_json.get("vane-settings") else { return default_settings; };
     let Ok(zustand_json) = (match zustand_raw {
-        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(&s),
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s),
         obj => Ok(obj.clone()),
     }) else { return default_settings; };
 

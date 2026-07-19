@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Security
+- Whitelist startup is now fail-closed when persisted settings are corrupt or the verified whitelist is empty.
+- Domain rules are canonicalized and validated in Rust; hidden service alias expansion was removed.
+- DNS Kill Switch creation checks command results and is rolled back when engine startup fails.
+- Unsupported TPWS and IPSet arguments are rejected instead of being passed to the wrong binary.
+
+### Fixed
+- Serialized Pattern and DNS synchronization to prevent overlapping restarts and stale IPC responses.
+- Removed competing Rust writes to the Zustand settings file and serialized Store writes.
+- Fixed Watchdog being started even when disabled.
+- Replaced Watchdog HTTP `HEAD` checks with real DoH/DoT DNS resolution probes.
+- Preserved values containing `=` and safe unknown arguments when editing Advanced presets; invalid numeric arguments are now omitted with an EN/TR warning.
+- Added CI verification for frontend builds, Rust tests, and warning-free Clippy on Windows and Linux.
+
+### Changed
+- TPWS and IPSet controls are visibly unavailable until their required binary/file-import implementations exist.
+
 ## [2.0.8] - 2026-07-13
 
 ### Added

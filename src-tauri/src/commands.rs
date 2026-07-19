@@ -652,6 +652,7 @@ pub struct BypassConfigStatus {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Flat arguments preserve the existing Tauri IPC contract.
 pub async fn sync_bypass_config(
     mode: String,
     list: String,
@@ -700,8 +701,10 @@ pub async fn sync_bypass_config(
         };
 
         if let Some(preset) = preset_opt {
-            let _ = state.engine_manager.stop(&app);
-            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            state
+                .engine_manager
+                .stop(&app)
+                .map_err(|error| format!("Failed to stop engine before Pattern restart: {error}"))?;
             if let Err(e) = state.engine_manager.start(&preset, &app).await {
                 return Err(format!("Failed to restart engine: {:?}", e));
             }
