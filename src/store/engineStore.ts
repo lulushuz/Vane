@@ -3,7 +3,11 @@ import { persist, createJSONStorage, type StateStorage } from 'zustand/middlewar
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import type { NetworkAdapter } from '../types/network';
+import { DEFAULT_ADVANCED_CONFIG, type AdvancedConfig } from '../types/advanced';
 import { activePatternDomains, migratePersistedEngineState } from './persistence';
+
+export { DEFAULT_ADVANCED_CONFIG } from '../types/advanced';
+export type { AdvancedConfig } from '../types/advanced';
 
 export type EngineStatus =
   | { variant: 'stopped' }
@@ -54,86 +58,6 @@ export interface DnsConfigStatus {
   socks5Proxy: string;
   forwarderActive: boolean;
 }
-
-/* 
-   Advanced Config
-   Gelişmiş ayarların tek obje olarak tutulduğu şema.
-   Tüm alanlar persist edilerek settings.json dosyasına yazılır. 
-*/
-export interface AdvancedConfig {
-  // DPI Desynchronization
-  desyncMethod: string;       // bundled winws desync mode or 'custom' / 'none'
-  customDesyncMethod: string; // desyncMethod === 'custom' ise bu kullanılır
-  splitPosition: number;      // --dpi-desync-split-pos
-  desyncRepeats: number;      // --dpi-desync-repeats
-  desyncFooling: string[];    // --dpi-desync-fooling
-  anyProtocol: boolean;       // --dpi-desync-any-protocol
-
-  // Packet & Traffic
-  autoTtl: boolean;           // --dpi-desync-autottl
-  fakeTtl: number;            // --dpi-desync-ttl
-  mssFix: number;             // --mss
-
-  // Protocol & Ports
-  quicUdpHandling: boolean;   // --wf-udp=443
-  httpPorts: string;          // --wf-tcp=
-
-  // --- NEW ZAPRET FIELDS ---
-  desyncHttp: string;         // --dpi-desync-http
-  desyncHttps: string;        // --dpi-desync-https
-  desyncQuic: string;         // --dpi-desync-quic
-  desyncCutoff: string;       // --dpi-desync-cutoff
-  splitHttpReq: string;       // --dpi-desync-split-http-req (none, method, host)
-  splitPosHttpReq: number;    // --dpi-desync-split-pos-http-req
-  splitTls: string;           // --dpi-desync-split-tls (none, sni, sniext)
-  splitPosTls: number;        // --dpi-desync-split-pos-tls
-  fakeTtlExt: number;         // --dpi-desync-ttl-ext
-  fakeTlsSni: string;         // --dpi-desync-fake-tls-sni
-  fakeHttpPayload: string;    // --dpi-desync-fake-http (string/filepath)
-  fakeTlsPayload: string;     // --dpi-desync-fake-tls (string/filepath)
-  fakeQuicPayload: string;    // --dpi-desync-fake-quic (string/filepath)
-  desync2: string;            // --dpi-desync2
-  tcpWindowSize: number;      // --wssize
-  ipsetPath: string;          // --ipset
-  tpwsMode: boolean;          // Runs tpws instead of nfqws/winws
-  bindInterface: string;      // --bind-addr
-  passthroughArgs: string[];  // UI tarafında henüz modellenmeyen doğrulanmış argümanlar
-  invalidArgs: string[];      // Ayrıştırılamayan bilinen argümanlar; motora gönderilmez
-}
-
-export const DEFAULT_ADVANCED_CONFIG: AdvancedConfig = {
-  desyncMethod: 'custom',
-  customDesyncMethod: 'fake,multidisorder',
-  splitPosition: 1,
-  desyncRepeats: 1,
-  desyncFooling: ['badseq'],
-  anyProtocol: true,
-  autoTtl: true,
-  fakeTtl: 4,
-  mssFix: 1300,
-  quicUdpHandling: true,
-  httpPorts: '80, 443',
-  desyncHttp: 'none',
-  desyncHttps: 'none',
-  desyncQuic: 'none',
-  desyncCutoff: 'd3',
-  splitHttpReq: 'none',
-  splitPosHttpReq: 0,
-  splitTls: 'none',
-  splitPosTls: 0,
-  fakeTtlExt: 0,
-  fakeTlsSni: '',
-  fakeHttpPayload: '',
-  fakeTlsPayload: '',
-  fakeQuicPayload: '',
-  desync2: 'none',
-  tcpWindowSize: 0,
-  ipsetPath: '',
-  tpwsMode: false,
-  bindInterface: '',
-  passthroughArgs: [],
-  invalidArgs: [],
-};
 
 /*
    Rust-owned settings adapter. Zustand remains the UI state model, while Rust
