@@ -156,7 +156,10 @@ fn atomic_write(primary: &Path, backup: &Path, store: &Map<String, Value>) -> Re
         std::fs::copy(primary, backup)
             .map_err(|e| format!("Settings backup could not be written: {e}"))?;
         std::fs::OpenOptions::new()
-            .read(true)
+            // Windows requires a write-capable handle for FlushFileBuffers, which backs
+            // File::sync_all. A read-only handle fails with ERROR_ACCESS_DENIED and used to
+            // make every second settings save fail on Windows.
+            .write(true)
             .open(backup)
             .and_then(|file| file.sync_all())
             .map_err(|e| e.to_string())?;
