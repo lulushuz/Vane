@@ -42,13 +42,16 @@ export interface DnsProvider {
   secondary: string;
 }
 
-interface BypassConfigStatus {
+export interface BypassConfigStatus {
   mode: 'all' | 'whitelist' | 'blacklist';
   domainCount: number;
+  configRevision: number;
+  stage: 'prepared' | 'process_started';
   engineRestarted: boolean;
   engineRunning: boolean;
   whitelistDomains: string[];
   blacklistDomains: string[];
+  activePresetId: string;
 }
 
 export interface DnsConfigStatus {
@@ -57,6 +60,8 @@ export interface DnsConfigStatus {
   cache: boolean;
   socks5Proxy: string;
   forwarderActive: boolean;
+  configRevision: number;
+  stage: 'persisted' | 'applied';
 }
 
 /*
@@ -167,8 +172,8 @@ interface EngineStore {
 }
 
 let logCounter = 0;
-let bypassSyncTimeout: any = null;
-let dnsSyncTimeout: any = null;
+let bypassSyncTimeout: ReturnType<typeof setTimeout> | null = null;
+let dnsSyncTimeout: ReturnType<typeof setTimeout> | null = null;
 let bypassSyncRevision = 0;
 let dnsSyncRevision = 0;
 let pendingDnsRollback: Partial<Pick<
@@ -429,7 +434,7 @@ export const useEngineStore = create<EngineStore>()(
           const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
           const activeDomains = activePatternDomains(state.bypassMode, wl, bl);
 
-          invoke('sync_bypass_config', {
+          invoke<BypassConfigStatus>('sync_bypass_config', {
             mode: state.bypassMode,
             list: activeDomains.join('\n'),
             proxy: state.proxySocks5,
@@ -437,7 +442,7 @@ export const useEngineStore = create<EngineStore>()(
             whitelistDomains: wl,
             blacklistDomains: bl,
             activePresetId: state.activePresetId,
-          }).then((verified: any) => {
+          }).then((verified) => {
             if (revision !== bypassSyncRevision) return;
             const verifiedActiveDomains = activePatternDomains(
               verified.mode,
@@ -454,13 +459,13 @@ export const useEngineStore = create<EngineStore>()(
             const modeText = tr
               ? ({ all: 'tüm siteler', whitelist: 'yalnızca beyaz liste', blacklist: 'kara liste hariç' } as const)[modeKey]
               : ({ all: 'all sites', whitelist: 'whitelist only', blacklist: 'except blacklist' } as const)[modeKey];
-            const applyText = verified.engineRestarted
-              ? (tr ? 'Çalışan motor yeni kurallarla yeniden başlatıldı.' : 'The running engine was restarted with the new rules.')
-              : (tr ? 'Kural bir sonraki motor başlangıcında uygulanacak.' : 'The rule will be applied on the next engine start.');
+            const applyText = verified.stage === 'process_started'
+              ? (tr ? 'Yeni kurallarla motor prosesi başlatıldı; trafik sağlığı ayrıca izlenecek.' : 'The engine process started with the new rules; traffic health is monitored separately.')
+              : (tr ? 'Kural motora hazırlandı ve bir sonraki başlangıçta kullanılacak.' : 'The rule was prepared for the engine and will be used on its next start.');
             get().appendLog(
               tr
-                ? `[PATTERN] Ayar doğrulandı: ${modeText}; ${verified.domainCount} alan adı. ${applyText}`
-                : `[PATTERN] Setting verified: ${modeText}; ${verified.domainCount} domains. ${applyText}`,
+                ? `[PATTERN] Yapılandırma #${verified.configRevision} kabul edildi: ${modeText}; ${verified.domainCount} alan adı. ${applyText}`
+                : `[PATTERN] Configuration #${verified.configRevision} accepted: ${modeText}; ${verified.domainCount} domains. ${applyText}`,
               'info',
             );
           }).catch(err => {
@@ -487,13 +492,13 @@ export const useEngineStore = create<EngineStore>()(
             if (revision !== dnsSyncRevision) return;
             pendingDnsRollback = {};
             const tr = get().language === 'tr';
-            const activeText = verified.forwarderActive
+            const activeText = verified.stage === 'applied'
               ? (tr ? 'Çalışan yönlendirici yeni ayarı kullanıyor.' : 'The running forwarder is using the new setting.')
               : (tr ? 'Ayar kaydedildi; yönlendirici başlatıldığında kullanılacak.' : 'Saved; it will be used when the forwarder starts.');
             get().appendLog(
               tr
-                ? `[DNS] Ayarlar doğrulandı: ${verified.protocol.toUpperCase()}, önbellek ${verified.cache ? 'açık' : 'kapalı'}, reklam filtresi ${verified.adblock ? 'açık' : 'kapalı'}. ${activeText}`
-                : `[DNS] Settings verified: ${verified.protocol.toUpperCase()}, cache ${verified.cache ? 'on' : 'off'}, ad filter ${verified.adblock ? 'on' : 'off'}. ${activeText}`,
+                ? `[DNS] Yapılandırma #${verified.configRevision} kabul edildi: ${verified.protocol.toUpperCase()}, önbellek ${verified.cache ? 'açık' : 'kapalı'}, reklam filtresi ${verified.adblock ? 'açık' : 'kapalı'}. ${activeText}`
+                : `[DNS] Configuration #${verified.configRevision} accepted: ${verified.protocol.toUpperCase()}, cache ${verified.cache ? 'on' : 'off'}, ad filter ${verified.adblock ? 'on' : 'off'}. ${activeText}`,
               'info',
             );
           }).catch(err => {

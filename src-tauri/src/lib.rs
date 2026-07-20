@@ -1,6 +1,7 @@
 use log::LevelFilter;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Listener, Manager};
@@ -42,7 +43,9 @@ pub struct AppState {
     */
     pub forwarder: Mutex<Option<ForwarderHandle>>,
     pub bypass_sync: tokio::sync::Mutex<()>,
+    pub bypass_config_revision: AtomicU64,
     pub dns_sync: tokio::sync::Mutex<()>,
+    pub dns_config_revision: AtomicU64,
 }
 
 /*
@@ -409,7 +412,9 @@ pub fn run() {
                 http_client,
                 forwarder: Mutex::new(None),
                 bypass_sync: tokio::sync::Mutex::new(()),
+                bypass_config_revision: AtomicU64::new(0),
                 dns_sync: tokio::sync::Mutex::new(()),
+                dns_config_revision: AtomicU64::new(0),
             });
 
             // Auto-start: if launched via Task Scheduler / systemd, resume the last DPI preset.

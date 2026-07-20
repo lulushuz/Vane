@@ -2,13 +2,11 @@ import { useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useEngineStore } from '../store/engineStore';
 import type { EngineStatus } from '../types/engine';
-import type { DnsConfigStatus } from '../store/engineStore';
+import type { BypassConfigStatus, DnsConfigStatus } from '../store/engineStore';
+import { MonotonicRevisionGate } from '../store/revisionGate';
 
-interface BypassConfigStatus {
-  mode: 'all' | 'whitelist' | 'blacklist';
-  whitelistDomains: string[];
-  blacklistDomains: string[];
-}
+const bypassRevisionGate = new MonotonicRevisionGate();
+const dnsRevisionGate = new MonotonicRevisionGate();
 
 /* 
    Central hook that registers all Tauri backend event listeners.
@@ -92,6 +90,7 @@ export function useEventListeners(): void {
 
     // Keep persisted settings identical in both the widget and settings windows.
     register<BypassConfigStatus>('bypass_config_synced', (config) => {
+      if (!bypassRevisionGate.accept(config.configRevision)) return;
       useEngineStore.setState({
         bypassMode: config.mode,
         whitelistDomains: config.whitelistDomains,
@@ -100,6 +99,7 @@ export function useEventListeners(): void {
     });
 
     register<DnsConfigStatus>('dns_config_synced', (config) => {
+      if (!dnsRevisionGate.accept(config.configRevision)) return;
       useEngineStore.setState({
         dnsProtocol: config.protocol,
         dnsAdBlock: config.adblock,
