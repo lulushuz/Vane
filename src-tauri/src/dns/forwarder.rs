@@ -12,12 +12,13 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
 
-use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
-use hickory_resolver::error::ResolveErrorKind;
-use hickory_resolver::proto::op::{Message, MessageType, ResponseCode};
-use hickory_resolver::proto::rr::{rdata::A, RData, Record, RecordType};
+use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use hickory_resolver::net::{DnsError, NetError};
+use hickory_resolver::proto::op::{Message, ResponseCode};
+use hickory_resolver::proto::rr::{rdata::A, Name, RData, Record, RecordType};
 use hickory_resolver::proto::serialize::binary::{BinDecodable, BinEncodable};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 
 pub const DOH_FORWARDER_DEFAULT_PORT: u16 = 53;
 
@@ -248,14 +249,14 @@ fn get_cached_dns(key: &str) -> Option<bytes::Bytes> {
         .as_secs()
         .min(u32::MAX as u64) as u32;
     let mut message = Message::from_bytes(&entry.response_bytes).ok()?;
-    for record in message.answers_mut() {
-        record.set_ttl(record.ttl().saturating_sub(elapsed));
+    for record in &mut message.answers {
+        record.ttl = record.ttl.saturating_sub(elapsed);
     }
-    for record in message.name_servers_mut() {
-        record.set_ttl(record.ttl().saturating_sub(elapsed));
+    for record in &mut message.authorities {
+        record.ttl = record.ttl.saturating_sub(elapsed);
     }
-    for record in message.additionals_mut() {
-        record.set_ttl(record.ttl().saturating_sub(elapsed));
+    for record in &mut message.additionals {
+        record.ttl = record.ttl.saturating_sub(elapsed);
     }
     message.to_bytes().ok().map(bytes::Bytes::from)
 }
@@ -289,11 +290,10 @@ fn set_cached_dns(key: String, response_bytes: bytes::Bytes, ttl: u32) {
 }
 
 // ─── RESOLVERS POOL FOR DoT ───
-static DOT_RESOLVER_CLOUDFLARE: RwLock<Option<TokioAsyncResolver>> = RwLock::new(None);
-static DOT_RESOLVER_GOOGLE: RwLock<Option<TokioAsyncResolver>> = RwLock::new(None);
+static DOT_RESOLVER_CLOUDFLARE: RwLock<Option<TokioResolver>> = RwLock::new(None);
+static DOT_RESOLVER_GOOGLE: RwLock<Option<TokioResolver>> = RwLock::new(None);
 
-fn build_dot_resolver(endpoint: DoHEndpoint) -> Result<TokioAsyncResolver, String> {
-    let mut config = ResolverConfig::new();
+fn build_dot_resolver(endpoint: DoHEndpoint) -> Result<TokioResolver, String> {
     let (ip, name) = match endpoint {
         DoHEndpoint::Cloudflare => (
             std::net::IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1)),
@@ -304,21 +304,15 @@ fn build_dot_resolver(endpoint: DoHEndpoint) -> Result<TokioAsyncResolver, Strin
             "dns.google",
         ),
     };
-    let socket_addr = std::net::SocketAddr::new(ip, 853);
-    let ns = NameServerConfig {
-        socket_addr,
-        protocol: Protocol::Tls,
-        tls_dns_name: Some(name.to_string()),
-        trust_negative_responses: true,
-        bind_addr: None,
-        tls_config: None,
-    };
-    config.add_name_server(ns);
-    let resolver = TokioAsyncResolver::tokio(config, ResolverOpts::default());
-    Ok(resolver)
+    let ns = NameServerConfig::tls(ip, Arc::<str>::from(name));
+    let config = ResolverConfig::from_parts(None, Vec::new(), vec![ns]);
+    TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
+        .with_options(ResolverOpts::default())
+        .build()
+        .map_err(|error| error.to_string())
 }
 
-fn get_or_create_dot_resolver(endpoint: DoHEndpoint) -> Option<TokioAsyncResolver> {
+fn get_or_create_dot_resolver(endpoint: DoHEndpoint) -> Option<TokioResolver> {
     let lock = match endpoint {
         DoHEndpoint::Cloudflare => &DOT_RESOLVER_CLOUDFLARE,
         DoHEndpoint::Google => &DOT_RESOLVER_GOOGLE,
@@ -748,22 +742,18 @@ fn build_blocked_response(
     parsed: &Message,
     query: &hickory_resolver::proto::op::Query,
 ) -> bytes::Bytes {
-    let mut response = Message::new();
-    response.set_id(parsed.id());
-    response.set_message_type(MessageType::Response);
-    response.set_op_code(parsed.op_code());
-    response.set_recursion_desired(parsed.recursion_desired());
-    response.set_recursion_available(true);
-    response.set_response_code(ResponseCode::NoError);
+    let mut response = Message::response(parsed.metadata.id, parsed.metadata.op_code);
+    response.metadata.recursion_desired = parsed.metadata.recursion_desired;
+    response.metadata.recursion_available = true;
+    response.metadata.response_code = ResponseCode::NoError;
     response.add_query(query.clone());
 
     if query.query_type() == RecordType::A {
-        let mut record = Record::new();
-        record.set_name(query.name().clone());
-        record.set_record_type(RecordType::A);
-        record.set_dns_class(hickory_resolver::proto::rr::DNSClass::IN);
-        record.set_ttl(3600);
-        record.set_data(Some(RData::A(A(std::net::Ipv4Addr::new(0, 0, 0, 0)))));
+        let record = Record::from_rdata(
+            query.name().clone(),
+            3600,
+            RData::A(A(std::net::Ipv4Addr::new(0, 0, 0, 0))),
+        );
         response.add_answer(record);
     }
 
@@ -784,7 +774,7 @@ async fn proxy_dns_query(
     // Emit live activity for UI graph
     let _ = app.emit("dns_activity", ());
 
-    let is_local = parsed.queries().iter().any(|q| {
+    let is_local = parsed.queries.iter().any(|q| {
         let name = q.name().to_string();
         name.ends_with(".local.")
             || name.ends_with(".lan.")
@@ -798,7 +788,7 @@ async fn proxy_dns_query(
         }
     }
 
-    if let Some(query) = parsed.queries().first() {
+    if let Some(query) = parsed.queries.first() {
         let qname = query.name().to_string();
         let qname_clean = qname.trim_end_matches('.').to_lowercase();
         let qtype = query.query_type();
@@ -822,7 +812,7 @@ async fn proxy_dns_query(
             if let Some(cached) = get_cached_dns(&cache_key) {
                 let mut resp = cached.to_vec();
                 if resp.len() >= 2 {
-                    let tx_id = parsed.id().to_be_bytes();
+                    let tx_id = parsed.metadata.id.to_be_bytes();
                     resp[0] = tx_id[0];
                     resp[1] = tx_id[1];
                 }
@@ -833,30 +823,27 @@ async fn proxy_dns_query(
         // 3. Resolve via Protocols
         let response_bytes = if settings.protocol == "dot" {
             let resolver = get_or_create_dot_resolver(endpoint)?;
-            let name = hickory_resolver::Name::from_utf8(&qname_clean).ok()?;
-            let mut response = Message::new();
-            response.set_id(parsed.id());
-            response.set_message_type(MessageType::Response);
-            response.set_op_code(parsed.op_code());
-            response.set_recursion_desired(parsed.recursion_desired());
-            response.set_recursion_available(true);
-            response.set_checking_disabled(parsed.checking_disabled());
-            if let Some(edns) = parsed.extensions() {
+            let name = Name::from_utf8(&qname_clean).ok()?;
+            let mut response = Message::response(parsed.metadata.id, parsed.metadata.op_code);
+            response.metadata.recursion_desired = parsed.metadata.recursion_desired;
+            response.metadata.recursion_available = true;
+            response.metadata.checking_disabled = parsed.metadata.checking_disabled;
+            if let Some(edns) = parsed.edns.as_ref() {
                 response.set_edns(edns.clone());
             }
             response.add_query(query.clone());
             match resolver.lookup(name, qtype).await {
                 Ok(lookup) => {
-                    response.set_response_code(ResponseCode::NoError);
-                    for record in lookup.records() {
+                    response.metadata.response_code = ResponseCode::NoError;
+                    for record in lookup.answers() {
                         response.add_answer(record.clone());
                     }
                 }
-                Err(error) => match error.kind() {
-                    ResolveErrorKind::NoRecordsFound { soa, response_code, .. } => {
-                        response.set_response_code(*response_code);
-                        if let Some(soa) = soa {
-                            response.add_name_server(soa.as_ref().clone().into_record_of_rdata());
+                Err(error) => match error {
+                    NetError::Dns(DnsError::NoRecordsFound(no_records)) => {
+                        response.metadata.response_code = no_records.response_code;
+                        if let Some(soa) = no_records.soa {
+                            response.add_authority((*soa).into_record_of_rdata());
                         }
                     }
                     _ => return None,
@@ -889,7 +876,10 @@ async fn proxy_dns_query(
             if !response.status().is_success() {
                 return None;
             }
-            if response.content_length().is_some_and(|length| length > 65_535) {
+            if response
+                .content_length()
+                .is_some_and(|length| length > 65_535)
+            {
                 tracing::error!("DNS upstream response exceeded the 65535-byte protocol limit.");
                 return None;
             }
@@ -905,10 +895,10 @@ async fn proxy_dns_query(
         if settings.cache {
             if let Ok(resp_msg) = Message::from_bytes(&response_bytes) {
                 let ttl = resp_msg
-                    .answers()
+                    .answers
                     .iter()
-                    .chain(resp_msg.name_servers().iter())
-                    .map(|record: &Record| record.ttl())
+                    .chain(resp_msg.authorities.iter())
+                    .map(|record: &Record| record.ttl)
                     .min()
                     .unwrap_or(30)
                     .clamp(1, 86_400);

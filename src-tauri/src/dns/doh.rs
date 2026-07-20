@@ -1,9 +1,9 @@
-use serde::Serialize;
-use trust_dns_proto::{
+use hickory_resolver::proto::{
     op::{Message, MessageType, OpCode, Query},
     rr::{Name, RecordType},
     serialize::binary::{BinDecodable, BinEncodable},
 };
+use serde::Serialize;
 
 /// Known DoH endpoints. Both support RFC 8484 (application/dns-message).
 pub const DOH_CLOUDFLARE: &str = "https://cloudflare-dns.com/dns-query";
@@ -24,11 +24,7 @@ pub struct DohResult {
 ///
 /// Sends DNS wire-format queries via HTTPS POST to bypass ISP DNS interception.
 /// The query is indistinguishable from regular HTTPS traffic on port 443.
-pub async fn resolve_doh(
-    client: &reqwest::Client,
-    endpoint: &str,
-    domain: &str,
-) -> DohResult {
+pub async fn resolve_doh(client: &reqwest::Client, endpoint: &str, domain: &str) -> DohResult {
     let start = std::time::Instant::now();
 
     let result = resolve_doh_inner(client, endpoint, domain).await;
@@ -60,18 +56,14 @@ async fn resolve_doh_inner(
     domain: &str,
 ) -> Result<Vec<String>, String> {
     // Build the DNS query in wire-format (RFC 1035).
-    let name = Name::from_utf8(domain)
-        .map_err(|e| format!("Geçersiz domain adı: {}", e))?;
+    let name = Name::from_utf8(domain).map_err(|e| format!("Geçersiz domain adı: {}", e))?;
 
     let mut query = Query::new();
     query.set_name(name);
     query.set_query_type(RecordType::A);
 
-    let mut message = Message::new();
-    message.set_message_type(MessageType::Query);
-    message.set_op_code(OpCode::Query);
-    message.set_recursion_desired(true);
-    message.set_id(rand_id());
+    let mut message = Message::new(rand_id(), MessageType::Query, OpCode::Query);
+    message.metadata.recursion_desired = true;
     message.add_query(query);
 
     let wire_bytes = message
@@ -98,21 +90,18 @@ async fn resolve_doh_inner(
         .await
         .map_err(|e| format!("DoH yanıt okunamadı: {}", e))?;
 
-    let reply = Message::from_bytes(&bytes)
-        .map_err(|e| format!("DNS decode hatası: {}", e))?;
+    let reply = Message::from_bytes(&bytes).map_err(|e| format!("DNS decode hatası: {}", e))?;
 
     let addresses: Vec<String> = reply
-        .answers()
+        .answers
         .iter()
         .filter_map(|rr| {
-            rr.data().and_then(|d| {
-                // Extract A (IPv4) records as strings.
-                if let trust_dns_proto::rr::RData::A(ip) = d {
-                    Some(ip.to_string())
-                } else {
-                    None
-                }
-            })
+            // Extract A (IPv4) records as strings.
+            if let hickory_resolver::proto::rr::RData::A(ip) = &rr.data {
+                Some(ip.to_string())
+            } else {
+                None
+            }
         })
         .collect();
 
