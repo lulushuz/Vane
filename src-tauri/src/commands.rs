@@ -866,11 +866,20 @@ pub async fn sync_dns_settings(
     Ok(result)
 }
 
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BypassApplyStage {
+    Prepared,
+    ProcessStarted,
+}
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BypassConfigStatus {
     mode: String,
     domain_count: usize,
+    config_revision: u64,
+    stage: BypassApplyStage,
     engine_restarted: bool,
     engine_running: bool,
     whitelist_domains: Vec<String>,
@@ -984,9 +993,19 @@ pub async fn sync_bypass_config(
         "blacklist" => blacklist_domains.len(),
         _ => 0,
     };
+    let config_revision = state
+        .bypass_config_revision
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
     let result = BypassConfigStatus {
         mode: mode.clone(),
         domain_count,
+        config_revision,
+        stage: if engine_restarted {
+            BypassApplyStage::ProcessStarted
+        } else {
+            BypassApplyStage::Prepared
+        },
         engine_restarted,
         engine_running: matches!(
             state.engine_manager.current_status(),
@@ -999,10 +1018,11 @@ pub async fn sync_bypass_config(
     app.emit("bypass_config_synced", result.clone())
         .map_err(|e| e.to_string())?;
     tracing::info!(
-        "Bypass pattern saved and verified: mode={}, domains={}, engine_restarted={}",
+        "Bypass pattern accepted: revision={}, mode={}, domains={}, stage={}",
+        config_revision,
         mode,
         domain_count,
-        engine_restarted
+        if engine_restarted { "process_started" } else { "prepared" }
     );
     Ok(result)
 }
