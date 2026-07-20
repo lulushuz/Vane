@@ -3,6 +3,7 @@ import { persist, createJSONStorage, type StateStorage } from 'zustand/middlewar
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import type { NetworkAdapter } from '../types/network';
+import { activePatternDomains, migratePersistedEngineState } from './persistence';
 
 export type EngineStatus =
   | { variant: 'stopped' }
@@ -378,7 +379,7 @@ export const useEngineStore = create<EngineStore>()(
         const state = get();
         const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
         const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
-        const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
+        const activeDomains = activePatternDomains(state.bypassMode, wl, bl);
         return (async () => {
           try {
             await invoke('sync_dns_settings', {
@@ -440,7 +441,7 @@ export const useEngineStore = create<EngineStore>()(
         const state = get();
         const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
         const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
-        const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
+        const activeDomains = activePatternDomains(state.bypassMode, wl, bl);
         void invoke<BypassConfigStatus>('sync_bypass_config', {
           mode: state.bypassMode,
           list: activeDomains.join('\n'),
@@ -502,7 +503,7 @@ export const useEngineStore = create<EngineStore>()(
           
           const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
           const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
-          const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
+          const activeDomains = activePatternDomains(state.bypassMode, wl, bl);
 
           invoke('sync_bypass_config', {
             mode: state.bypassMode,
@@ -514,11 +515,11 @@ export const useEngineStore = create<EngineStore>()(
             activePresetId: state.activePresetId,
           }).then((verified: any) => {
             if (revision !== bypassSyncRevision) return;
-            const verifiedActiveDomains = verified.mode === 'whitelist'
-              ? verified.whitelistDomains
-              : verified.mode === 'blacklist'
-                ? verified.blacklistDomains
-                : [];
+            const verifiedActiveDomains = activePatternDomains(
+              verified.mode,
+              verified.whitelistDomains,
+              verified.blacklistDomains,
+            );
             set({
               whitelistDomains: verified.whitelistDomains,
               blacklistDomains: verified.blacklistDomains,
@@ -650,7 +651,7 @@ export const useEngineStore = create<EngineStore>()(
           const current = get();
           const wl = Array.isArray(current.whitelistDomains) ? current.whitelistDomains : [];
           const bl = Array.isArray(current.blacklistDomains) ? current.blacklistDomains : [];
-          const activeDomains = current.bypassMode === 'whitelist' ? wl : bl;
+          const activeDomains = activePatternDomains(current.bypassMode, wl, bl);
           await invoke<BypassConfigStatus>('sync_bypass_config', {
             mode: current.bypassMode,
             list: activeDomains.join('\n'),
@@ -774,23 +775,8 @@ export const useEngineStore = create<EngineStore>()(
       name: 'vane-settings',           // Rust settings repository key
       storage: createJSONStorage(createTauriStorage), // Atomic Rust persistence adapter
       version: 1,
-      migrate: (persistedState: unknown) => {
-        if (!persistedState || typeof persistedState !== 'object') {
-          throw new Error('Persisted settings schema is not an object.');
-        }
-        const state = persistedState as Partial<EngineStore>;
-        const normalizeDomains = (value: unknown): string[] => Array.isArray(value)
-          ? value.filter((item): item is string => typeof item === 'string')
-          : typeof value === 'string'
-            ? value.split('\n').map((item) => item.trim()).filter(Boolean)
-            : [];
-        return {
-          ...state,
-          whitelistDomains: normalizeDomains(state.whitelistDomains),
-          blacklistDomains: normalizeDomains(state.blacklistDomains),
-          dnsForwarderEnabled: state.dnsForwarderEnabled === true,
-        } as EngineStore;
-      },
+      migrate: (persistedState: unknown) =>
+        migratePersistedEngineState(persistedState) as unknown as EngineStore,
       onRehydrateStorage: () => (state, error) => {
         if (error) {
           useEngineStore.setState({
