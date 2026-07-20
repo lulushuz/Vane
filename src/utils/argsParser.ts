@@ -1,4 +1,4 @@
-import { type AdvancedConfig, DEFAULT_ADVANCED_CONFIG } from '../store/engineStore';
+import { type AdvancedConfig, DEFAULT_ADVANCED_CONFIG } from '../types/advanced';
 
 const KNOWN_STRATEGIES = [
   'none', 'synack', 'syndata', 'fake', 'fakeknown', 'rst', 'rstack',

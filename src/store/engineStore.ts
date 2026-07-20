@@ -3,6 +3,11 @@ import { persist, createJSONStorage, type StateStorage } from 'zustand/middlewar
 import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import type { NetworkAdapter } from '../types/network';
+import { DEFAULT_ADVANCED_CONFIG, type AdvancedConfig } from '../types/advanced';
+import { activePatternDomains, migratePersistedEngineState } from './persistence';
+
+export { DEFAULT_ADVANCED_CONFIG } from '../types/advanced';
+export type { AdvancedConfig } from '../types/advanced';
 
 export type EngineStatus =
   | { variant: 'stopped' }
@@ -53,86 +58,6 @@ export interface DnsConfigStatus {
   socks5Proxy: string;
   forwarderActive: boolean;
 }
-
-/* 
-   Advanced Config
-   Gelişmiş ayarların tek obje olarak tutulduğu şema.
-   Tüm alanlar persist edilerek settings.json dosyasına yazılır. 
-*/
-export interface AdvancedConfig {
-  // DPI Desynchronization
-  desyncMethod: string;       // bundled winws desync mode or 'custom' / 'none'
-  customDesyncMethod: string; // desyncMethod === 'custom' ise bu kullanılır
-  splitPosition: number;      // --dpi-desync-split-pos
-  desyncRepeats: number;      // --dpi-desync-repeats
-  desyncFooling: string[];    // --dpi-desync-fooling
-  anyProtocol: boolean;       // --dpi-desync-any-protocol
-
-  // Packet & Traffic
-  autoTtl: boolean;           // --dpi-desync-autottl
-  fakeTtl: number;            // --dpi-desync-ttl
-  mssFix: number;             // --mss
-
-  // Protocol & Ports
-  quicUdpHandling: boolean;   // --wf-udp=443
-  httpPorts: string;          // --wf-tcp=
-
-  // --- NEW ZAPRET FIELDS ---
-  desyncHttp: string;         // --dpi-desync-http
-  desyncHttps: string;        // --dpi-desync-https
-  desyncQuic: string;         // --dpi-desync-quic
-  desyncCutoff: string;       // --dpi-desync-cutoff
-  splitHttpReq: string;       // --dpi-desync-split-http-req (none, method, host)
-  splitPosHttpReq: number;    // --dpi-desync-split-pos-http-req
-  splitTls: string;           // --dpi-desync-split-tls (none, sni, sniext)
-  splitPosTls: number;        // --dpi-desync-split-pos-tls
-  fakeTtlExt: number;         // --dpi-desync-ttl-ext
-  fakeTlsSni: string;         // --dpi-desync-fake-tls-sni
-  fakeHttpPayload: string;    // --dpi-desync-fake-http (string/filepath)
-  fakeTlsPayload: string;     // --dpi-desync-fake-tls (string/filepath)
-  fakeQuicPayload: string;    // --dpi-desync-fake-quic (string/filepath)
-  desync2: string;            // --dpi-desync2
-  tcpWindowSize: number;      // --wssize
-  ipsetPath: string;          // --ipset
-  tpwsMode: boolean;          // Runs tpws instead of nfqws/winws
-  bindInterface: string;      // --bind-addr
-  passthroughArgs: string[];  // UI tarafında henüz modellenmeyen doğrulanmış argümanlar
-  invalidArgs: string[];      // Ayrıştırılamayan bilinen argümanlar; motora gönderilmez
-}
-
-export const DEFAULT_ADVANCED_CONFIG: AdvancedConfig = {
-  desyncMethod: 'custom',
-  customDesyncMethod: 'fake,multidisorder',
-  splitPosition: 1,
-  desyncRepeats: 1,
-  desyncFooling: ['badseq'],
-  anyProtocol: true,
-  autoTtl: true,
-  fakeTtl: 4,
-  mssFix: 1300,
-  quicUdpHandling: true,
-  httpPorts: '80, 443',
-  desyncHttp: 'none',
-  desyncHttps: 'none',
-  desyncQuic: 'none',
-  desyncCutoff: 'd3',
-  splitHttpReq: 'none',
-  splitPosHttpReq: 0,
-  splitTls: 'none',
-  splitPosTls: 0,
-  fakeTtlExt: 0,
-  fakeTlsSni: '',
-  fakeHttpPayload: '',
-  fakeTlsPayload: '',
-  fakeQuicPayload: '',
-  desync2: 'none',
-  tcpWindowSize: 0,
-  ipsetPath: '',
-  tpwsMode: false,
-  bindInterface: '',
-  passthroughArgs: [],
-  invalidArgs: [],
-};
 
 /*
    Rust-owned settings adapter. Zustand remains the UI state model, while Rust
@@ -378,7 +303,7 @@ export const useEngineStore = create<EngineStore>()(
         const state = get();
         const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
         const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
-        const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
+        const activeDomains = activePatternDomains(state.bypassMode, wl, bl);
         return (async () => {
           try {
             await invoke('sync_dns_settings', {
@@ -440,7 +365,7 @@ export const useEngineStore = create<EngineStore>()(
         const state = get();
         const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
         const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
-        const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
+        const activeDomains = activePatternDomains(state.bypassMode, wl, bl);
         void invoke<BypassConfigStatus>('sync_bypass_config', {
           mode: state.bypassMode,
           list: activeDomains.join('\n'),
@@ -502,7 +427,7 @@ export const useEngineStore = create<EngineStore>()(
           
           const wl = Array.isArray(state.whitelistDomains) ? state.whitelistDomains : [];
           const bl = Array.isArray(state.blacklistDomains) ? state.blacklistDomains : [];
-          const activeDomains = state.bypassMode === 'whitelist' ? wl : bl;
+          const activeDomains = activePatternDomains(state.bypassMode, wl, bl);
 
           invoke('sync_bypass_config', {
             mode: state.bypassMode,
@@ -514,11 +439,11 @@ export const useEngineStore = create<EngineStore>()(
             activePresetId: state.activePresetId,
           }).then((verified: any) => {
             if (revision !== bypassSyncRevision) return;
-            const verifiedActiveDomains = verified.mode === 'whitelist'
-              ? verified.whitelistDomains
-              : verified.mode === 'blacklist'
-                ? verified.blacklistDomains
-                : [];
+            const verifiedActiveDomains = activePatternDomains(
+              verified.mode,
+              verified.whitelistDomains,
+              verified.blacklistDomains,
+            );
             set({
               whitelistDomains: verified.whitelistDomains,
               blacklistDomains: verified.blacklistDomains,
@@ -650,7 +575,7 @@ export const useEngineStore = create<EngineStore>()(
           const current = get();
           const wl = Array.isArray(current.whitelistDomains) ? current.whitelistDomains : [];
           const bl = Array.isArray(current.blacklistDomains) ? current.blacklistDomains : [];
-          const activeDomains = current.bypassMode === 'whitelist' ? wl : bl;
+          const activeDomains = activePatternDomains(current.bypassMode, wl, bl);
           await invoke<BypassConfigStatus>('sync_bypass_config', {
             mode: current.bypassMode,
             list: activeDomains.join('\n'),
@@ -774,23 +699,8 @@ export const useEngineStore = create<EngineStore>()(
       name: 'vane-settings',           // Rust settings repository key
       storage: createJSONStorage(createTauriStorage), // Atomic Rust persistence adapter
       version: 1,
-      migrate: (persistedState: unknown) => {
-        if (!persistedState || typeof persistedState !== 'object') {
-          throw new Error('Persisted settings schema is not an object.');
-        }
-        const state = persistedState as Partial<EngineStore>;
-        const normalizeDomains = (value: unknown): string[] => Array.isArray(value)
-          ? value.filter((item): item is string => typeof item === 'string')
-          : typeof value === 'string'
-            ? value.split('\n').map((item) => item.trim()).filter(Boolean)
-            : [];
-        return {
-          ...state,
-          whitelistDomains: normalizeDomains(state.whitelistDomains),
-          blacklistDomains: normalizeDomains(state.blacklistDomains),
-          dnsForwarderEnabled: state.dnsForwarderEnabled === true,
-        } as EngineStore;
-      },
+      migrate: (persistedState: unknown) =>
+        migratePersistedEngineState(persistedState) as unknown as EngineStore,
       onRehydrateStorage: () => (state, error) => {
         if (error) {
           useEngineStore.setState({

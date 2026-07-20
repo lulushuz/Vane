@@ -156,7 +156,10 @@ fn atomic_write(primary: &Path, backup: &Path, store: &Map<String, Value>) -> Re
         std::fs::copy(primary, backup)
             .map_err(|e| format!("Settings backup could not be written: {e}"))?;
         std::fs::OpenOptions::new()
-            .read(true)
+            // Windows requires a write-capable handle for FlushFileBuffers, which backs
+            // File::sync_all. A read-only handle fails with ERROR_ACCESS_DENIED and used to
+            // make every second settings save fail on Windows.
+            .write(true)
             .open(backup)
             .and_then(|file| file.sync_all())
             .map_err(|e| e.to_string())?;
@@ -349,18 +352,138 @@ pub fn settings_remove(app: AppHandle, key: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::merge_zustand_payload;
+    use super::{
+        atomic_write, load_with_recovery, merge_zustand_payload, parse_store, validate_ipc_key,
+        validate_ipc_payload, RuntimeSettings, SETTINGS_KEY,
+    };
+    use serde_json::{json, Map, Value};
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "vane-settings-test-{}-{sequence}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("test directory must be created");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn stale_window_only_updates_fields_it_changed() {
         let current = r#"{"state":{"language":"tr","dnsCache":false,"watchdog":true},"version":1}"#;
         let previous = r#"{"state":{"language":"en","dnsCache":true,"watchdog":true},"version":1}"#;
-        let incoming = r#"{"state":{"language":"en","dnsCache":true,"watchdog":false},"version":1}"#;
+        let incoming =
+            r#"{"state":{"language":"en","dnsCache":true,"watchdog":false},"version":1}"#;
         let merged: serde_json::Value = serde_json::from_str(
             &merge_zustand_payload(current, previous, incoming).expect("merge must succeed"),
-        ).expect("valid JSON");
+        )
+        .expect("valid JSON");
         assert_eq!(merged["state"]["language"], "tr");
         assert_eq!(merged["state"]["dnsCache"], false);
         assert_eq!(merged["state"]["watchdog"], false);
+    }
+
+    #[test]
+    fn settings_ipc_rejects_unknown_keys_and_malformed_payloads() {
+        assert!(validate_ipc_key(SETTINGS_KEY).is_ok());
+        assert!(validate_ipc_key("arbitrary-key").is_err());
+        assert!(validate_ipc_payload(r#"{"state":{"dnsCache":false},"version":1}"#).is_ok());
+        assert!(validate_ipc_payload(r#"{"version":1}"#).is_err());
+        assert!(validate_ipc_payload("not-json").is_err());
+    }
+
+    #[test]
+    fn damaged_primary_recovers_the_last_known_good_backup() {
+        let directory = TestDirectory::new();
+        let primary = directory.path().join("settings.json");
+        let backup = directory.path().join("settings.json.bak");
+        std::fs::write(&primary, b"{damaged").expect("damaged primary must be written");
+        std::fs::write(
+            &backup,
+            serde_json::to_vec(&json!({ SETTINGS_KEY: "saved-state" }))
+                .expect("backup must serialize"),
+        )
+        .expect("backup must be written");
+
+        let recovered = load_with_recovery(&primary, &backup).expect("backup must recover");
+        assert_eq!(recovered.get(SETTINGS_KEY), Some(&json!("saved-state")));
+    }
+
+    #[test]
+    fn atomic_write_keeps_the_previous_valid_primary_as_backup() {
+        let directory = TestDirectory::new();
+        let primary = directory.path().join("settings.json");
+        let backup = directory.path().join("settings.json.bak");
+
+        let mut first = Map::new();
+        first.insert(SETTINGS_KEY.to_string(), Value::String("revision-1".into()));
+        atomic_write(&primary, &backup, &first).expect("initial write must succeed");
+
+        let mut second = Map::new();
+        second.insert(SETTINGS_KEY.to_string(), Value::String("revision-2".into()));
+        atomic_write(&primary, &backup, &second).expect("replacement must succeed");
+
+        assert_eq!(
+            parse_store(&primary)
+                .expect("primary must parse")
+                .get(SETTINGS_KEY),
+            Some(&Value::String("revision-2".into()))
+        );
+        assert_eq!(
+            parse_store(&backup)
+                .expect("backup must parse")
+                .get(SETTINGS_KEY),
+            Some(&Value::String("revision-1".into()))
+        );
+    }
+
+    #[test]
+    fn runtime_settings_preserve_security_sensitive_values() {
+        let settings: RuntimeSettings = serde_json::from_value(json!({
+            "activePresetId": "general-alt4",
+            "bypassMode": "whitelist",
+            "whitelistDomains": ["example.com"],
+            "blacklistDomains": ["blocked.example"],
+            "dnsProtocol": "dot",
+            "dnsAdBlock": true,
+            "dnsCache": false,
+            "proxySocks5": "127.0.0.1:1080",
+            "killSwitch": true,
+            "watchdog": false,
+            "dnsForwarderEnabled": true,
+            "healthCheckTargets": ["example.com"],
+            "selectedDnsId": "custom",
+            "dnsCustomPrimary": "1.1.1.1",
+            "dnsCustomSecondary": "1.0.0.1"
+        }))
+        .expect("runtime settings must deserialize");
+
+        assert_eq!(settings.active_preset_id, "general-alt4");
+        assert_eq!(settings.bypass_mode, "whitelist");
+        assert_eq!(settings.whitelist_domains, ["example.com"]);
+        assert!(!settings.dns_cache);
+        assert!(settings.dns_ad_block);
+        assert!(settings.kill_switch);
+        assert!(!settings.watchdog);
+        assert!(settings.dns_forwarder_enabled);
+        assert_eq!(settings.proxy_socks5, "127.0.0.1:1080");
     }
 }
