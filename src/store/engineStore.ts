@@ -60,6 +60,8 @@ export interface DnsConfigStatus {
   cache: boolean;
   socks5Proxy: string;
   forwarderActive: boolean;
+  configRevision: number;
+  stage: 'persisted' | 'applied';
 }
 
 /*
@@ -490,13 +492,13 @@ export const useEngineStore = create<EngineStore>()(
             if (revision !== dnsSyncRevision) return;
             pendingDnsRollback = {};
             const tr = get().language === 'tr';
-            const activeText = verified.forwarderActive
+            const activeText = verified.stage === 'applied'
               ? (tr ? 'Çalışan yönlendirici yeni ayarı kullanıyor.' : 'The running forwarder is using the new setting.')
               : (tr ? 'Ayar kaydedildi; yönlendirici başlatıldığında kullanılacak.' : 'Saved; it will be used when the forwarder starts.');
             get().appendLog(
               tr
-                ? `[DNS] Ayarlar doğrulandı: ${verified.protocol.toUpperCase()}, önbellek ${verified.cache ? 'açık' : 'kapalı'}, reklam filtresi ${verified.adblock ? 'açık' : 'kapalı'}. ${activeText}`
-                : `[DNS] Settings verified: ${verified.protocol.toUpperCase()}, cache ${verified.cache ? 'on' : 'off'}, ad filter ${verified.adblock ? 'on' : 'off'}. ${activeText}`,
+                ? `[DNS] Yapılandırma #${verified.configRevision} kabul edildi: ${verified.protocol.toUpperCase()}, önbellek ${verified.cache ? 'açık' : 'kapalı'}, reklam filtresi ${verified.adblock ? 'açık' : 'kapalı'}. ${activeText}`
+                : `[DNS] Configuration #${verified.configRevision} accepted: ${verified.protocol.toUpperCase()}, cache ${verified.cache ? 'on' : 'off'}, ad filter ${verified.adblock ? 'on' : 'off'}. ${activeText}`,
               'info',
             );
           }).catch(err => {

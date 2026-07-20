@@ -768,6 +768,15 @@ pub struct DnsConfigStatus {
     cache: bool,
     socks5_proxy: String,
     forwarder_active: bool,
+    config_revision: u64,
+    stage: DnsApplyStage,
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DnsApplyStage {
+    Persisted,
+    Applied,
 }
 
 #[tauri::command]
@@ -846,19 +855,31 @@ pub async fn sync_dns_settings(
         .lock()
         .map_err(|_| "Forwarder lock poisoned.".to_string())?
         .is_some();
+    let config_revision = state
+        .dns_config_revision
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
     let result = DnsConfigStatus {
         protocol: verified.protocol,
         adblock: verified.adblock,
         cache: verified.cache,
         socks5_proxy: verified.socks5_proxy,
         forwarder_active,
+        config_revision,
+        stage: if forwarder_active {
+            DnsApplyStage::Applied
+        } else {
+            DnsApplyStage::Persisted
+        },
     };
     if emit_event.unwrap_or(true) {
         app.emit("dns_config_synced", result.clone())
             .map_err(|e| e.to_string())?;
     }
     tracing::info!(
-        "DNS settings applied and verified: protocol={}, cache={}, adblock={}, proxy={}, health_target={}",
+        "DNS settings accepted: revision={}, stage={}, protocol={}, cache={}, adblock={}, proxy={}, health_target={}",
+        config_revision,
+        if forwarder_active { "applied" } else { "persisted" },
         result.protocol.to_uppercase(), result.cache, result.adblock,
         if result.socks5_proxy.is_empty() { "direct" } else { "SOCKS5H" },
         verified.health_check_targets.first().map(String::as_str).unwrap_or("example.com")

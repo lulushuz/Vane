@@ -45,6 +45,7 @@ pub struct AppState {
     pub bypass_sync: tokio::sync::Mutex<()>,
     pub bypass_config_revision: AtomicU64,
     pub dns_sync: tokio::sync::Mutex<()>,
+    pub dns_config_revision: AtomicU64,
 }
 
 /*
@@ -413,6 +414,7 @@ pub fn run() {
                 bypass_sync: tokio::sync::Mutex::new(()),
                 bypass_config_revision: AtomicU64::new(0),
                 dns_sync: tokio::sync::Mutex::new(()),
+                dns_config_revision: AtomicU64::new(0),
             });
 
             // Auto-start: if launched via Task Scheduler / systemd, resume the last DPI preset.

@@ -6,6 +6,7 @@ import type { BypassConfigStatus, DnsConfigStatus } from '../store/engineStore';
 import { MonotonicRevisionGate } from '../store/revisionGate';
 
 const bypassRevisionGate = new MonotonicRevisionGate();
+const dnsRevisionGate = new MonotonicRevisionGate();
 
 /* 
    Central hook that registers all Tauri backend event listeners.
@@ -98,6 +99,7 @@ export function useEventListeners(): void {
     });
 
     register<DnsConfigStatus>('dns_config_synced', (config) => {
+      if (!dnsRevisionGate.accept(config.configRevision)) return;
       useEngineStore.setState({
         dnsProtocol: config.protocol,
         dnsAdBlock: config.adblock,
