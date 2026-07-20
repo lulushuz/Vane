@@ -1,5 +1,5 @@
 use serde::Serialize;
-use trust_dns_proto::{
+use hickory_resolver::proto::{
     op::{Message, MessageType, OpCode, Query},
     rr::{Name, RecordType},
     serialize::binary::{BinDecodable, BinEncodable},
@@ -107,7 +107,7 @@ async fn resolve_doh_inner(
         .filter_map(|rr| {
             rr.data().and_then(|d| {
                 // Extract A (IPv4) records as strings.
-                if let trust_dns_proto::rr::RData::A(ip) = d {
+                if let hickory_resolver::proto::rr::RData::A(ip) = d {
                     Some(ip.to_string())
                 } else {
                     None
