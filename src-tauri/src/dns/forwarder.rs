@@ -249,14 +249,14 @@ fn get_cached_dns(key: &str) -> Option<bytes::Bytes> {
         .as_secs()
         .min(u32::MAX as u64) as u32;
     let mut message = Message::from_bytes(&entry.response_bytes).ok()?;
-    for record in message.answers_mut() {
-        record.set_ttl(record.ttl().saturating_sub(elapsed));
+    for record in &mut message.answers {
+        record.ttl = record.ttl.saturating_sub(elapsed);
     }
-    for record in message.name_servers_mut() {
-        record.set_ttl(record.ttl().saturating_sub(elapsed));
+    for record in &mut message.authorities {
+        record.ttl = record.ttl.saturating_sub(elapsed);
     }
-    for record in message.additionals_mut() {
-        record.set_ttl(record.ttl().saturating_sub(elapsed));
+    for record in &mut message.additionals {
+        record.ttl = record.ttl.saturating_sub(elapsed);
     }
     message.to_bytes().ok().map(bytes::Bytes::from)
 }
@@ -294,7 +294,6 @@ static DOT_RESOLVER_CLOUDFLARE: RwLock<Option<TokioResolver>> = RwLock::new(None
 static DOT_RESOLVER_GOOGLE: RwLock<Option<TokioResolver>> = RwLock::new(None);
 
 fn build_dot_resolver(endpoint: DoHEndpoint) -> Result<TokioResolver, String> {
-    let mut config = ResolverConfig::new();
     let (ip, name) = match endpoint {
         DoHEndpoint::Cloudflare => (
             std::net::IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1)),
@@ -306,7 +305,7 @@ fn build_dot_resolver(endpoint: DoHEndpoint) -> Result<TokioResolver, String> {
         ),
     };
     let ns = NameServerConfig::tls(ip, Arc::<str>::from(name));
-    config.add_name_server(ns);
+    let config = ResolverConfig::from_parts(None, Vec::new(), vec![ns]);
     TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
         .with_options(ResolverOpts::default())
         .build()
@@ -836,7 +835,7 @@ async fn proxy_dns_query(
             match resolver.lookup(name, qtype).await {
                 Ok(lookup) => {
                     response.metadata.response_code = ResponseCode::NoError;
-                    for record in lookup.records() {
+                    for record in lookup.answers() {
                         response.add_answer(record.clone());
                     }
                 }
@@ -899,7 +898,7 @@ async fn proxy_dns_query(
                     .answers
                     .iter()
                     .chain(resp_msg.authorities.iter())
-                    .map(|record: &Record| record.ttl())
+                    .map(|record: &Record| record.ttl)
                     .min()
                     .unwrap_or(30)
                     .clamp(1, 86_400);

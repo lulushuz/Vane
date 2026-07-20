@@ -97,7 +97,7 @@ async fn resolve_doh_inner(
         .iter()
         .filter_map(|rr| {
             // Extract A (IPv4) records as strings.
-            if let hickory_resolver::proto::rr::RData::A(ip) = rr.data() {
+            if let hickory_resolver::proto::rr::RData::A(ip) = &rr.data {
                 Some(ip.to_string())
             } else {
                 None
