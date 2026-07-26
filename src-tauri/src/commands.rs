@@ -40,7 +40,7 @@ pub async fn start_engine(
 
 #[tauri::command]
 pub async fn stop_engine(app: AppHandle, state: State<'_, AppState>) -> Result<(), EngineError> {
-    state.engine_manager.stop(&app)
+    state.engine_manager.stop(&app).await
 }
 
 #[tauri::command]
@@ -1003,6 +1003,7 @@ pub async fn sync_bypass_config(
         state
             .engine_manager
             .stop(&app)
+            .await
             .map_err(|error| format!("Failed to stop engine before Pattern restart: {error}"))?;
         if let Err(e) = state.engine_manager.start(&preset, &app).await {
             return Err(format!("Failed to restart engine: {:?}", e));

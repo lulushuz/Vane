@@ -437,10 +437,9 @@ pub fn run() {
                     }
                 }
                 tauri::WindowEvent::Destroyed if window.label() == "main" => {
-                    if let Some(state) = window.try_state::<AppState>() {
-                        tracing::info!("Main window is being destroyed, engine is stopping.");
-                        let _ = state.engine_manager.stop(window.app_handle());
-                    }
+                    // RunEvent::Exit is the single shutdown owner. Starting a second
+                    // asynchronous stop here could let process teardown race app exit.
+                    tracing::debug!("Main window destroyed; engine cleanup is deferred to application exit.");
                 }
                 _ => {}
             }
@@ -503,7 +502,7 @@ pub fn run() {
         if let tauri::RunEvent::Exit = event {
             tracing::info!("Tauri application closing (RunEvent::Exit). Stopping engine...");
             if let Some(state) = app_handle.try_state::<AppState>() {
-                let _ = state.engine_manager.stop(app_handle);
+                let _ = tauri::async_runtime::block_on(state.engine_manager.stop(app_handle));
                 let forwarder = state
                     .forwarder
                     .lock()

@@ -1,5 +1,5 @@
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -68,6 +68,7 @@ impl EngineEventDispatcher for AppHandle {
 pub enum EngineState {
     Idle,
     Starting {
+        generation: u64,
         cancel: tokio::sync::oneshot::Sender<()>,
     },
     Running {
@@ -77,9 +78,11 @@ pub enum EngineState {
     Failed(EngineError),
 }
 
+#[derive(Clone)]
 pub struct EngineManager {
     status: Arc<Mutex<EngineStatus>>,
     state: Arc<Mutex<EngineState>>,
+    generation: Arc<AtomicU64>,
 }
 
 impl Default for EngineManager {
@@ -93,6 +96,7 @@ impl EngineManager {
         Self {
             status: Arc::new(Mutex::new(EngineStatus::Stopped)),
             state: Arc::new(Mutex::new(EngineState::Idle)),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -228,19 +232,25 @@ impl EngineManager {
 
         validate_preset_args(&preset.args)?;
 
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let rx = {
             let mut state_lock = self
                 .state
                 .lock()
                 .map_err(|_| EngineError::IoError("State lock poisoned".into()))?;
             match &*state_lock {
-                EngineState::Running { .. } | EngineState::Starting { .. } => {
+                EngineState::Running { .. }
+                | EngineState::Starting { .. }
+                | EngineState::Stopping => {
                     return Err(EngineError::AlreadyRunning);
                 }
                 _ => {}
             }
             let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-            *state_lock = EngineState::Starting { cancel: tx };
+            *state_lock = EngineState::Starting {
+                generation,
+                cancel: tx,
+            };
             self.set_status(EngineStatus::Starting, dispatcher);
             rx
         };
@@ -256,29 +266,35 @@ impl EngineManager {
         match handle_res {
             Ok(handle) => {
                 let pid = handle.pid();
-                let cancelled = self.current_status() == EngineStatus::Stopped;
-
-                if cancelled {
-                    drop(handle); // Kill process safely
-                    set_state_idle(&state_clone);
-                    self.set_status(EngineStatus::Stopped, &dispatcher_clone);
+                if !set_state_running_if_starting(&state_clone, generation, handle) {
+                    tracing::info!(generation, pid, "Stale engine start result was discarded.");
                     return Err(EngineError::NotRunning);
                 }
-
-                set_state_running(&state_clone, handle);
 
                 self.set_status(EngineStatus::Running { pid }, &dispatcher_clone);
                 tracing::info!("Engine started: preset='{}', pid={}", preset.id, pid);
 
                 // Spawn process watcher supervisor
+                let generation_counter = self.generation.clone();
                 tokio::spawn(async move {
-                    watch_process(pid, app_handle, state_clone, status_clone, preset_clone).await;
+                    watch_process(
+                        pid,
+                        app_handle,
+                        state_clone,
+                        status_clone,
+                        preset_clone,
+                        generation_counter,
+                    )
+                    .await;
                 });
 
                 Ok(())
             }
             Err(e) => {
-                set_state_failed(&state_clone, e.clone());
+                if !set_state_failed_if_starting(&state_clone, generation, e.clone()) {
+                    tracing::info!(generation, "Stale engine start failure was discarded.");
+                    return Err(EngineError::NotRunning);
+                }
                 self.set_status(
                     EngineStatus::Error {
                         message: e.to_string(),
@@ -291,58 +307,70 @@ impl EngineManager {
         }
     }
 
-    pub fn stop(&self, dispatcher: &impl EngineEventDispatcher) -> Result<(), EngineError> {
+    pub async fn stop(
+        &self,
+        dispatcher: &impl EngineEventDispatcher,
+    ) -> Result<(), EngineError> {
         if let Err(error) = apply_kill_switch(false) {
             tracing::error!("Engine stop continued, but DNS kill-switch cleanup failed: {error}");
         }
 
-        let mut state_lock = self.state.lock().map_err(|_| {
-            tracing::error!("State lock poisoned (stop phase).");
-            self.set_status(
-                EngineStatus::Error {
-                    message: "Internal Error: State poisoned".into(),
-                    code: None,
-                },
-                dispatcher,
-            );
-            EngineError::IoError("State lock poisoned".into())
-        })?;
+        let mut handle = {
+            let mut state = self.state.lock().map_err(|_| {
+                tracing::error!("State lock poisoned (stop phase).");
+                self.set_status(
+                    EngineStatus::Error {
+                        message: "Internal Error: State poisoned".into(),
+                        code: None,
+                    },
+                    dispatcher,
+                );
+                EngineError::IoError("State lock poisoned".into())
+            })?;
 
-        match std::mem::replace(&mut *state_lock, EngineState::Stopping) {
-            EngineState::Idle => {
-                *state_lock = EngineState::Idle;
-                Err(EngineError::NotRunning)
+            match std::mem::replace(&mut *state, EngineState::Stopping) {
+                EngineState::Idle | EngineState::Failed(_) => {
+                    *state = EngineState::Idle;
+                    self.set_status(EngineStatus::Stopped, dispatcher);
+                    return Ok(());
+                }
+                EngineState::Stopping => {
+                    *state = EngineState::Stopping;
+                    return Ok(());
+                }
+                EngineState::Starting { cancel, .. } => {
+                    let _ = cancel.send(());
+                    *state = EngineState::Idle;
+                    self.set_status(EngineStatus::Stopped, dispatcher);
+                    tracing::info!("Engine startup cancelled.");
+                    return Ok(());
+                }
+                EngineState::Running { handle } => handle,
             }
-            EngineState::Stopping => {
-                *state_lock = EngineState::Stopping;
-                Ok(())
-            }
-            EngineState::Starting { cancel } => {
-                let _ = cancel.send(());
-                *state_lock = EngineState::Idle;
-                self.set_status(EngineStatus::Stopped, dispatcher);
-                tracing::info!("Engine startup cancelled.");
-                Ok(())
-            }
-            EngineState::Running { mut handle } => {
-                *state_lock = EngineState::Stopping;
-                drop(state_lock);
+        };
 
-                handle.kill_graceful();
-
-                let mut state_lock = self
-                    .state
-                    .lock()
-                    .map_err(|_| EngineError::IoError("State lock poisoned after kill".into()))?;
-                *state_lock = EngineState::Idle;
+        let termination = handle.terminate().await;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| EngineError::IoError("State lock poisoned after kill".into()))?;
+        match termination {
+            Ok(()) => {
+                *state = EngineState::Idle;
                 self.set_status(EngineStatus::Stopped, dispatcher);
                 tracing::info!("Engine stopped.");
                 Ok(())
             }
-            EngineState::Failed(_) => {
-                *state_lock = EngineState::Idle;
-                self.set_status(EngineStatus::Stopped, dispatcher);
-                Ok(())
+            Err(error) => {
+                *state = EngineState::Failed(error.clone());
+                self.set_status(
+                    EngineStatus::Error {
+                        message: error.to_string(),
+                        code: Some(error.code().into()),
+                    },
+                    dispatcher,
+                );
+                Err(error)
             }
         }
     }
@@ -981,6 +1009,7 @@ fn watch_process(
     state: Arc<Mutex<EngineState>>,
     status: Arc<Mutex<EngineStatus>>,
     preset: Preset,
+    generation_counter: Arc<AtomicU64>,
 ) -> futures::future::BoxFuture<'static, ()> {
     use futures::FutureExt;
     async move {
@@ -1029,23 +1058,24 @@ fn watch_process(
                 let still_running = is_state_running_with_pid(&state, pid);
 
                 if still_running {
+                    let generation = generation_counter.fetch_add(1, Ordering::SeqCst) + 1;
                     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-                    set_state_starting(&state, tx);
+                    if !set_state_starting_if_running_pid(&state, pid, generation, tx) {
+                        break;
+                    }
                     set_status_starting(&status, &app);
 
                     match spawn_and_run(&preset, &app, rx).await {
                         Ok(new_handle) => {
                             let new_pid = new_handle.pid();
-
-                            let cancelled = is_status_stopped(&status);
-                            if cancelled {
-                                drop(new_handle);
-                                set_state_idle(&state);
-                                set_status_stopped(&status, &app);
+                            if !set_state_running_if_starting(
+                                &state,
+                                generation,
+                                new_handle,
+                            ) {
+                                tracing::info!(generation, new_pid, "Stale automatic restart result was discarded.");
                                 break;
                             }
-
-                            set_state_running(&state, new_handle);
                             set_status_running(&status, &app, new_pid);
 
                             tracing::info!("Engine successfully restarted, new PID: {}", new_pid);
@@ -1053,6 +1083,7 @@ fn watch_process(
                             let status_clone = status.clone();
                             let app_clone = app.clone();
                             let preset_clone = preset.clone();
+                            let generation_counter_clone = generation_counter.clone();
                             tokio::spawn(async move {
                                 watch_process(
                                     new_pid,
@@ -1060,12 +1091,16 @@ fn watch_process(
                                     state_clone,
                                     status_clone,
                                     preset_clone,
+                                    generation_counter_clone,
                                 )
                                 .await;
                             });
                             break;
                         }
                         Err(e) => {
+                            if !set_state_failed_if_starting(&state, generation, e.clone()) {
+                                break;
+                            }
                             tracing::error!("Engine restart attempt failed: {}", e);
                             attempt += 1;
                         }
@@ -1089,29 +1124,59 @@ fn is_state_running_with_pid(state: &Mutex<EngineState>, pid: u32) -> bool {
     false
 }
 
-fn set_state_starting(state: &Mutex<EngineState>, cancel_tx: tokio::sync::oneshot::Sender<()>) {
-    if let Ok(mut sl) = state.lock() {
-        *sl = EngineState::Starting { cancel: cancel_tx };
+fn set_state_starting_if_running_pid(
+    state: &Mutex<EngineState>,
+    pid: u32,
+    generation: u64,
+    cancel: tokio::sync::oneshot::Sender<()>,
+) -> bool {
+    let Ok(mut state) = state.lock() else {
+        return false;
+    };
+    if !matches!(&*state, EngineState::Running { handle } if handle.pid() == pid) {
+        return false;
     }
+    *state = EngineState::Starting { generation, cancel };
+    true
 }
 
-fn set_state_running(state: &Mutex<EngineState>, handle: ProcessHandle) {
-    if let Ok(mut sl) = state.lock() {
-        *sl = EngineState::Running {
-            handle: Box::new(handle),
-        };
+fn set_state_running_if_starting(
+    state: &Mutex<EngineState>,
+    generation: u64,
+    handle: ProcessHandle,
+) -> bool {
+    let Ok(mut state) = state.lock() else {
+        return false;
+    };
+    if !matches!(&*state, EngineState::Starting { generation: active, .. } if *active == generation)
+    {
+        return false;
     }
+    *state = EngineState::Running {
+        handle: Box::new(handle),
+    };
+    true
+}
+
+fn set_state_failed_if_starting(
+    state: &Mutex<EngineState>,
+    generation: u64,
+    error: EngineError,
+) -> bool {
+    let Ok(mut state) = state.lock() else {
+        return false;
+    };
+    if !matches!(&*state, EngineState::Starting { generation: active, .. } if *active == generation)
+    {
+        return false;
+    }
+    *state = EngineState::Failed(error);
+    true
 }
 
 fn set_state_failed(state: &Mutex<EngineState>, err: EngineError) {
     if let Ok(mut sl) = state.lock() {
         *sl = EngineState::Failed(err);
-    }
-}
-
-fn set_state_idle(state: &Mutex<EngineState>) {
-    if let Ok(mut sl) = state.lock() {
-        *sl = EngineState::Idle;
     }
 }
 
@@ -1141,21 +1206,6 @@ fn set_status_running(status: &Mutex<EngineStatus>, app: &AppHandle, pid: u32) {
     }
 }
 
-fn is_status_stopped(status: &Mutex<EngineStatus>) -> bool {
-    if let Ok(st) = status.lock() {
-        *st == EngineStatus::Stopped
-    } else {
-        false
-    }
-}
-
-fn set_status_stopped(status: &Mutex<EngineStatus>, app: &AppHandle) {
-    if let Ok(mut st) = status.lock() {
-        *st = EngineStatus::Stopped;
-        let _ = app.emit("engine_status", &*st);
-    }
-}
-
 #[cfg(target_os = "windows")]
 fn is_process_alive(pid: u32) -> bool {
     use windows::Win32::Foundation::{CloseHandle, FALSE};
@@ -1177,4 +1227,47 @@ fn is_process_alive(pid: u32) -> bool {
 #[cfg(not(target_os = "windows"))]
 fn is_process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn stale_start_failure_cannot_replace_newer_start() {
+        let (cancel, _receiver) = tokio::sync::oneshot::channel();
+        let state = Mutex::new(EngineState::Starting {
+            generation: 2,
+            cancel,
+        });
+
+        assert!(!set_state_failed_if_starting(
+            &state,
+            1,
+            EngineError::SpawnFailed("stale".into()),
+        ));
+        assert!(matches!(
+            &*state.lock().expect("state lock"),
+            EngineState::Starting { generation: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn current_start_failure_transitions_to_failed() {
+        let (cancel, _receiver) = tokio::sync::oneshot::channel();
+        let state = Mutex::new(EngineState::Starting {
+            generation: 3,
+            cancel,
+        });
+
+        assert!(set_state_failed_if_starting(
+            &state,
+            3,
+            EngineError::SpawnFailed("current".into()),
+        ));
+        assert!(matches!(
+            &*state.lock().expect("state lock"),
+            EngineState::Failed(EngineError::SpawnFailed(message)) if message == "current"
+        ));
+    }
 }
