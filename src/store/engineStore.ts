@@ -4,27 +4,17 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import type { NetworkAdapter } from '../types/network';
 import { DEFAULT_ADVANCED_CONFIG, type AdvancedConfig } from '../types/advanced';
+import type { EngineStatus, Preset } from '../types/engine';
+import {
+  DEFAULT_HEALTH_CHECK_TARGET,
+  normalizeIpcError,
+  type BypassConfigStatus,
+  type DnsConfigStatus,
+} from '../types/ipc';
 import { activePatternDomains, migratePersistedEngineState } from './persistence';
 
 export { DEFAULT_ADVANCED_CONFIG } from '../types/advanced';
 export type { AdvancedConfig } from '../types/advanced';
-
-export type EngineStatus =
-  | { variant: 'stopped' }
-  | { variant: 'starting' }
-  | { variant: 'running'; pid: number }
-  | { variant: 'error'; message: string; code?: string };
-
-export interface Preset {
-  id: string;
-  label: string;
-  description: string;
-  icon: string;
-  args: string[];
-  isCustom: boolean;
-  priority?: number;
-  category?: string;
-}
 
 export interface LogLine {
   id: string;
@@ -40,28 +30,6 @@ export interface DnsProvider {
   name: string;
   primary: string;
   secondary: string;
-}
-
-export interface BypassConfigStatus {
-  mode: 'all' | 'whitelist' | 'blacklist';
-  domainCount: number;
-  configRevision: number;
-  stage: 'prepared' | 'process_started';
-  engineRestarted: boolean;
-  engineRunning: boolean;
-  whitelistDomains: string[];
-  blacklistDomains: string[];
-  activePresetId: string;
-}
-
-export interface DnsConfigStatus {
-  protocol: 'doh' | 'dot';
-  adblock: boolean;
-  cache: boolean;
-  socks5Proxy: string;
-  forwarderActive: boolean;
-  configRevision: number;
-  stage: 'persisted' | 'applied';
 }
 
 /*
@@ -220,7 +188,7 @@ export const useEngineStore = create<EngineStore>()(
       dnsProviders: [],
       dnsSynced: false,
       advancedDirty: false,
-      healthCheckTargets: ['discord.com'],
+      healthCheckTargets: [DEFAULT_HEALTH_CHECK_TARGET],
       hasHydrated: false,
       persistenceError: null,
 
@@ -337,6 +305,7 @@ export const useEngineStore = create<EngineStore>()(
             );
             return true;
           } catch (error) {
+            const ipcError = normalizeIpcError(error);
             try {
               await invoke('sync_dns_settings', {
                 protocol: state.dnsProtocol === 'doq' ? 'doh' : state.dnsProtocol,
@@ -358,8 +327,8 @@ export const useEngineStore = create<EngineStore>()(
             } catch { /* backend logs contain rollback details */ }
             get().appendLog(
               get().language === 'tr'
-                ? `[ERROR] SOCKS5 proxy doğrulanamadı; önceki ayar korundu: ${error}`
-                : `[ERROR] SOCKS5 proxy could not be verified; the previous setting was preserved: ${error}`,
+                ? `[ERROR] SOCKS5 proxy doğrulanamadı; önceki ayar korundu: ${ipcError.message} (${ipcError.code})`
+                : `[ERROR] SOCKS5 proxy could not be verified; the previous setting was preserved: ${ipcError.message} (${ipcError.code})`,
               'error',
             );
             return false;
@@ -387,11 +356,12 @@ export const useEngineStore = create<EngineStore>()(
               : `[SECURITY] DNS Kill Switch was verified ${killSwitch ? 'on' : 'off'}; engine is ${verified.engineRunning ? 'running' : 'stopped'}.`,
             'info',
           );
-        }).catch((error) => {
+        }).catch((cause) => {
+          const error = normalizeIpcError(cause);
           get().appendLog(
             get().language === 'tr'
-              ? `[ERROR] DNS Kill Switch değiştirilemedi; önceki ayar korundu: ${error}`
-              : `[ERROR] DNS Kill Switch could not be changed; the previous setting was preserved: ${error}`,
+              ? `[ERROR] DNS Kill Switch değiştirilemedi; önceki ayar korundu: ${error.message} (${error.code})`
+              : `[ERROR] DNS Kill Switch could not be changed; the previous setting was preserved: ${error.message} (${error.code})`,
             'error',
           );
         });
@@ -468,9 +438,12 @@ export const useEngineStore = create<EngineStore>()(
                 : `[PATTERN] Configuration #${verified.configRevision} accepted: ${modeText}; ${verified.domainCount} domains. ${applyText}`,
               'info',
             );
-          }).catch(err => {
+          }).catch(cause => {
             const tr = get().language === 'tr';
-            get().appendLog(tr ? `[ERROR] Desen ayarı uygulanamadı: ${err}` : `[ERROR] Pattern setting could not be applied: ${err}`, 'error');
+            const error = normalizeIpcError(cause);
+            get().appendLog(tr
+              ? `[ERROR] Desen ayarı uygulanamadı: ${error.message} (${error.code})`
+              : `[ERROR] Pattern setting could not be applied: ${error.message} (${error.code})`, 'error');
           });
         }, 100);
       },
@@ -501,16 +474,17 @@ export const useEngineStore = create<EngineStore>()(
                 : `[DNS] Configuration #${verified.configRevision} accepted: ${verified.protocol.toUpperCase()}, cache ${verified.cache ? 'on' : 'off'}, ad filter ${verified.adblock ? 'on' : 'off'}. ${activeText}`,
               'info',
             );
-          }).catch(err => {
+          }).catch(cause => {
             if (revision !== dnsSyncRevision) return;
+            const error = normalizeIpcError(cause);
             const rollback = pendingDnsRollback;
             pendingDnsRollback = {};
             if (Object.keys(rollback).length > 0) set(rollback);
             const tr = get().language === 'tr';
             get().appendLog(
               tr
-                ? `[ERROR] DNS ayarı doğrulanamadı; arayüz son doğrulanmış değere geri döndü: ${err}`
-                : `[ERROR] DNS setting could not be verified; the UI reverted to the last verified value: ${err}`,
+                ? `[ERROR] DNS ayarı doğrulanamadı; arayüz son doğrulanmış değere geri döndü: ${error.message} (${error.code})`
+                : `[ERROR] DNS setting could not be verified; the UI reverted to the last verified value: ${error.message} (${error.code})`,
               'error',
             );
           });
@@ -632,14 +606,13 @@ export const useEngineStore = create<EngineStore>()(
           } else if (result.variant === 'error') {
             get().appendLog(get().language === 'tr' ? `[ERROR] DPI motoru hatası: ${result.message}` : `[ERROR] DPI engine error: ${result.message}`, 'error');
           }
-        } catch (err: any) {
+        } catch (err) {
           const rollback = pendingDnsRollback;
           pendingDnsRollback = {};
           if (Object.keys(rollback).length > 0) set(rollback);
-          const errorCode = typeof err === 'object' && err !== null && 'code' in err ? err.code : 'UNKNOWN';
-          const errorMsg = typeof err === 'object' && err !== null && 'message' in err ? err.message : String(err);
-          set({ status: { variant: 'error', message: errorMsg, code: errorCode } });
-          get().appendLog(get().language === 'tr' ? `[ERROR] DPI bypass başlatılamadı: ${errorMsg}` : `[ERROR] DPI bypass could not start: ${errorMsg}`, 'error');
+          const error = normalizeIpcError(err);
+          set({ status: { variant: 'error', message: error.message, code: error.code } });
+          get().appendLog(get().language === 'tr' ? `[ERROR] DPI bypass başlatılamadı: ${error.message}` : `[ERROR] DPI bypass could not start: ${error.message}`, 'error');
         }
       },
 

@@ -5,6 +5,7 @@ import { Toast } from '../components/Toast/Toast';
 import { translations } from '../utils/translations';
 import styles from './SafetyProxyView.module.css';
 import { invoke } from '@tauri-apps/api/core';
+import { normalizeIpcError } from '../types/ipc';
 
 export function SafetyProxyView() {
   const {
@@ -44,9 +45,10 @@ export function SafetyProxyView() {
     try {
       verifiedProxy = await invoke<string>('validate_socks5_proxy', { proxy: localProxy });
     } catch (error) {
+      const ipcError = normalizeIpcError(error);
       appendLog(language === 'tr'
-        ? `[ERROR] SOCKS5 proxy kaydedilmedi: ${error}`
-        : `[ERROR] SOCKS5 proxy was not saved: ${error}`, 'error');
+        ? `[ERROR] SOCKS5 proxy kaydedilmedi: ${ipcError.message} (${ipcError.code})`
+        : `[ERROR] SOCKS5 proxy was not saved: ${ipcError.message} (${ipcError.code})`, 'error');
       return;
     }
     if (verifiedProxy && dnsProtocol === 'dot') {
@@ -89,6 +91,7 @@ export function SafetyProxyView() {
         : `[SECURITY] Safety settings verified: Kill Switch ${localKillSwitch ? 'on' : 'off'}, watchdog ${localWatchdog ? 'on' : 'off'}, DNS connection ${verifiedProxy ? 'SOCKS5H proxy' : 'direct'}.`, 'info');
       setShowToast(true);
     } catch (error) {
+      const ipcError = normalizeIpcError(error);
       // Best-effort runtime rollback. Persistence is unchanged until every
       // backend step above succeeds.
       try {
@@ -114,8 +117,8 @@ export function SafetyProxyView() {
         // The original error remains the actionable message; backend logs retain rollback detail.
       }
       appendLog(language === 'tr'
-        ? `[ERROR] Güvenlik ayarları doğrulanamadı; kalıcı ayarlar değiştirilmedi: ${error}`
-        : `[ERROR] Safety settings could not be verified; persisted settings were not changed: ${error}`, 'error');
+        ? `[ERROR] Güvenlik ayarları doğrulanamadı; kalıcı ayarlar değiştirilmedi: ${ipcError.message} (${ipcError.code})`
+        : `[ERROR] Safety settings could not be verified; persisted settings were not changed: ${ipcError.message} (${ipcError.code})`, 'error');
     }
   };
 

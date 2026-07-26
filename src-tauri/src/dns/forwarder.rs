@@ -429,7 +429,7 @@ pub fn read_dns_settings(app: &AppHandle) -> DnsSettings {
         adblock: false,
         cache: true,
         socks5_proxy: "".to_string(),
-        health_check_targets: vec!["example.com".to_string()],
+        health_check_targets: vec![crate::dns::DEFAULT_HEALTH_CHECK_TARGET.to_string()],
     };
     let res = match crate::settings::read_runtime_settings(app) {
         Ok(Some(settings)) => DnsSettings {
@@ -442,7 +442,7 @@ pub fn read_dns_settings(app: &AppHandle) -> DnsSettings {
             cache: settings.dns_cache,
             socks5_proxy: settings.proxy_socks5,
             health_check_targets: if settings.health_check_targets.is_empty() {
-                vec!["example.com".into()]
+                vec![crate::dns::DEFAULT_HEALTH_CHECK_TARGET.into()]
             } else {
                 settings.health_check_targets
             },
@@ -626,7 +626,7 @@ pub(crate) fn current_doh_client(default_client: &reqwest::Client) -> Option<req
             adblock: false,
             cache: true,
             socks5_proxy: String::new(),
-            health_check_targets: vec!["example.com".into()],
+            health_check_targets: vec![crate::dns::DEFAULT_HEALTH_CHECK_TARGET.into()],
         });
     if settings.socks5_proxy.is_empty() {
         return Some(default_client.clone());

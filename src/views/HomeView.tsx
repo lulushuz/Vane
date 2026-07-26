@@ -6,6 +6,7 @@ import { useEngineStore } from '../store/engineStore';
 import { Shield, RefreshCw, Wifi, Plus, X, Download, Globe } from 'lucide-react';
 import { translations } from '../utils/translations';
 import styles from './HomeView.module.css';
+import { DEFAULT_HEALTH_CHECK_TARGET } from '../types/ipc';
 
 type UnlistenFn = () => void;
 
@@ -435,7 +436,7 @@ export function HomeView() {
                 <button
                   onClick={() => {
                     if (healthCheckTargets.length <= 1) {
-                      setHealthCheckTargets(['discord.com']);
+                      setHealthCheckTargets([DEFAULT_HEALTH_CHECK_TARGET]);
                       return;
                     }
                     setHealthCheckTargets(healthCheckTargets.filter((_, i) => i !== idx));

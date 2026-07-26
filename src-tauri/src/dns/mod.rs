@@ -3,6 +3,8 @@ pub mod forwarder;
 pub mod manager;
 pub mod watchdog;
 
+pub const DEFAULT_HEALTH_CHECK_TARGET: &str = "example.com";
+
 pub use doh::{resolve_doh, DohResult, DOH_CLOUDFLARE, DOH_GOOGLE};
 pub use forwarder::{
     spawn_doh_forwarder, DoHEndpoint, ForwarderHandle, DOH_FORWARDER_DEFAULT_PORT,
