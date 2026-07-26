@@ -10,6 +10,28 @@ permissions:
   contents: read
 
 jobs:
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Parse Windows acceptance harness
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD\scripts\windows\Invoke-VaneAcceptance.ps1",
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | Format-List -Force
+            exit 1
+          }
+      - name: Test Windows acceptance harness
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\Test-VaneAcceptanceHarness.ps1
+
   frontend:
     runs-on: ubuntu-latest
     steps:
