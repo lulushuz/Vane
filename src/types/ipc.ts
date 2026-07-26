@@ -24,6 +24,9 @@ export type ListPresetsResponse = Preset[];
 export interface IpcErrorPayload {
   code: string;
   message: string;
+  operation?: string;
+  retryable?: boolean;
+  configRevision?: number;
 }
 
 export interface BypassConfigStatus {
@@ -54,6 +57,9 @@ export function normalizeIpcError(error: unknown): IpcErrorPayload {
     return {
       code: typeof payload.code === 'string' ? payload.code : 'UNKNOWN',
       message: typeof payload.message === 'string' ? payload.message : String(error),
+      operation: typeof payload.operation === 'string' ? payload.operation : undefined,
+      retryable: typeof payload.retryable === 'boolean' ? payload.retryable : undefined,
+      configRevision: typeof payload.configRevision === 'number' ? payload.configRevision : undefined,
     };
   }
 

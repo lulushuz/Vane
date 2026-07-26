@@ -3,9 +3,17 @@ import { normalizeIpcError } from './ipc';
 
 describe('normalizeIpcError', () => {
   it('preserves structured Rust engine errors', () => {
-    expect(normalizeIpcError({ code: 'SPAWN_FAILED', message: 'Process start error' })).toEqual({
-      code: 'SPAWN_FAILED',
-      message: 'Process start error',
+    expect(normalizeIpcError({
+      code: 'DNS_FORWARDER_RESTART_FAILED',
+      message: 'Forwarder unavailable',
+      operation: 'sync_dns_settings',
+      retryable: true,
+    })).toEqual({
+      code: 'DNS_FORWARDER_RESTART_FAILED',
+      message: 'Forwarder unavailable',
+      operation: 'sync_dns_settings',
+      retryable: true,
+      configRevision: undefined,
     });
   });
 

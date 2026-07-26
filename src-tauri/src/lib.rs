@@ -16,6 +16,7 @@ pub mod config;
 pub mod dns;
 pub mod engine;
 pub mod http;
+pub mod ipc;
 pub mod logging;
 pub mod network;
 pub mod presets;

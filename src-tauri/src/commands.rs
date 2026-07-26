@@ -5,6 +5,7 @@ use crate::dns::{
     NetworkAdapter, DOH_CLOUDFLARE, DOH_FORWARDER_DEFAULT_PORT, DOH_GOOGLE,
 };
 use crate::engine::{EngineError, EngineStatus};
+use crate::ipc::IpcError;
 use crate::privilege::checker::is_elevated;
 use crate::AppState;
 #[cfg(target_os = "windows")]
@@ -790,16 +791,32 @@ pub async fn sync_dns_settings(
     emit_event: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<DnsConfigStatus, String> {
+) -> Result<DnsConfigStatus, IpcError> {
+    const OPERATION: &str = "sync_dns_settings";
     let _sync_guard = state.dns_sync.lock().await;
     if protocol != "doh" && protocol != "dot" {
-        return Err(format!("Unsupported DNS transport protocol: {}", protocol));
+        return Err(IpcError::validation(
+            OPERATION,
+            "INVALID_DNS_PROTOCOL",
+            format!("Unsupported DNS transport protocol: {protocol}"),
+        ));
     }
-    let health_check_targets =
-        crate::config::domain::canonicalize_domain_rules(&health_check_targets)
-            .map_err(|error| format!("Invalid DNS health-check target: {error}"))?;
+    let health_check_targets = crate::config::domain::canonicalize_domain_rules(
+        &health_check_targets,
+    )
+    .map_err(|error| {
+        IpcError::validation(
+            OPERATION,
+            "INVALID_HEALTH_CHECK_TARGET",
+            format!("Invalid DNS health-check target: {error}"),
+        )
+    })?;
     if health_check_targets.is_empty() {
-        return Err("At least one DNS health-check target is required.".into());
+        return Err(IpcError::validation(
+            OPERATION,
+            "HEALTH_CHECK_TARGETS_EMPTY",
+            "At least one DNS health-check target is required.",
+        ));
     }
     let settings = crate::dns::forwarder::DnsSettings {
         protocol: protocol.clone(),
@@ -809,15 +826,19 @@ pub async fn sync_dns_settings(
         health_check_targets,
     };
     let settings_changed = crate::dns::forwarder::read_dns_settings(&app) != settings;
-    crate::dns::forwarder::update_dns_settings_cache(settings.clone())?;
+    crate::dns::forwarder::update_dns_settings_cache(settings.clone())
+        .map_err(|error| IpcError::runtime(OPERATION, "DNS_SETTINGS_PERSIST_FAILED", error))?;
     if adblock {
         crate::dns::forwarder::initialize_adblock(&app);
     }
     let running = if settings_changed {
-        let mut guard = state
-            .forwarder
-            .lock()
-            .map_err(|_| "Forwarder lock poisoned.".to_string())?;
+        let mut guard = state.forwarder.lock().map_err(|_| {
+            IpcError::runtime(
+                OPERATION,
+                "INTERNAL_STATE_ERROR",
+                "Forwarder lock poisoned.",
+            )
+        })?;
         guard.take()
     } else {
         None
@@ -834,9 +855,13 @@ pub async fn sync_dns_settings(
             if restored.success {
                 let _ = crate::dns::clear_dns_restore_snapshot(&app);
             }
-            return Err(format!(
-                "DNS runtime restart failed; previous DNS restore success={}: {error}",
-                restored.success
+            return Err(IpcError::runtime(
+                OPERATION,
+                "DNS_FORWARDER_RESTART_FAILED",
+                format!(
+                    "DNS runtime restart failed; previous DNS restore success={}: {error}",
+                    restored.success
+                ),
             ));
         }
         if let Ok(mut guard) = state.forwarder.lock() {
@@ -853,7 +878,13 @@ pub async fn sync_dns_settings(
     let forwarder_active = state
         .forwarder
         .lock()
-        .map_err(|_| "Forwarder lock poisoned.".to_string())?
+        .map_err(|_| {
+            IpcError::runtime(
+                OPERATION,
+                "INTERNAL_STATE_ERROR",
+                "Forwarder lock poisoned.",
+            )
+        })?
         .is_some();
     let config_revision = state
         .dns_config_revision
@@ -873,8 +904,11 @@ pub async fn sync_dns_settings(
         },
     };
     if emit_event.unwrap_or(true) {
-        app.emit("dns_config_synced", result.clone())
-            .map_err(|e| e.to_string())?;
+        if let Err(error) = app.emit("dns_config_synced", result.clone()) {
+            tracing::warn!(
+                "DNS settings were applied, but the cross-window notification failed: {error}"
+            );
+        }
     }
     tracing::info!(
         "DNS settings accepted: revision={}, stage={}, protocol={}, cache={}, adblock={}, proxy={}, health_target={}",
@@ -920,20 +954,38 @@ pub async fn sync_bypass_config(
     active_preset_id: String,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<BypassConfigStatus, String> {
+) -> Result<BypassConfigStatus, IpcError> {
+    const OPERATION: &str = "sync_bypass_config";
     let _sync_guard = state.bypass_sync.lock().await;
     if mode != "all" && mode != "whitelist" && mode != "blacklist" {
-        return Err(format!("Unsupported bypass mode: {}", mode));
+        return Err(IpcError::validation(
+            OPERATION,
+            "INVALID_BYPASS_MODE",
+            format!("Unsupported bypass mode: {mode}"),
+        ));
     }
     let whitelist_domains = crate::config::domain::canonicalize_domain_rules(&whitelist_domains)
-        .map_err(|error| format!("Invalid whitelist domain: {error}"))?;
+        .map_err(|error| {
+            IpcError::validation(
+                OPERATION,
+                "INVALID_WHITELIST_DOMAIN",
+                format!("Invalid whitelist domain: {error}"),
+            )
+        })?;
     let blacklist_domains = crate::config::domain::canonicalize_domain_rules(&blacklist_domains)
-        .map_err(|error| format!("Invalid blacklist domain: {error}"))?;
+        .map_err(|error| {
+            IpcError::validation(
+                OPERATION,
+                "INVALID_BLACKLIST_DOMAIN",
+                format!("Invalid blacklist domain: {error}"),
+            )
+        })?;
     if mode == "whitelist" && whitelist_domains.is_empty() {
-        return Err(
-            "Whitelist mode requires at least one valid domain; the running engine was left unchanged."
-                .into(),
-        );
+        return Err(IpcError::validation(
+            OPERATION,
+            "WHITELIST_EMPTY",
+            "Whitelist mode requires at least one valid domain; the running engine was left unchanged.",
+        ));
     }
     let canonical_list = match mode.as_str() {
         "whitelist" => whitelist_domains.join("\n"),
@@ -962,27 +1014,45 @@ pub async fn sync_bypass_config(
             let forwarder_active = state
                 .forwarder
                 .lock()
-                .map_err(|_| "Forwarder lock poisoned.".to_string())?
+                .map_err(|_| {
+                    IpcError::runtime(
+                        OPERATION,
+                        "INTERNAL_STATE_ERROR",
+                        "Forwarder lock poisoned.",
+                    )
+                })?
                 .is_some();
             if !forwarder_active {
                 let _dns_guard = state.dns_sync.lock().await;
                 let forwarder_active = state
                     .forwarder
                     .lock()
-                    .map_err(|_| "Forwarder lock poisoned.".to_string())?
+                    .map_err(|_| {
+                        IpcError::runtime(
+                            OPERATION,
+                            "INTERNAL_STATE_ERROR",
+                            "Forwarder lock poisoned.",
+                        )
+                    })?
                     .is_some();
                 if forwarder_active {
                     tracing::info!("DNS forwarder became active while the Pattern update was waiting; reusing it.");
                 } else {
-                    let runtime =
-                        crate::settings::read_runtime_settings(&app)?.unwrap_or_default();
+                    let runtime = crate::settings::read_runtime_settings(&app)
+                        .map_err(|error| {
+                            IpcError::runtime(OPERATION, "SETTINGS_READ_FAILED", error)
+                        })?
+                        .unwrap_or_default();
                     let endpoint = if runtime.selected_dns_id == "google" {
                         DoHEndpoint::Google
                     } else {
                         DoHEndpoint::Cloudflare
                     };
                     start_dns_forwarder_runtime(&app, state.inner(), runtime.watchdog, endpoint)
-                        .await?;
+                        .await
+                        .map_err(|error| {
+                            IpcError::runtime(OPERATION, "DNS_FORWARDER_START_FAILED", error)
+                        })?;
                     tracing::info!(
                         "DNS forwarder was started before applying Kill Switch to the running engine."
                     );
@@ -992,21 +1062,37 @@ pub async fn sync_bypass_config(
         let preset = state
             .config_loader
             .lock()
-            .map_err(|_| "Preset loader lock is poisoned.".to_string())?
+            .map_err(|_| {
+                IpcError::runtime(
+                    OPERATION,
+                    "INTERNAL_STATE_ERROR",
+                    "Preset loader lock is poisoned.",
+                )
+            })?
             .find_preset(&active_preset_id)
             .ok_or_else(|| {
-                format!(
-                    "Active preset '{}' was not found; Pattern restart was cancelled.",
-                    active_preset_id
+                IpcError::validation(
+                    OPERATION,
+                    "PRESET_NOT_FOUND",
+                    format!(
+                        "Active preset '{}' was not found; Pattern restart was cancelled.",
+                        active_preset_id
+                    ),
                 )
             })?;
-        state
-            .engine_manager
-            .stop(&app)
-            .await
-            .map_err(|error| format!("Failed to stop engine before Pattern restart: {error}"))?;
+        state.engine_manager.stop(&app).await.map_err(|error| {
+            IpcError::runtime(
+                OPERATION,
+                "ENGINE_STOP_FAILED",
+                format!("Failed to stop engine before Pattern restart: {error}"),
+            )
+        })?;
         if let Err(e) = state.engine_manager.start(&preset, &app).await {
-            return Err(format!("Failed to restart engine: {:?}", e));
+            return Err(IpcError::runtime(
+                OPERATION,
+                "ENGINE_RESTART_FAILED",
+                format!("Failed to restart engine: {e}"),
+            ));
         }
         engine_restarted = true;
     }
@@ -1037,8 +1123,11 @@ pub async fn sync_bypass_config(
         blacklist_domains,
         active_preset_id,
     };
-    app.emit("bypass_config_synced", result.clone())
-        .map_err(|e| e.to_string())?;
+    if let Err(error) = app.emit("bypass_config_synced", result.clone()) {
+        tracing::warn!(
+            "Bypass settings were applied, but the cross-window notification failed: {error}"
+        );
+    }
     tracing::info!(
         "Bypass pattern accepted: revision={}, mode={}, domains={}, stage={}",
         config_revision,
