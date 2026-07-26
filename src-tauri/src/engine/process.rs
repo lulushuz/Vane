@@ -1,5 +1,5 @@
-use tokio::process::Child as AsyncChild;
 use crate::engine::error::EngineError;
+use tokio::process::Child as AsyncChild;
 
 #[cfg(target_os = "windows")]
 use crate::engine::job::JobObjectGuard;
@@ -46,19 +46,12 @@ impl ProcessHandle {
         }
     }
 
-    /* 
-       Graceful shutdown with 500ms timeout.
-       Strategy:
-       1. Send `CTRL_BREAK_EVENT` — gives winws time to flush WinDivert state.
-       2. Poll for exit up to 500ms in 10ms increments.
-       3. Force kill if still running after timeout.
-       This prevents corrupt WinDivert kernel state that can occur when
-       the process is killed mid-packet-processing. 
-    */
-    pub fn kill_graceful(&mut self) {
-        let child = match self.child.take() {
-            Some(c) => c,
-            None => return,
+    /// Requests a clean process exit, waits to a deadline, then escalates to a
+    /// force kill. Tokio owns the waiting so the application runtime is never
+    /// blocked by polling sleeps.
+    pub async fn terminate(&mut self) -> Result<(), EngineError> {
+        let Some(mut child) = self.child.take() else {
+            return Ok(());
         };
 
         // Attempt graceful termination via CTRL_BREAK on Windows.
@@ -71,64 +64,43 @@ impl ProcessHandle {
                CTRL_BREAK_EVENT to the process group of winws.
                This allows winws to catch the signal and flush WinDivert handles. 
             */
-            let _ = unsafe {
-                GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.pid)
-            };
-
-            // Poll for clean exit (max 500ms, 10ms steps = 50 iterations).
-            let mut child = child;
-            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-            while std::time::Instant::now() < deadline {
-                // try_wait is non-blocking
-                match child.try_wait() {
-                    Ok(Some(_)) => {
-                        tracing::info!("winws (PID {}) graceful shutdown completed successfully.", self.pid);
-                        return;
-                    }
-                    Ok(None) => {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
-                    Err(e) => {
-                        tracing::warn!("try_wait error: {}", e);
-                        break;
-                    }
-                }
-            }
-
-            // Graceful period elapsed — force kill.
-            tracing::warn!("winws (PID {}) 500ms içinde bitmedi, force kill uygulanıyor.", self.pid);
-            let _ = child.start_kill();
+            let _ = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.pid) };
         }
 
-        // On non-Windows targets (Linux Root Wrapper case), close stdin to trigger cleanup.
+        // Closing stdin asks the Linux wrapper to run its EXIT cleanup trap.
         #[cfg(not(target_os = "windows"))]
         {
-            let mut child = child;
-            // Stdin'i kapatmak, script içindeki `cat > /dev/null` komutunu sonlandırır 
-            // ve iptables temizlik komutlarının çalışmasını sağlar.
             drop(child.stdin.take());
+        }
 
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            let mut exited = false;
-            while std::time::Instant::now() < deadline {
-                match child.try_wait() {
-                    Ok(Some(_)) => {
-                        exited = true;
-                        break;
-                    }
-                    Ok(None) => {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
-                    Err(_) => break,
-                }
+        let graceful_timeout = if cfg!(target_os = "windows") {
+            std::time::Duration::from_millis(500)
+        } else {
+            std::time::Duration::from_secs(2)
+        };
+        match tokio::time::timeout(graceful_timeout, child.wait()).await {
+            Ok(Ok(status)) => {
+                tracing::info!(pid = self.pid, ?status, "Engine process exited cleanly.");
+                return Ok(());
             }
-            
-            if !exited {
-                tracing::warn!("Linux Root Wrapper (PID {}) did not finish in 2 seconds, applying force kill.", self.pid);
-                let _ = child.start_kill();
-            } else {
-                tracing::info!("Linux Root Wrapper (PID {}) closed successfully after cleanup.", self.pid);
+            Ok(Err(error)) => tracing::warn!(pid = self.pid, %error, "Could not wait for the engine process; escalating termination."),
+            Err(_) => tracing::warn!(pid = self.pid, "Engine process missed its graceful shutdown deadline; escalating termination."),
+        }
+
+        child.start_kill().map_err(|error| {
+            EngineError::IoError(format!("Engine process force-kill request failed: {error}"))
+        })?;
+        match tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await {
+            Ok(Ok(status)) => {
+                tracing::info!(pid = self.pid, ?status, "Engine process force-kill completed.");
+                Ok(())
             }
+            Ok(Err(error)) => Err(EngineError::IoError(format!(
+                "Engine process exit could not be observed after force-kill: {error}"
+            ))),
+            Err(_) => Err(EngineError::IoError(
+                "Engine process did not exit before the force-kill deadline.".into(),
+            )),
         }
     }
 
@@ -148,24 +120,12 @@ impl ProcessHandle {
 
 /* 
    RAII Drop — forceful kill on scope exit.
-   Graceful kill is handled by `EngineManager::stop()` which calls
-   `kill_graceful()` before dropping the handle. 
+   Graceful kill is handled by `EngineManager::stop()` which awaits
+   `terminate()` before dropping the handle.
 */
 impl Drop for ProcessHandle {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
-            #[cfg(target_os = "linux")]
-            {
-                // Stdin'i kapat, scriptin temizlik yapmasına izin ver (max 500ms bekle)
-                drop(child.stdin.take());
-                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-                while std::time::Instant::now() < deadline {
-                    if let Ok(Some(_)) = child.try_wait() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-            }
             let _ = child.start_kill();
             tracing::debug!("ProcessHandle::drop — engine terminated.");
         }

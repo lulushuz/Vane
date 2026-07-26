@@ -33,9 +33,13 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), tauri::Error> {
                     "quit" => {
                         tracing::info!("Exit requested from tray menu.");
                         if let Some(state) = app.try_state::<AppState>() {
-                            if let Some(main_win) = app.get_webview_window("main") {
-                                let _ = state.engine_manager.stop(main_win.app_handle());
-                            }
+                            let manager = state.engine_manager.clone();
+                            let app_handle = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _ = manager.stop(&app_handle).await;
+                                app_handle.exit(0);
+                            });
+                            return;
                         }
                         app.exit(0);
                     }
