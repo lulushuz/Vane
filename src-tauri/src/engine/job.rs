@@ -33,6 +33,7 @@ impl JobObjectGuard {
                     format!("CreateJobObject failed: {}", e)
                 ))?
         };
+        let guard = Self { handle };
 
         /* 
            Any process assigned to this job will be killed when the last
@@ -43,7 +44,7 @@ impl JobObjectGuard {
 
         unsafe {
             SetInformationJobObject(
-                handle,
+                guard.handle,
                 JobObjectExtendedLimitInformation,
                 &info as *const _ as *const std::ffi::c_void,
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
@@ -53,7 +54,7 @@ impl JobObjectGuard {
         }
 
         tracing::debug!("Job Object created successfully.");
-        Ok(Self { handle })
+        Ok(guard)
     }
 
     // Assigns a process (by PID) to this job object.
@@ -61,11 +62,13 @@ impl JobObjectGuard {
        Errors: Returns `EngineError::IoError` if the process cannot be opened or assigned. 
     */
     pub fn assign(&self, pid: u32) -> Result<(), crate::engine::error::EngineError> {
-        use windows::Win32::System::Threading::{OpenProcess, PROCESS_ALL_ACCESS};
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+        };
         use windows::Win32::System::JobObjects::AssignProcessToJobObject;
 
         let process_handle = unsafe {
-            OpenProcess(PROCESS_ALL_ACCESS, false, pid)
+            OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid)
                 .map_err(|e| crate::engine::error::EngineError::IoError(
                     format!("OpenProcess({}) failed: {}", pid, e)
                 ))?
