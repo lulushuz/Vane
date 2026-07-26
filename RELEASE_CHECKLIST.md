@@ -67,6 +67,7 @@ GitHub Actions owns release builds. Local verification is limited to focused tes
 - [x] Automated versus manual reproduction evidence documented in `REPRODUCTION_MATRIX.md`.
 - [ ] Complete packaged Windows smoke tests.
 - [ ] Complete Roblox positive and government-site negative traffic controls.
+- [x] Add a redacted, snapshot-first Windows acceptance evidence collector.
 - [ ] Update final changelog/release notes after all integration evidence is collected.
 - [ ] Mark the release ready only when no critical/high finding remains and every mandatory manual check above has evidence.
 

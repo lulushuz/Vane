@@ -53,3 +53,17 @@ For every manual release run, record:
 - IPv4/IPv6 and TCP/UDP protocol used;
 - expected and actual result;
 - cleanup result after stop, exit, crash, and reboot.
+
+## Windows evidence collector
+
+Run the guided collector from an elevated PowerShell session:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\Invoke-VaneAcceptance.ps1
+```
+
+Add `-CaptureTraffic` when TCP/QUIC flow evidence is required. The collector records baseline,
+running, and after-stop snapshots; checks Pattern argv, Kill Switch rules, port 53 ownership, process
+cleanup, and IPv4/IPv6 DNS restoration; and emits redacted JSON plus a Markdown report. It does not
+change application, adapter, DNS, or firewall state itself. Traffic correctness and operator verdicts
+remain manual evidence and are never inferred from a UI click or configured value.
