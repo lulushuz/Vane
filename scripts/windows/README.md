@@ -12,6 +12,10 @@ This harness collects the administrator-level evidence that repository unit test
 It does not start, stop, or reconfigure Vane, DNS, adapters, or firewall rules. The operator owns
 those actions through the application. Packet capture is opt-in and is stopped in a `finally` block.
 
+Use the installer from the `Windows Acceptance Build` workflow artifact. Do not run release evidence
+against an older installed version or publish a stable tag before this evidence passes. The artifact
+contains `manifest.json`; confirm its version and commit match the report produced by this harness.
+
 ## Guided run
 
 Open PowerShell as administrator from the repository root:
