@@ -2,6 +2,9 @@
 
 GitHub Actions owns release builds. Local verification is limited to focused tests, static checks, and source-level evidence.
 
+Windows acceptance installers are produced by `windows-acceptance-build.yml` as short-lived workflow
+artifacts. This workflow never creates a tag or public GitHub Release.
+
 ## Automated quality gates
 
 - [x] Frontend unit tests pass.

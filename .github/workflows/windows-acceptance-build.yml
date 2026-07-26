@@ -1,0 +1,118 @@
+name: Windows Acceptance Build
+
+on:
+  push:
+    branches:
+      - codex/audit-hardening
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Updater-signed Windows acceptance package
+    runs-on: windows-latest
+    timeout-minutes: 45
+    environment: release
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.20.0
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.93.0
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify version consistency
+        id: metadata
+        shell: powershell
+        run: |
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoVersion = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if ([string]::IsNullOrWhiteSpace($packageVersion) -or $packageVersion -ne $tauriVersion -or $packageVersion -ne $cargoVersion) {
+            throw "Version mismatch: package=$packageVersion tauri=$tauriVersion cargo=$cargoVersion"
+          }
+          "version=$packageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "sha_short=$($env:GITHUB_SHA.Substring(0, 12))" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Build signed NSIS acceptance package
+        shell: powershell
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build --bundles nsis
+
+      - name: Assemble evidence manifest
+        shell: powershell
+        env:
+          VANE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          $bundleDirectory = Resolve-Path src-tauri/target/release/bundle/nsis
+          $installer = @(Get-ChildItem $bundleDirectory -File -Filter '*.exe')
+          if ($installer.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($installer.Count)."
+          }
+          $signature = @(Get-ChildItem $bundleDirectory -File -Filter '*.sig')
+          if ($signature.Count -ne 1) {
+            throw "Expected exactly one updater signature, found $($signature.Count)."
+          }
+
+          $outputDirectory = New-Item -ItemType Directory -Path acceptance-output -Force
+          $files = @($installer + $signature)
+          foreach ($file in $files) {
+            Copy-Item -LiteralPath $file.FullName -Destination $outputDirectory.FullName
+          }
+
+          $authenticode = Get-AuthenticodeSignature -FilePath $installer.FullName
+          $artifacts = @($files | ForEach-Object {
+            [ordered]@{
+              name = $_.Name
+              size = $_.Length
+              sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+            }
+          })
+          $manifest = [ordered]@{
+            schemaVersion = 1
+            purpose = 'windows-acceptance-only'
+            publicRelease = $false
+            version = $env:VANE_VERSION
+            commit = $env:GITHUB_SHA
+            ref = $env:GITHUB_REF
+            runId = $env:GITHUB_RUN_ID
+            builtAtUtc = [DateTime]::UtcNow.ToString('o')
+            runnerImage = $env:ImageOS
+            authenticodeStatus = [string]$authenticode.Status
+            authenticodeSubject = if ($null -ne $authenticode.SignerCertificate) { $authenticode.SignerCertificate.Subject } else { $null }
+            artifacts = $artifacts
+          }
+          $manifest | ConvertTo-Json -Depth 6 | Out-File acceptance-output/manifest.json -Encoding utf8
+
+      - name: Upload private acceptance artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: vane-acceptance-${{ steps.metadata.outputs.version }}-${{ steps.metadata.outputs.sha_short }}
+          path: acceptance-output/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
