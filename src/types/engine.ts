@@ -7,7 +7,7 @@ export type EngineStatus =
   | { variant: 'stopped' }
   | { variant: 'starting' }
   | { variant: 'running'; pid: number }
-  | { variant: 'error'; message: string };
+  | { variant: 'error'; message: string; code?: string };
 
 /** Tek bir DPI bypass preset. Rust `Preset` struct'ıyla eşleşir. */
 export interface Preset {

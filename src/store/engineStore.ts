@@ -4,27 +4,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import type { NetworkAdapter } from '../types/network';
 import { DEFAULT_ADVANCED_CONFIG, type AdvancedConfig } from '../types/advanced';
+import type { EngineStatus, Preset } from '../types/engine';
+import {
+  normalizeIpcError,
+  type BypassConfigStatus,
+  type DnsConfigStatus,
+} from '../types/ipc';
 import { activePatternDomains, migratePersistedEngineState } from './persistence';
 
 export { DEFAULT_ADVANCED_CONFIG } from '../types/advanced';
 export type { AdvancedConfig } from '../types/advanced';
-
-export type EngineStatus =
-  | { variant: 'stopped' }
-  | { variant: 'starting' }
-  | { variant: 'running'; pid: number }
-  | { variant: 'error'; message: string; code?: string };
-
-export interface Preset {
-  id: string;
-  label: string;
-  description: string;
-  icon: string;
-  args: string[];
-  isCustom: boolean;
-  priority?: number;
-  category?: string;
-}
 
 export interface LogLine {
   id: string;
@@ -40,28 +29,6 @@ export interface DnsProvider {
   name: string;
   primary: string;
   secondary: string;
-}
-
-export interface BypassConfigStatus {
-  mode: 'all' | 'whitelist' | 'blacklist';
-  domainCount: number;
-  configRevision: number;
-  stage: 'prepared' | 'process_started';
-  engineRestarted: boolean;
-  engineRunning: boolean;
-  whitelistDomains: string[];
-  blacklistDomains: string[];
-  activePresetId: string;
-}
-
-export interface DnsConfigStatus {
-  protocol: 'doh' | 'dot';
-  adblock: boolean;
-  cache: boolean;
-  socks5Proxy: string;
-  forwarderActive: boolean;
-  configRevision: number;
-  stage: 'persisted' | 'applied';
 }
 
 /*
@@ -632,14 +599,13 @@ export const useEngineStore = create<EngineStore>()(
           } else if (result.variant === 'error') {
             get().appendLog(get().language === 'tr' ? `[ERROR] DPI motoru hatası: ${result.message}` : `[ERROR] DPI engine error: ${result.message}`, 'error');
           }
-        } catch (err: any) {
+        } catch (err) {
           const rollback = pendingDnsRollback;
           pendingDnsRollback = {};
           if (Object.keys(rollback).length > 0) set(rollback);
-          const errorCode = typeof err === 'object' && err !== null && 'code' in err ? err.code : 'UNKNOWN';
-          const errorMsg = typeof err === 'object' && err !== null && 'message' in err ? err.message : String(err);
-          set({ status: { variant: 'error', message: errorMsg, code: errorCode } });
-          get().appendLog(get().language === 'tr' ? `[ERROR] DPI bypass başlatılamadı: ${errorMsg}` : `[ERROR] DPI bypass could not start: ${errorMsg}`, 'error');
+          const error = normalizeIpcError(err);
+          set({ status: { variant: 'error', message: error.message, code: error.code } });
+          get().appendLog(get().language === 'tr' ? `[ERROR] DPI bypass başlatılamadı: ${error.message}` : `[ERROR] DPI bypass could not start: ${error.message}`, 'error');
         }
       },
 

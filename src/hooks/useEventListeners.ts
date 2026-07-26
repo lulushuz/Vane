@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useEngineStore } from '../store/engineStore';
 import type { EngineStatus } from '../types/engine';
-import type { BypassConfigStatus, DnsConfigStatus } from '../store/engineStore';
+import type { BypassConfigStatus, DnsConfigStatus } from '../types/ipc';
 import { MonotonicRevisionGate } from '../store/revisionGate';
 
 const bypassRevisionGate = new MonotonicRevisionGate();
