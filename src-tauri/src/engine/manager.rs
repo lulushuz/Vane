@@ -1004,7 +1004,7 @@ async fn spawn_and_run(
 }
 
 fn watch_process(
-    pid: u32,
+    mut pid: u32,
     app: AppHandle,
     state: Arc<Mutex<EngineState>>,
     status: Arc<Mutex<EngineStatus>>,
@@ -1013,8 +1013,7 @@ fn watch_process(
 ) -> futures::future::BoxFuture<'static, ()> {
     use futures::FutureExt;
     async move {
-        let mut attempt = 0;
-        loop {
+        'monitor: loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
             let active = is_state_running_with_pid(&state, pid);
@@ -1026,88 +1025,81 @@ fn watch_process(
             if !is_process_alive(pid) {
                 tracing::warn!("Engine process (PID {}) died unexpectedly.", pid);
 
-                let backoff_secs = match attempt {
-                    0 => 1,
-                    1 => 2,
-                    2 => 4,
-                    3 => 8,
-                    4 => 16,
-                    _ => {
-                        tracing::error!("Engine restart limit reached. Transitioning to Failed.");
-                        set_state_failed(
-                            &state,
-                            EngineError::IoError("Engine crashed repeatedly".into()),
-                        );
-                        set_status_error(
-                            &status,
-                            &app,
-                            "Süreç çöktü ve yeniden başlatılamadı.".into(),
-                            Some("CRASH_RESTART_FAILED".into()),
-                        );
-                        break;
-                    }
-                };
+                let generation = generation_counter.fetch_add(1, Ordering::SeqCst) + 1;
+                let (initial_cancel, initial_rx) = tokio::sync::oneshot::channel::<()>();
+                if !set_state_starting_if_running_pid(&state, pid, generation, initial_cancel) {
+                    break;
+                }
+                set_status_starting(&status, &app);
 
-                tracing::info!(
-                    "Attempting engine restart in {}s (attempt {}/5)...",
-                    backoff_secs,
-                    attempt + 1
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+                let mut initial_rx = Some(initial_rx);
+                let mut last_error = None;
 
-                let still_running = is_state_running_with_pid(&state, pid);
+                for (index, backoff_secs) in [1_u64, 2, 4, 8, 16].into_iter().enumerate() {
+                    let attempt = index + 1;
+                    tracing::info!(
+                        "Attempting engine restart in {}s (attempt {}/5)...",
+                        backoff_secs,
+                        attempt
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
 
-                if still_running {
-                    let generation = generation_counter.fetch_add(1, Ordering::SeqCst) + 1;
-                    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-                    if !set_state_starting_if_running_pid(&state, pid, generation, tx) {
-                        break;
-                    }
-                    set_status_starting(&status, &app);
+                    let rx = if let Some(rx) = initial_rx.take() {
+                        if !is_state_starting_generation(&state, generation) {
+                            break 'monitor;
+                        }
+                        rx
+                    } else {
+                        let (cancel, rx) = tokio::sync::oneshot::channel::<()>();
+                        if !replace_start_cancel_if_starting(&state, generation, cancel) {
+                            break 'monitor;
+                        }
+                        rx
+                    };
 
                     match spawn_and_run(&preset, &app, rx).await {
                         Ok(new_handle) => {
                             let new_pid = new_handle.pid();
-                            if !set_state_running_if_starting(
-                                &state,
-                                generation,
-                                new_handle,
-                            ) {
-                                tracing::info!(generation, new_pid, "Stale automatic restart result was discarded.");
-                                break;
+                            if !set_state_running_if_starting(&state, generation, new_handle) {
+                                tracing::info!(
+                                    generation,
+                                    new_pid,
+                                    "Stale automatic restart result was discarded."
+                                );
+                                break 'monitor;
                             }
                             set_status_running(&status, &app, new_pid);
-
                             tracing::info!("Engine successfully restarted, new PID: {}", new_pid);
-                            let state_clone = state.clone();
-                            let status_clone = status.clone();
-                            let app_clone = app.clone();
-                            let preset_clone = preset.clone();
-                            let generation_counter_clone = generation_counter.clone();
-                            tokio::spawn(async move {
-                                watch_process(
-                                    new_pid,
-                                    app_clone,
-                                    state_clone,
-                                    status_clone,
-                                    preset_clone,
-                                    generation_counter_clone,
-                                )
-                                .await;
-                            });
-                            break;
+                            pid = new_pid;
+                            continue 'monitor;
                         }
-                        Err(e) => {
-                            if !set_state_failed_if_starting(&state, generation, e.clone()) {
-                                break;
-                            }
-                            tracing::error!("Engine restart attempt failed: {}", e);
-                            attempt += 1;
+                        Err(error) => {
+                            tracing::error!(
+                                "Engine restart attempt {}/5 failed: {}",
+                                attempt,
+                                error
+                            );
+                            last_error = Some(error);
                         }
                     }
-                } else {
-                    break;
                 }
+
+                let detail = last_error
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| "unknown restart error".into());
+                let error = EngineError::IoError(format!(
+                    "Engine crashed and automatic recovery failed after 5 attempts: {detail}"
+                ));
+                if set_state_failed_if_starting(&state, generation, error) {
+                    tracing::error!("Engine restart limit reached. Transitioning to Failed.");
+                    set_status_error(
+                        &status,
+                        &app,
+                        "Süreç çöktü ve yeniden başlatılamadı.".into(),
+                        Some("CRASH_RESTART_FAILED".into()),
+                    );
+                }
+                break;
             }
         }
     }
@@ -1158,6 +1150,37 @@ fn set_state_running_if_starting(
     true
 }
 
+fn is_state_starting_generation(state: &Mutex<EngineState>, generation: u64) -> bool {
+    state
+        .lock()
+        .map(|state| {
+            matches!(
+                &*state,
+                EngineState::Starting {
+                    generation: active,
+                    ..
+                } if *active == generation
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn replace_start_cancel_if_starting(
+    state: &Mutex<EngineState>,
+    generation: u64,
+    cancel: tokio::sync::oneshot::Sender<()>,
+) -> bool {
+    let Ok(mut state) = state.lock() else {
+        return false;
+    };
+    if !matches!(&*state, EngineState::Starting { generation: active, .. } if *active == generation)
+    {
+        return false;
+    }
+    *state = EngineState::Starting { generation, cancel };
+    true
+}
+
 fn set_state_failed_if_starting(
     state: &Mutex<EngineState>,
     generation: u64,
@@ -1172,12 +1195,6 @@ fn set_state_failed_if_starting(
     }
     *state = EngineState::Failed(error);
     true
-}
-
-fn set_state_failed(state: &Mutex<EngineState>, err: EngineError) {
-    if let Ok(mut sl) = state.lock() {
-        *sl = EngineState::Failed(err);
-    }
 }
 
 fn set_status_error(
@@ -1269,5 +1286,35 @@ mod lifecycle_tests {
             &*state.lock().expect("state lock"),
             EngineState::Failed(EngineError::SpawnFailed(message)) if message == "current"
         ));
+    }
+
+    #[test]
+    fn recovery_attempt_refreshes_cancel_channel_for_current_generation() {
+        let (initial_cancel, mut initial_receiver) = tokio::sync::oneshot::channel();
+        let state = Mutex::new(EngineState::Starting {
+            generation: 4,
+            cancel: initial_cancel,
+        });
+        let (next_cancel, _next_receiver) = tokio::sync::oneshot::channel();
+
+        assert!(replace_start_cancel_if_starting(&state, 4, next_cancel));
+        assert_eq!(
+            initial_receiver.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        );
+        assert!(is_state_starting_generation(&state, 4));
+    }
+
+    #[test]
+    fn stale_recovery_attempt_cannot_replace_cancel_channel() {
+        let (initial_cancel, _initial_receiver) = tokio::sync::oneshot::channel();
+        let state = Mutex::new(EngineState::Starting {
+            generation: 5,
+            cancel: initial_cancel,
+        });
+        let (stale_cancel, _stale_receiver) = tokio::sync::oneshot::channel();
+
+        assert!(!replace_start_cancel_if_starting(&state, 4, stale_cancel));
+        assert!(is_state_starting_generation(&state, 5));
     }
 }
