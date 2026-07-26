@@ -6,6 +6,7 @@ import type { NetworkAdapter } from '../types/network';
 import { DEFAULT_ADVANCED_CONFIG, type AdvancedConfig } from '../types/advanced';
 import type { EngineStatus, Preset } from '../types/engine';
 import {
+  DEFAULT_HEALTH_CHECK_TARGET,
   normalizeIpcError,
   type BypassConfigStatus,
   type DnsConfigStatus,
@@ -187,7 +188,7 @@ export const useEngineStore = create<EngineStore>()(
       dnsProviders: [],
       dnsSynced: false,
       advancedDirty: false,
-      healthCheckTargets: ['discord.com'],
+      healthCheckTargets: [DEFAULT_HEALTH_CHECK_TARGET],
       hasHydrated: false,
       persistenceError: null,
 

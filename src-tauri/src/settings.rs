@@ -38,7 +38,7 @@ impl Default for RuntimeSettings {
             kill_switch: false,
             watchdog: true,
             dns_forwarder_enabled: false,
-            health_check_targets: vec!["example.com".into()],
+            health_check_targets: vec![crate::dns::DEFAULT_HEALTH_CHECK_TARGET.into()],
             selected_dns_id: String::new(),
             dns_custom_primary: String::new(),
             dns_custom_secondary: String::new(),

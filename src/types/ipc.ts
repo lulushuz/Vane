@@ -1,5 +1,7 @@
 import type { EngineStatus, Preset } from './engine';
 
+export const DEFAULT_HEALTH_CHECK_TARGET = 'example.com';
+
 /** `start_engine` komutunun parametresi */
 export interface StartEnginePayload {
   presetId: string;

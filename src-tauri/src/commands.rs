@@ -2,7 +2,8 @@ use crate::config::preset::Preset;
 use crate::dns::{
     apply_dns, builtin_providers, get_active_adapters, is_using_trusted_dns, reset_dns_to_dhcp,
     resolve_doh, spawn_doh_forwarder, ApplyDnsResult, DnsProvider, DoHEndpoint, DohResult,
-    NetworkAdapter, DOH_CLOUDFLARE, DOH_FORWARDER_DEFAULT_PORT, DOH_GOOGLE,
+    NetworkAdapter, DEFAULT_HEALTH_CHECK_TARGET, DOH_CLOUDFLARE, DOH_FORWARDER_DEFAULT_PORT,
+    DOH_GOOGLE,
 };
 use crate::engine::{EngineError, EngineStatus};
 use crate::ipc::IpcError;
@@ -440,7 +441,7 @@ pub(crate) async fn start_dns_forwarder_runtime(
         .health_check_targets
         .first()
         .cloned()
-        .unwrap_or_else(|| "example.com".into());
+        .unwrap_or_else(|| DEFAULT_HEALTH_CHECK_TARGET.into());
     let app_clone = app.clone();
 
     if watchdog {
@@ -585,7 +586,7 @@ pub async fn get_engine_health(
 ) -> Result<HealthStatus, String> {
     let mut actual_targets = targets.unwrap_or_default();
     if actual_targets.is_empty() {
-        actual_targets.push("discord.com".to_string());
+        actual_targets.push(DEFAULT_HEALTH_CHECK_TARGET.to_string());
     }
     if actual_targets.len() > 10 {
         return Err("At most 10 health-check targets are allowed.".into());
@@ -916,7 +917,7 @@ pub async fn sync_dns_settings(
         if forwarder_active { "applied" } else { "persisted" },
         result.protocol.to_uppercase(), result.cache, result.adblock,
         if result.socks5_proxy.is_empty() { "direct" } else { "SOCKS5H" },
-        verified.health_check_targets.first().map(String::as_str).unwrap_or("example.com")
+        verified.health_check_targets.first().map(String::as_str).unwrap_or(DEFAULT_HEALTH_CHECK_TARGET)
     );
     Ok(result)
 }
