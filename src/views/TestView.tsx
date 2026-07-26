@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import styles from './TestView.module.css';
+import { normalizeIpcError } from '../types/ipc';
 
 interface PingResult {
   success: boolean;
@@ -49,11 +50,12 @@ export function TestView() {
       const res = await invoke<PingResult>('check_url_health', { url });
       setResult(res);
     } catch (e) {
+      const error = normalizeIpcError(e);
       setResult({
         success: false,
         latencyMs: 0,
         statusCode: null,
-        error: String(e)
+        error: `${error.message} (${error.code})`
       });
     } finally {
       setIsTesting(false);
@@ -67,10 +69,11 @@ export function TestView() {
       const res = await invoke<DnsCheckResult>('check_dns_block', { domain });
       setDnsResult(res);
     } catch (e) {
+      const error = normalizeIpcError(e);
       setDnsResult({
         systemDnsOk: false,
         dohDnsOk: false,
-        diagnosis: `Teşhis hatası: ${String(e)}`,
+        diagnosis: `Teşhis hatası: ${error.message} (${error.code})`,
         recommendation: 'Lütfen tekrar deneyin.',
       });
     } finally {
@@ -241,4 +244,3 @@ export function TestView() {
     </div>
   );
 }
-
