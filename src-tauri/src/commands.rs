@@ -603,12 +603,16 @@ pub async fn get_engine_health(
 
         let result = state
             .http_client
-            .head(&url)
+            .get(&url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
             .timeout(Duration::from_secs(5))
             .send()
             .await;
 
-        if !matches!(result, Ok(ref resp) if resp.status().as_u16() < 400) {
+        if result.is_err() {
             all_healthy = false;
             break;
         }

@@ -24,7 +24,7 @@ const MANUAL_CHECK_COOLDOWN_MS = 5_000;
  * - Checks user-defined targets (max 3).
  */
 export function EngineHealthBadge() {
-  const { status, presets, activePresetId, healthCheckTargets } = useEngineStore();
+  const { status, presets, activePresetId, healthCheckTargets, bypassMode, whitelistDomains } = useEngineStore();
   const isRunning = status.variant === 'running';
   const activePreset = presets.find((p) => p.id === activePresetId);
   const presetLabel = activePreset?.label ?? activePresetId ?? 'Default';
@@ -46,9 +46,14 @@ export function EngineHealthBadge() {
     setIsChecking(true);
     lastCheckTime.current = Date.now();
 
+    let targetsToCheck = healthCheckTargets;
+    if (bypassMode === 'whitelist' && whitelistDomains && whitelistDomains.length > 0 && healthCheckTargets.length === 0) {
+      targetsToCheck = whitelistDomains.slice(0, 3);
+    }
+
     try {
       const result = await invoke<HealthStatus>('get_engine_health', { 
-        targets: healthCheckTargets 
+        targets: targetsToCheck 
       });
       setHealth(result);
     } catch {
@@ -56,7 +61,7 @@ export function EngineHealthBadge() {
         healthy: false, 
         latencyMs: 0, 
         checkedAt: '--:--:--', 
-        target: healthCheckTargets.join(', ') || 'Unknown' 
+        target: (targetsToCheck && targetsToCheck.length > 0) ? targetsToCheck.join(', ') : 'Unknown' 
       });
     } finally {
       setIsChecking(false);
