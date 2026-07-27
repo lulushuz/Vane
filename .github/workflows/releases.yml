@@ -48,6 +48,33 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Verify Version and Tag Consistency
+        shell: bash
+        run: |
+          PACKAGE_VER=$(node -p "require('./package.json').version")
+          TAURI_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          echo "Package Version: $PACKAGE_VER"
+          echo "Tauri Version:   $TAURI_VER"
+          echo "Tag Version:     $TAG_VER"
+          if [ "$PACKAGE_VER" != "$TAURI_VER" ] || [ "$PACKAGE_VER" != "$TAG_VER" ]; then
+            echo "ERROR: Version mismatch between package.json ($PACKAGE_VER), tauri.conf.json ($TAURI_VER), and tag ($TAG_VER)"
+            exit 1
+          fi
+
+      - name: Validate Bundled Zapret Binaries
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            WINWS="src-tauri/binaries/winws-x86_64-pc-windows-msvc.exe"
+            DIVERT="src-tauri/binaries/WinDivert64.sys"
+            if [ ! -s "$WINWS" ] || [ ! -s "$DIVERT" ]; then
+              echo "ERROR: Bundled Zapret binary missing or 0 bytes ($WINWS, $DIVERT)"
+              exit 1
+            fi
+            echo "Zapret binaries validated."
+          fi
+
       - name: Build and Release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
@@ -57,6 +84,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Vane ${{ github.ref_name }}"
-          releaseBody: "Vane Production Build by Archey Agency."
-          releaseDraft: false
+          releaseBody: "Vane Production Release by Archey Agency."
+          releaseDraft: true
           prerelease: false
