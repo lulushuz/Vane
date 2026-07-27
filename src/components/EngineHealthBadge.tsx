@@ -76,13 +76,16 @@ export function EngineHealthBadge() {
       return;
     }
 
-    // Initial check immediately on engine start
-    runCheck();
+    // Initial check delayed slightly (500ms) on engine start to allow WinDivert socket binding to finish
+    const startTimer = setTimeout(() => {
+      runCheck();
+    }, 500);
 
     // Schedule periodic checks
     intervalRef.current = setInterval(() => runCheck(false), HEALTH_CHECK_INTERVAL_MS);
 
     return () => {
+      clearTimeout(startTimer);
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

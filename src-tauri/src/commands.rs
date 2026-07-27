@@ -9,8 +9,6 @@ use crate::engine::{EngineError, EngineStatus};
 use crate::ipc::IpcError;
 use crate::privilege::checker::is_elevated;
 use crate::AppState;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -542,33 +540,7 @@ pub fn get_doh_forwarder_status(app: AppHandle, state: State<'_, AppState>) -> F
     }
 }
 
-#[cfg(target_os = "windows")]
-fn icmp_ping_ms() -> Option<u64> {
-    #[cfg(target_os = "windows")]
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let output = std::process::Command::new("ping")
-        .args(["-n", "1", "-w", "3000", "1.1.1.1"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    for line in stdout.lines() {
-        let lower = line.to_lowercase();
-        if lower.contains("average") || lower.contains("ortalama") {
-            let parts: Vec<&str> = line.split('=').collect();
-            if let Some(last) = parts.last() {
-                let digits: String = last.chars().filter(|c| c.is_ascii_digit()).collect();
-                if let Ok(ms) = digits.parse::<u64>() {
-                    return Some(ms);
-                }
-            }
-        }
-    }
-    None
-}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -584,48 +556,70 @@ pub async fn get_engine_health(
     targets: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<HealthStatus, String> {
-    let mut actual_targets = targets.unwrap_or_default();
-    if actual_targets.is_empty() {
-        actual_targets.push(DEFAULT_HEALTH_CHECK_TARGET.to_string());
-    }
-    if actual_targets.len() > 10 {
-        return Err("At most 10 health-check targets are allowed.".into());
-    }
-    actual_targets = crate::config::domain::canonicalize_domain_rules(&actual_targets)
-        .map_err(|error| format!("Invalid health-check target: {error}"))?;
-    if actual_targets.iter().any(|target| target.starts_with("*.")) {
-        return Err("Wildcard health-check targets are not supported.".into());
-    }
+    let raw_targets = targets.unwrap_or_default();
+    let mut cleaned_targets = Vec::new();
 
-    let mut all_healthy = true;
-    for target in &actual_targets {
-        let url = format!("https://{}", target);
-
-        let result = state
-            .http_client
-            .get(&url)
-            .header(
-                "User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            )
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await;
-
-        if result.is_err() {
-            all_healthy = false;
-            break;
+    for t in &raw_targets {
+        let clean = t
+            .trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        if !clean.is_empty() && !clean.starts_with("*.") {
+            cleaned_targets.push(clean);
         }
     }
 
-    #[cfg(target_os = "windows")]
-    let latency_ms: u64 = if all_healthy {
-        icmp_ping_ms().unwrap_or(0)
-    } else {
-        0
-    };
-    #[cfg(not(target_os = "windows"))]
-    let latency_ms: u64 = 0;
+    if cleaned_targets.is_empty() {
+        cleaned_targets.push(DEFAULT_HEALTH_CHECK_TARGET.to_string());
+    }
+
+    let actual_targets = crate::config::domain::canonicalize_domain_rules(&cleaned_targets)
+        .unwrap_or_else(|_| vec![DEFAULT_HEALTH_CHECK_TARGET.to_string()]);
+
+    let client = &state.http_client;
+    let mut tasks = Vec::new();
+
+    for target in &actual_targets {
+        let url = format!("https://{}", target);
+        let client_clone = client.clone();
+        tasks.push(async move {
+            let start = std::time::Instant::now();
+            let res = client_clone
+                .get(&url)
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                )
+                .timeout(Duration::from_millis(2500))
+                .send()
+                .await;
+            (res.is_ok(), start.elapsed().as_millis() as u64)
+        });
+    }
+
+    let results = futures::future::join_all(tasks).await;
+
+    let mut healthy_count = 0;
+    let mut min_latency: u64 = 0;
+
+    for (ok, latency) in results {
+        if ok {
+            healthy_count += 1;
+            if min_latency == 0 || latency < min_latency {
+                min_latency = latency;
+            }
+        }
+    }
+
+    let is_healthy = healthy_count > 0;
+    let latency_ms = if is_healthy { min_latency } else { 0 };
 
     let now = {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -646,7 +640,7 @@ pub async fn get_engine_health(
     };
 
     Ok(HealthStatus {
-        healthy: all_healthy,
+        healthy: is_healthy,
         latency_ms,
         checked_at: now,
         target: display_target,
