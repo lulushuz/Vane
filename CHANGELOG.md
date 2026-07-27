@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.0.9] - 2026-07-27
+## [2.0.10] - 2026-07-27
 
 ### Security
 - **Elevated SSRF Boundaries:** Restricted health-check probes to public HTTPS hostnames only, rejecting loopback, link-local, RFC1918 private IPs, credentials, and custom ports.
