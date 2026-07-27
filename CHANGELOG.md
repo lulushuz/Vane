@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.9] - 2026-07-27
+
+### Security
+- **Elevated SSRF Boundaries:** Restricted health-check probes to public HTTPS hostnames only, rejecting loopback, link-local, RFC1918 private IPs, credentials, and custom ports.
+- **Least-Privilege Process Handles:** Replaced `PROCESS_ALL_ACCESS` Windows process handle requests with minimum required privileges (`PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION`).
+- **Updater Keypair Alignment:** Integrated updated Minisign public key into `tauri.conf.json` for release verification.
+- **CI Release Hardening:** Enforced strict version-to-tag consistency checks and bundled binary integrity validation prior to packaging; set release workflow to draft mode by default.
+
+### Fixed
+- **Typed IPC Contracts:** Centralized and typed all frontend-backend IPC contracts with monotonic revision gating to prevent race conditions or stale async state overwrites.
+- **Hickory DNS 0.26 Migration:** Fully migrated DNS resolver subsystem to Hickory 0.26, resolving legacy async DNS protocol deprecations and stabilizing DoH/DoT packet forwarding.
+- **Engine Lifecycle Serialization:** Serialized engine start/stop state transitions to eliminate concurrent spawn race conditions and orphaned `winws.exe` processes.
+- **Settings & Persistence Reliability:** Enforced array type sanitization for Whitelist and Blacklist domain arrays on rehydration, preventing serialization crashes when loading legacy string formats.
+
+### Added
+- **Windows Acceptance Testing Harness:** Added PowerShell-based acceptance test suite (`Invoke-VaneAcceptance.ps1`) for elevated Windows packet capture, WFP firewall validation, and adapter state verification.
+
+---
+
 ## [2.0.8] - 2026-07-19
 
 ### Security
