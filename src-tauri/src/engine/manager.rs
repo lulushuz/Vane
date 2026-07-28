@@ -438,83 +438,17 @@ pub fn update_bypass_config_cache(mode: String, list: String, proxy: String, kil
     }
 }
 
+pub fn invalidate_bypass_config_cache() {
+    if let Ok(mut guard) = BYPASS_CONFIG_CACHE.write() {
+        *guard = None;
+    }
+}
+
 pub(crate) fn kill_switch_enabled() -> bool {
     KILL_SWITCH_ENABLED.load(Ordering::SeqCst)
 }
 
-#[cfg(test)]
-fn parse_bypass_config(content: &str) -> Result<BypassConfig, EngineError> {
-    let file_json = serde_json::from_str::<serde_json::Value>(content).map_err(|error| {
-        EngineError::ConfigParseError(format!("Settings JSON is invalid: {error}"))
-    })?;
-    let zustand_raw = file_json.get("vane-settings").ok_or_else(|| {
-        EngineError::ConfigParseError("The persisted Vane settings entry is missing.".to_string())
-    })?;
-    let zustand_json = match zustand_raw {
-        serde_json::Value::String(value) => serde_json::from_str::<serde_json::Value>(value)
-            .map_err(|error| {
-                EngineError::ConfigParseError(format!(
-                    "Persisted Vane settings are invalid: {error}"
-                ))
-            })?,
-        object => object.clone(),
-    };
-    let state = zustand_json.get("state").ok_or_else(|| {
-        EngineError::ConfigParseError("The persisted Vane settings state is missing.".to_string())
-    })?;
-    let mode = state
-        .get("bypassMode")
-        .and_then(|value| value.as_str())
-        .unwrap_or("all")
-        .to_string();
-    if !matches!(mode.as_str(), "all" | "whitelist" | "blacklist") {
-        return Err(EngineError::ConfigParseError(format!(
-            "Unsupported persisted bypass mode: {mode}"
-        )));
-    }
-
-    let array_key = if mode == "whitelist" {
-        "whitelistDomains"
-    } else {
-        "blacklistDomains"
-    };
-    let raw_domains: Vec<String> = state
-        .get(array_key)
-        .and_then(|value| value.as_array())
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(|value| value.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default();
-    let domains =
-        crate::config::domain::canonicalize_domain_rules(&raw_domains).map_err(|error| {
-            EngineError::ConfigParseError(format!("Persisted bypass domain is invalid: {error}"))
-        })?;
-
-    Ok(BypassConfig {
-        mode,
-        domain_list: domains.join("\n"),
-        proxy: state
-            .get("proxySocks5")
-            .and_then(|value| value.as_str())
-            .unwrap_or("")
-            .to_string(),
-        kill_switch: state
-            .get("killSwitch")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false),
-    })
-}
-
 fn read_bypass_config(app: &AppHandle) -> Result<BypassConfig, EngineError> {
-    if let Ok(guard) = BYPASS_CONFIG_CACHE.read() {
-        if let Some(ref cached) = *guard {
-            return Ok(cached.clone());
-        }
-    }
-
     let Some(settings) =
         crate::settings::read_runtime_settings(app).map_err(EngineError::ConfigParseError)?
     else {
@@ -544,9 +478,6 @@ fn read_bypass_config(app: &AppHandle) -> Result<BypassConfig, EngineError> {
         proxy: settings.proxy_socks5,
         kill_switch: settings.kill_switch,
     };
-    if let Ok(mut guard) = BYPASS_CONFIG_CACHE.write() {
-        *guard = Some(config.clone());
-    }
     Ok(config)
 }
 
@@ -702,6 +633,72 @@ impl Drop for KillSwitchRollback {
 }
 
 #[cfg(test)]
+fn parse_bypass_config(content: &str) -> Result<BypassConfig, EngineError> {
+    let file_json = serde_json::from_str::<serde_json::Value>(content).map_err(|error| {
+        EngineError::ConfigParseError(format!("Settings JSON is invalid: {error}"))
+    })?;
+    let zustand_raw = file_json.get("vane-settings").ok_or_else(|| {
+        EngineError::ConfigParseError("The persisted Vane settings entry is missing.".to_string())
+    })?;
+    let zustand_json = match zustand_raw {
+        serde_json::Value::String(value) => serde_json::from_str::<serde_json::Value>(value)
+            .map_err(|error| {
+                EngineError::ConfigParseError(format!(
+                    "Persisted Vane settings are invalid: {error}"
+                ))
+            })?,
+        object => object.clone(),
+    };
+    let state = zustand_json.get("state").ok_or_else(|| {
+        EngineError::ConfigParseError("The persisted Vane settings state is missing.".to_string())
+    })?;
+    let mode = state
+        .get("bypassMode")
+        .and_then(|value| value.as_str())
+        .unwrap_or("all")
+        .to_string();
+    if !matches!(mode.as_str(), "all" | "whitelist" | "blacklist") {
+        return Err(EngineError::ConfigParseError(format!(
+            "Unsupported persisted bypass mode: {mode}"
+        )));
+    }
+
+    let array_key = if mode == "whitelist" {
+        "whitelistDomains"
+    } else {
+        "blacklistDomains"
+    };
+    let raw_domains: Vec<String> = state
+        .get(array_key)
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    let domains =
+        crate::config::domain::canonicalize_domain_rules(&raw_domains).map_err(|error| {
+            EngineError::ConfigParseError(format!("Persisted bypass domain is invalid: {error}"))
+        })?;
+
+    Ok(BypassConfig {
+        mode,
+        domain_list: domains.join("\n"),
+        proxy: state
+            .get("proxySocks5")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
+        kill_switch: state
+            .get("killSwitch")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+    })
+}
+
+#[cfg(test)]
 mod bypass_config_tests {
     use super::parse_bypass_config;
 
@@ -784,13 +781,13 @@ async fn spawn_and_run(
             .filter(|line| !line.trim().is_empty())
             .count();
         if bypass_mode == "whitelist" {
-            prepared_args.push(format!("--hostlist={}", file_path_str));
+            prepared_args.push(format!("--hostlist=\"{}\"", file_path_str));
             tracing::info!(
                 "Pattern verified: DPI bypass will run only for {} whitelisted domains.",
                 domain_count
             );
         } else {
-            prepared_args.push(format!("--hostlist-exclude={}", file_path_str));
+            prepared_args.push(format!("--hostlist-exclude=\"{}\"", file_path_str));
             tracing::info!(
                 "Pattern verified: {} blacklisted domains will be excluded from DPI bypass.",
                 domain_count

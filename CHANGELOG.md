@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.1] - 2026-07-29
+
+### Fixed
+- **Engine Bypass Persistence:** Eliminated stale `BYPASS_CONFIG_CACHE` locks, ensuring domain whitelist/blacklist changes and settings updates in the UI are immediately applied when starting `winws.exe`.
+- **Windows Path Escaping:** Formatted `--hostlist` and `--hostlist-exclude` file paths with explicit quotes to ensure Windows user directory paths containing spaces or special characters load hostlist domain rules correctly without silent winws crashes.
+- **Sanitizer Preset Validation:** Expanded allowed argument prefixes and strategy modes in `sanitizer.rs` (`split`, `split2`, `disorder`, `disorder2`, `oob`) so standard and custom desync presets pass validation cleanly.
+
+---
+
 ## [2.1.0] - 2026-07-27
 
 ### Security

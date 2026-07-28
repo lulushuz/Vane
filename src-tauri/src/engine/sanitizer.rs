@@ -6,8 +6,10 @@ const MAX_ARG_LEN: usize = 128;
 const ALLOWED_PREFIXES: &[&str] = &[
     "--filter-tcp=",
     "--filter-udp=",
+    "--filter-raw=",
     "--wf-tcp=",
     "--wf-udp=",
+    "--wf-raw=",
     "--windivert=",
     "tcp.",
     "udp.",
@@ -15,12 +17,14 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "--qnum=",
     "--dpi-desync=",
     "--dpi-desync-split-pos=",
+    "--dpi-desync-split-seqovl=",
     "--dpi-desync-repeats=",
     "--dpi-desync-fooling=",
     "--dpi-desync-ttl=",
     "--dpi-desync-cutoff=",
     "--dpi-desync-split-http-req=",
     "--dpi-desync-split-tls=",
+    "--dpi-desync-badseq-increment=",
     "--wssize=",
 ];
 
@@ -235,6 +239,7 @@ fn validate_strategy(value: &str) -> Result<(), EngineError> {
         "synack", "syndata", "fake", "fakeknown", "rst", "rstack", "hopbyhop",
         "destopt", "ipfrag1", "multisplit", "multidisorder", "fakedsplit",
         "fakeddisorder", "hostfakesplit", "ipfrag2", "udplen", "tamper",
+        "split", "split2", "disorder", "disorder2", "oob", "oob2",
     ];
     if value.is_empty() || value.split(',').any(|mode| !MODES.contains(&mode)) {
         return Err(EngineError::InvalidPreset(
