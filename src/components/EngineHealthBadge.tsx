@@ -47,7 +47,8 @@ export function EngineHealthBadge() {
     lastCheckTime.current = Date.now();
 
     let targetsToCheck = healthCheckTargets;
-    if (bypassMode === 'whitelist' && whitelistDomains && whitelistDomains.length > 0 && healthCheckTargets.length === 0) {
+    const isDefaultTarget = healthCheckTargets.length === 0 || (healthCheckTargets.length === 1 && healthCheckTargets[0] === 'example.com');
+    if (bypassMode === 'whitelist' && whitelistDomains && whitelistDomains.length > 0 && isDefaultTarget) {
       targetsToCheck = whitelistDomains.slice(0, 3);
     }
 

@@ -554,7 +554,7 @@ pub struct HealthStatus {
 #[tauri::command]
 pub async fn get_engine_health(
     targets: Option<Vec<String>>,
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
 ) -> Result<HealthStatus, String> {
     let raw_targets = targets.unwrap_or_default();
     let mut cleaned_targets = Vec::new();
@@ -583,24 +583,22 @@ pub async fn get_engine_health(
     let actual_targets = crate::config::domain::canonicalize_domain_rules(&cleaned_targets)
         .unwrap_or_else(|_| vec![DEFAULT_HEALTH_CHECK_TARGET.to_string()]);
 
-    let client = &state.http_client;
     let mut tasks = Vec::new();
 
     for target in &actual_targets {
-        let url = format!("https://{}", target);
-        let client_clone = client.clone();
+        let host = target.clone();
         tasks.push(async move {
             let start = std::time::Instant::now();
-            let res = client_clone
-                .get(&url)
-                .header(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                )
-                .timeout(Duration::from_millis(2500))
-                .send()
-                .await;
-            (res.is_ok(), start.elapsed().as_millis() as u64)
+            let addr_str = format!("{}:443", host);
+            let res = tokio::time::timeout(
+                Duration::from_millis(1500),
+                tokio::net::TcpStream::connect(&addr_str),
+            )
+            .await;
+
+            let is_ok = matches!(res, Ok(Ok(_)));
+            let latency = start.elapsed().as_millis() as u64;
+            (is_ok, latency)
         });
     }
 
