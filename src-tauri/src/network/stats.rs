@@ -11,9 +11,9 @@ pub fn get_total_network_bytes() -> (u64, u64) {
             let count = table.NumEntries as usize;
             let rows = std::slice::from_raw_parts(table.Table.as_ptr(), count);
             for row in rows {
-                // Type 24 is IF_TYPE_SOFTWARE_LOOPBACK
-                // OperStatus 1 is IfOperStatusUp
-                if row.Type != 24 && row.OperStatus.0 == 1 {
+                // Filter out loopback (24), tunnel (131), and virtual adapters.
+                // Keep active physical Ethernet (6) and Wi-Fi (71) or general active physical adapters.
+                if row.OperStatus.0 == 1 && row.Type != 24 && row.Type != 131 && row.Type != 53 {
                     total_rx += row.InOctets;
                     total_tx += row.OutOctets;
                 }

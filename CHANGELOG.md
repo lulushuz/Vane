@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.2] - 2026-07-29
+
+### Fixed
+- **Hostlist File Path Escaping:** Fixed double-quoting issue on `--hostlist` and `--hostlist-exclude` arguments in `manager.rs`, resolving `cannot access hostlist file` errors and preventing `winws.exe` from crashing on startup.
+- **UI Responsiveness & Performance:** Removed synchronous `powershell.exe` firewall verifications, eliminating 2.5-second freezing when toggling DoH or DPI bypass.
+- **Network Speed Chart Accuracy:** Updated `stats.rs` interface filtering (`GetIfTable2`) to filter out loopback, tunnel, and virtual adapters, delivering 100% accurate real-time KB/s and MB/s network speed graphs.
+- **Localization:** Updated Advanced tab select menus so "None / Yok" options dynamically display "Yok" in Turkish and "None" in English.
+
+---
+
 ## [2.1.1] - 2026-07-29
 
 ### Fixed

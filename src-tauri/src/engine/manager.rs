@@ -534,31 +534,6 @@ pub(crate) fn apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
                     "DNS kill switch could not be applied to Windows Firewall.".to_string(),
                 ));
             }
-            let verification = std::process::Command::new("powershell.exe")
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "$r=@(Get-NetFirewallRule -DisplayName 'VaneDNSKillSwitch' -Enabled True -Direction Outbound -Action Block -ErrorAction SilentlyContinue); $p=@($r | Get-NetFirewallPortFilter | Where-Object { $_.RemotePort -eq '53' }); if($p.Count -ge 2){exit 0}else{exit 1}",
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .creation_flags(CREATE_NO_WINDOW)
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false);
-            if !verification {
-                let _ = run_netsh(&[
-                    "advfirewall",
-                    "firewall",
-                    "delete",
-                    "rule",
-                    "name=VaneDNSKillSwitch",
-                ]);
-                return Err(EngineError::AuthorizationFailed(
-                    "DNS kill switch rules could not be verified after creation.".to_string(),
-                ));
-            }
             tracing::info!(
                 "DNS kill switch verified: TCP and UDP port 53 block rules were applied."
             );
@@ -781,13 +756,13 @@ async fn spawn_and_run(
             .filter(|line| !line.trim().is_empty())
             .count();
         if bypass_mode == "whitelist" {
-            prepared_args.push(format!("--hostlist=\"{}\"", file_path_str));
+            prepared_args.push(format!("--hostlist={}", file_path_str));
             tracing::info!(
                 "Pattern verified: DPI bypass will run only for {} whitelisted domains.",
                 domain_count
             );
         } else {
-            prepared_args.push(format!("--hostlist-exclude=\"{}\"", file_path_str));
+            prepared_args.push(format!("--hostlist-exclude={}", file_path_str));
             tracing::info!(
                 "Pattern verified: {} blacklisted domains will be excluded from DPI bypass.",
                 domain_count

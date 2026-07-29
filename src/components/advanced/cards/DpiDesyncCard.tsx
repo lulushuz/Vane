@@ -10,21 +10,22 @@ interface Props {
   update: <K extends keyof AdvancedConfig>(key: K, value: AdvancedConfig[K]) => void;
 }
 
-const DESYNC_OPTIONS = [
-  { value: 'none', label: 'None / Yok' },
-  { value: 'fake', label: 'Fake' },
-  { value: 'multisplit', label: 'MultiSplit' },
-  { value: 'multidisorder', label: 'MultiDisorder' },
-  { value: 'fakedsplit', label: 'FakedSplit' },
-  { value: 'fakeddisorder', label: 'FakedDisorder' },
-  { value: 'hostfakesplit', label: 'HostFakeSplit' },
-  { value: 'syndata', label: 'Syndata' },
-];
-
 export function DpiDesyncCard({ config: c, update }: Props) {
   const { language } = useEngineStore();
 
   const isTr = language === 'tr';
+  const noneLabel = isTr ? 'Yok' : 'None';
+
+  const DESYNC_OPTIONS = [
+    { value: 'none', label: noneLabel },
+    { value: 'fake', label: 'Fake' },
+    { value: 'multisplit', label: 'MultiSplit' },
+    { value: 'multidisorder', label: 'MultiDisorder' },
+    { value: 'fakedsplit', label: 'FakedSplit' },
+    { value: 'fakeddisorder', label: 'FakedDisorder' },
+    { value: 'hostfakesplit', label: 'HostFakeSplit' },
+    { value: 'syndata', label: 'Syndata' },
+  ];
 
   return (
     <div className={styles.card}>
