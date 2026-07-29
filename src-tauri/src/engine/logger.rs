@@ -29,7 +29,7 @@ where
             } else {
                 // stdout line — engine output
                 let formatted = if line.contains("windivert") || line.contains("filter") {
-                    format!("[MOTOR] 🛡️ WinDivert sürücüsü paket filtresini başlattı.")
+                    format!("[MOTOR] 🛡️ WinDivert sürücüsü paket filtresini başlattı: {}", line)
                 } else {
                     format!("[MOTOR] {}", line)
                 };

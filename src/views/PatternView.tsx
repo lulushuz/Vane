@@ -34,21 +34,29 @@ export function PatternView() {
   const [newDomain, setNewDomain] = useState('');
 
   const addDomain = () => {
-    const trimmed = newDomain.trim().toLowerCase();
-    if (!trimmed) return;
-    if (!isDomainValid(trimmed)) {
+    let sanitized = newDomain.trim().toLowerCase();
+    if (!sanitized) return;
+
+    // Automatically strip protocols, paths, wildcards, and trailing slashes
+    sanitized = sanitized
+      .replace(/^https?:\/\//, '')
+      .replace(/^\*\./, '')
+      .split('/')[0]
+      .split(':')[0];
+
+    if (!isDomainValid(sanitized)) {
       appendLog(language === 'tr'
-        ? `[ERROR] “${trimmed}” geçerli bir alan adı değil; desen listesine eklenmedi.`
-        : `[ERROR] “${trimmed}” is not a valid domain and was not added to the pattern list.`, 'error');
+        ? `[ERROR] “${sanitized}” geçerli bir alan adı değil; desen listesine eklenmedi.`
+        : `[ERROR] “${sanitized}” is not a valid domain and was not added to the pattern list.`, 'error');
       return;
     }
 
     if (bypassMode === 'whitelist') {
-      if (whitelistDomains.includes(trimmed)) return;
-      setWhitelistDomains([...whitelistDomains, trimmed]);
+      if (whitelistDomains.includes(sanitized)) return;
+      setWhitelistDomains([...whitelistDomains, sanitized]);
     } else {
-      if (blacklistDomains.includes(trimmed)) return;
-      setBlacklistDomains([...blacklistDomains, trimmed]);
+      if (blacklistDomains.includes(sanitized)) return;
+      setBlacklistDomains([...blacklistDomains, sanitized]);
     }
     setNewDomain('');
   };
