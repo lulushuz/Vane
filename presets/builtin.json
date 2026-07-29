@@ -152,17 +152,36 @@
   },
   {
     "id": "tr-1",
-    "label": "TR 1",
-    "description": "Optimized fake packet injection strategy for updated Turkish network providers.",
+    "label": "TR 1 (Classic Split)",
+    "description": "Ultra-fast classic 2-segment split strategy optimized for Turkish ISPs.",
     "icon": "⚙️",
     "args": [
       "--wf-tcp=80,443",
       "--wf-udp=443",
-      "--dpi-desync=fake,multidisorder",
-      "--dpi-desync-split-pos=1",
-      "--dpi-desync-fooling=badseq",
+      "--dpi-desync=split",
       "--dpi-desync-any-protocol",
       "--dpi-desync-cutoff=d3",
+      "--dpi-desync-split-pos=4",
+      "--dpi-desync-fooling=md5sig",
+      "--dpi-desync-autottl"
+    ],
+    "isCustom": false,
+    "priority": 1,
+    "category": "standard"
+  },
+  {
+    "id": "tr-2",
+    "label": "TR 2 (MultiSplit Focus)",
+    "description": "Multi-fragment segmentation strategy for heavily filtered Turkish network regions.",
+    "icon": "🇹🇷",
+    "args": [
+      "--wf-tcp=80,443",
+      "--wf-udp=443",
+      "--dpi-desync=multisplit",
+      "--dpi-desync-any-protocol",
+      "--dpi-desync-cutoff=d3",
+      "--dpi-desync-split-pos=1",
+      "--dpi-desync-fooling=badseq",
       "--dpi-desync-autottl"
     ],
     "isCustom": false,
