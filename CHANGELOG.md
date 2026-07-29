@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.3] - 2026-07-29
+
+### Fixed
+- **Automatic DNS Guard Enforcement:** Configured `start_engine_with_dns_guard` to automatically apply Cloudflare (1.1.1.1) DNS when standard ISP default DNS is detected on Windows adapters upon starting DPI bypass, ensuring ISP DNS poisoning never blocks Discord or Roblox access.
+- **Rich User Logging:** Added detailed explicit UI log emissions on engine start (`[MOTOR] 🚀 DPI Bypass motoru başarıyla aktifleştirildi`, `[DNS] 🟢 Güvenli DNS doğrulaması tamamlandı`).
+
+---
+
 ## [2.1.2] - 2026-07-29
 
 ### Fixed

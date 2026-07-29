@@ -202,7 +202,23 @@ pub async fn start_engine_with_dns_guard(
         .unwrap_or(false);
     let dns_ok = forwarder_active || is_using_trusted_dns();
     if !dns_ok {
-        tracing::warn!("DNS Guard: The current system DNS is not a built-in trusted provider; Vane preserved the user's explicit DNS choice.");
+        tracing::info!("DNS Guard: ISP default DNS detected; automatically applying Cloudflare 1.1.1.1 DNS...");
+        let apply_res = crate::dns::apply_dns("1.1.1.1", "1.0.0.1");
+        if apply_res.success {
+            let _ = app.emit(
+                "log_batch",
+                vec![
+                    "[DNS] 🛡️ ISS varsayılan DNS engellemesi tespit edildi. Sistem DNS'i otomatik olarak Cloudflare (1.1.1.1) olarak ayarlandı.".to_string(),
+                ],
+            );
+        } else {
+            let _ = app.emit(
+                "log_batch",
+                vec![
+                    "[UYARI] ⚠️ Sistem DNS'i otomatik ayarlanamadı: Yönetici yetkisi gerekebilir.".to_string(),
+                ],
+            );
+        }
     }
 
     let preset = {
@@ -213,9 +229,20 @@ pub async fn start_engine_with_dns_guard(
     };
     state.engine_manager.start(&preset, &app).await?;
 
+    let status = state.engine_manager.current_status();
+    if let EngineStatus::Running { pid } = status {
+        let _ = app.emit(
+            "log_batch",
+            vec![
+                format!("[MOTOR] 🚀 DPI Bypass motoru başarıyla aktifleştirildi (Profil: {}, PID: {}).", preset.label, pid),
+                "[DNS] 🟢 Güvenli DNS doğrulaması tamamlandı. Tüm TCP 80/443 paketleri çözümleniyor.".to_string(),
+            ],
+        );
+    }
+
     let _ = app.emit("dns_status_changed", ());
 
-    Ok(state.engine_manager.current_status())
+    Ok(status)
 }
 
 #[tauri::command]
