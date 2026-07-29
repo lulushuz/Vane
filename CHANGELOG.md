@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.4] - 2026-07-29
+
+### Fixed
+- **TR-1 Preset Desync Optimization:** Updated `TR 1` preset rules to use fake packet injection (`--dpi-desync=fake,multidisorder` with `split-pos=1` and `fooling=badseq`) to bypass updated Turkish ISP (Türk Telekom / Superonline) DPI hardware filters.
+
+---
+
 ## [2.1.3] - 2026-07-29
 
 ### Fixed

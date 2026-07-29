@@ -153,16 +153,16 @@
   {
     "id": "tr-1",
     "label": "TR 1",
-    "description": "Custom configuration optimized for Turkish network providers.",
+    "description": "Optimized fake packet injection strategy for updated Turkish network providers.",
     "icon": "⚙️",
     "args": [
       "--wf-tcp=80,443",
       "--wf-udp=443",
-      "--dpi-desync=multisplit",
+      "--dpi-desync=fake,multidisorder",
+      "--dpi-desync-split-pos=1",
+      "--dpi-desync-fooling=badseq",
       "--dpi-desync-any-protocol",
       "--dpi-desync-cutoff=d3",
-      "--dpi-desync-split-pos=4",
-      "--dpi-desync-fooling=md5sig",
       "--dpi-desync-autottl"
     ],
     "isCustom": false,
