@@ -17,11 +17,23 @@ where
             let line: String = line.chars().take(1024).collect();
 
             if prefix.is_some() {
-                // stderr satırı — motor hatası
-                batch.push(format!("[HATA] {}", line));
+                // stderr line — engine error
+                let formatted = if line.contains("cannot access hostlist file") || line.contains("file_open_test") {
+                    format!("[HATA] ❌ Hostlist kural dosyası okunamadı: {}", line)
+                } else if line.contains("Access is denied") || line.contains("Permission denied") {
+                    format!("[HATA] 🛡️ Erişim reddedildi — Lütfen Vane'i Yönetici olarak çalıştırın! ({})", line)
+                } else {
+                    format!("[HATA] {}", line)
+                };
+                batch.push(formatted);
             } else {
-                // stdout satırı — motor çıktısı
-                batch.push(format!("[MOTOR] {}", line));
+                // stdout line — engine output
+                let formatted = if line.contains("windivert") || line.contains("filter") {
+                    format!("[MOTOR] 🛡️ WinDivert sürücüsü paket filtresini başlattı.")
+                } else {
+                    format!("[MOTOR] {}", line)
+                };
+                batch.push(formatted);
             }
 
             if last_flush.elapsed() >= flush_interval || batch.len() >= 50 {

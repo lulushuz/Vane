@@ -42,7 +42,7 @@ export function DpiDesyncCard({ config: c, update }: Props) {
           </div>
           <div className={styles.flexCol}>
             <select className={styles.selectBox} value={c.desyncMethod} onChange={(e) => update('desyncMethod', e.target.value)}>
-              <option value="none">None</option>
+              <option value="none">{noneLabel}</option>
               <option value="fake">Fake</option>
               <option value="multisplit">MultiSplit</option>
               <option value="multidisorder">MultiDisorder</option>
@@ -112,7 +112,7 @@ export function DpiDesyncCard({ config: c, update }: Props) {
             <span>{isTr ? 'Paketle gelen winws bu bayrağı desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support this flag.'}</span>
           </div>
           <select disabled className={styles.selectBox} value={c.desyncQuic} onChange={(e) => update('desyncQuic', e.target.value)}>
-            <option value="none">None / Yok</option>
+            <option value="none">{noneLabel}</option>
             <option value="split">Split</option>
             <option value="disorder">Disorder</option>
             <option value="fake">Fake</option>
@@ -126,7 +126,7 @@ export function DpiDesyncCard({ config: c, update }: Props) {
             <span>{isTr ? 'Paketle gelen winws bu bayrağı desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support this flag.'}</span>
           </div>
           <select disabled className={styles.selectBox} value={c.desync2} onChange={(e) => update('desync2', e.target.value)}>
-            <option value="none">None / Yok</option>
+            <option value="none">{noneLabel}</option>
             <option value="split">Split</option>
             <option value="split2">Split2</option>
             <option value="disorder">Disorder</option>
@@ -152,7 +152,7 @@ export function DpiDesyncCard({ config: c, update }: Props) {
             <span>{isTr ? 'HTTP bölme yöntemi (method / host). (--dpi-desync-split-http-req)' : 'Select HTTP split tactic (method / host). (--dpi-desync-split-http-req)'}</span>
           </div>
           <select className={styles.selectBox} value={c.splitHttpReq} onChange={(e) => update('splitHttpReq', e.target.value)}>
-            <option value="none">None / Yok</option>
+            <option value="none">{noneLabel}</option>
             <option value="method">Method</option>
             <option value="host">Host</option>
           </select>
@@ -174,7 +174,7 @@ export function DpiDesyncCard({ config: c, update }: Props) {
             <span>{isTr ? 'HTTPS/TLS bölme yöntemi (sni / sniext). (--dpi-desync-split-tls)' : 'Select TLS ClientHello split tactic (sni / sniext). (--dpi-desync-split-tls)'}</span>
           </div>
           <select className={styles.selectBox} value={c.splitTls} onChange={(e) => update('splitTls', e.target.value)}>
-            <option value="none">None / Yok</option>
+            <option value="none">{noneLabel}</option>
             <option value="sni">SNI</option>
             <option value="sniext">SNI Extension</option>
           </select>
