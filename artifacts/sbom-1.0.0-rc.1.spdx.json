@@ -2,19 +2,19 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "vane-dpi-2.1.4-SBOM",
-  "documentNamespace": "https://vane.app/spdx/vane-dpi/2.1.4",
+  "name": "vane-dpi-1.0.0-rc.1-SBOM",
+  "documentNamespace": "https://vane.app/spdx/vane-dpi/1.0.0-rc.1",
   "creationInfo": {
     "creators": [
       "Tool: Vane SBOM Generator 1.0"
     ],
-    "created": "2026-07-31T19:46:53.340Z"
+    "created": "2026-07-31T20:27:08.236Z"
   },
   "packages": [
     {
       "SPDXID": "SPDXRef-RootPackage",
       "name": "vane-dpi",
-      "versionInfo": "2.1.4",
+      "versionInfo": "1.0.0-rc.1",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "MIT",
       "supplier": "Organization: Archey DPI Engineering Team"

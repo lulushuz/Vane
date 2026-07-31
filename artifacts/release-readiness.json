@@ -1,8 +1,10 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.4",
-  "commit": "5e6de56e3dd5d5299f73fa4a4f9ac3732ada9238",
-  "timestamp": "2026-07-31T19:46:53.444Z",
+  "version": "1.0.0-rc.1",
+  "releaseChannel": "release-candidate",
+  "legacyVersionLine": "2.x",
+  "commit": "513f73c622b91f2bf7e861b7d9d54e9cbbdd07da",
+  "timestamp": "2026-07-31T20:27:08.479Z",
   "tests": {
     "frontend": "passed",
     "rustLib": "passed",

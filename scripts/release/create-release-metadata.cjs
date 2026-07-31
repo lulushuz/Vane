@@ -20,6 +20,8 @@ function createReleaseReadinessManifest() {
   const manifest = {
     schemaVersion: 1,
     version: pkg.version,
+    releaseChannel: pkg.version.includes('-') ? 'release-candidate' : 'stable',
+    legacyVersionLine: '2.x',
     commit,
     timestamp: new Date().toISOString(),
     tests: {
