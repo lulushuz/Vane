@@ -1,0 +1,95 @@
+name: Package Unsigned Release Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-unsigned-rc:
+    name: Build Unsigned Release Candidate (Windows x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4.1.7
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4.0.3
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Run Frontend Tests
+        run: npm test
+
+      - name: Run Frontend Security Audit
+        run: npm audit --audit-level=high
+
+      - name: Build Frontend Application
+        run: npm run build
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Security Audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check Rust Code Formatting
+        run: cargo fmt --check
+        working-directory: src-tauri
+
+      - name: Run Rust Workspace Tests
+        run: cargo test --workspace --all-targets --locked
+        working-directory: src-tauri
+
+      - name: Run Clippy Linter
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        working-directory: src-tauri
+
+      - name: Audit Native Artifact Manifests
+        run: node scripts/audit/update-artifact-manifest.js
+
+      - name: Verify Version Consistency
+        run: node scripts/release/check-version.cjs
+
+      - name: Build Unsigned Tauri Application
+        uses: tauri-apps/tauri-action@v0.5.15
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ""
+          releaseName: ""
+          draft: false
+          prerelease: false
+          includeUpdaterJson: false
+          includeNsis: true
+
+      - name: Verify Packaged Resources
+        run: node scripts/release/verify-packaged-resources.cjs
+
+      - name: Generate Software Bill of Materials (SBOM)
+        run: node scripts/release/generate-sbom.cjs
+
+      - name: Generate Release Readiness Manifest
+        run: node scripts/release/create-release-metadata.cjs
+
+      - name: Generate SHA256 Checksums
+        run: node scripts/release/generate-checksums.cjs
+
+      - name: Upload Unsigned Release Candidate Artifacts
+        uses: actions/upload-artifact@v4.3.4
+        with:
+          name: unsigned-rc-windows-x64
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            artifacts/
+          if-no-files-found: error
