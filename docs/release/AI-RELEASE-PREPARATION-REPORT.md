@@ -5,7 +5,7 @@
 ```text
 Branch: hardening/p00-p15-release-prep
 Start commit: 5e6de56e3dd5d5299f73fa4a4f9ac3732ada9238
-End commit: [PENDING COMMIT]
+End commit: bdc666b32c8e2550a768719876ac8f49e42a6d17
 Version: 2.1.4
 Working tree: Clean & hardened (all P00-P15 working changes preserved and verified)
 ```
