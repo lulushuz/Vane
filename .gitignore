@@ -52,3 +52,5 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
+# Tauri generated schema files (build-time generated, not source)
+src-tauri/gen/schemas/
