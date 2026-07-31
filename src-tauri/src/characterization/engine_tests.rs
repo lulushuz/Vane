@@ -14,7 +14,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn g02_documents_linux_dropping_wf_filter_arguments() {
         // RBR-04 Reproducer: On Linux target, --wf-tcp, --wf-udp, --windivert, tcp., etc. are stripped by launcher
@@ -57,8 +56,6 @@ mod tests {
         // New EngineManager starts with Stopped state
         assert_eq!(EngineStatus::Stopped, EngineStatus::Stopped);
     }
-
-
 
     #[test]
     fn h02_status_enum_variants_serialization() {

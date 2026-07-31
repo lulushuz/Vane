@@ -38,7 +38,6 @@ mod tests {
         assert_eq!(static_ips.len(), 3);
     }
 
-
     #[test]
     fn o04_documents_optimizer_bypassing_engine_manager() {
         // RBR-08 Reproducer: Documents Optimizer spawning winws directly instead of via EngineManager

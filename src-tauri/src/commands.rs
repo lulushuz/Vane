@@ -1466,4 +1466,3 @@ pub async fn export_diagnostics_bundle(
 
     Ok(target_path.to_string_lossy().to_string())
 }
-

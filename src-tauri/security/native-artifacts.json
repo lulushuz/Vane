@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "applicationVersion": "2.1.4",
+  "applicationVersion": "1.0.0-rc.1",
   "artifacts": [
     {
       "id": "windows-winws",

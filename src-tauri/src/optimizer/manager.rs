@@ -262,7 +262,7 @@ impl OptimizerSessionManager {
             .timeout(policy.request_timeout)
             .tcp_keepalive(None)
             .pool_max_idle_per_host(0)
-            .user_agent("VaneDPI/2.1.4")
+            .user_agent(concat!("VaneDPI/", env!("CARGO_PKG_VERSION")))
             .build()
             .ok()?;
 

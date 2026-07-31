@@ -27,8 +27,6 @@ mod tests {
         assert_eq!(1, 1);
     }
 
-
-
     #[test]
     fn f04_empty_whitelist_validation_fails_closed() {
         // Whitelist mode with empty hostlist is rejected to fail closed

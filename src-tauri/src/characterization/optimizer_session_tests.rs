@@ -166,12 +166,7 @@ mod tests {
         let sink = crate::optimizer::manager::NoopOptimizerEventSink;
 
         let res = manager
-            .run_optimizer_session(
-                &sink,
-                temp.path(),
-                &runtime,
-                Some(vec!["tr-2".into()]),
-            )
+            .run_optimizer_session(&sink, temp.path(), &runtime, Some(vec!["tr-2".into()]))
             .await;
 
         assert!(res.is_ok(), "Expected res ok, got {:?}", res.err());
@@ -189,14 +184,8 @@ mod tests {
         for i in 0..5 {
             let runtime = FakeRuntime::new(OriginalEngineState::Stopped { desired: None });
             let res = manager
-                .run_optimizer_session(
-                    &sink,
-                    temp.path(),
-                    &runtime,
-                    Some(vec!["tr-2".into()]),
-                )
+                .run_optimizer_session(&sink, temp.path(), &runtime, Some(vec!["tr-2".into()]))
                 .await;
-
 
             assert!(res.is_ok(), "Iteration {i} failed");
             assert!(!manager.is_running());

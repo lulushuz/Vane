@@ -39,7 +39,6 @@ mod tests {
         assert!(!supported_protocols.contains(&"doq"));
     }
 
-
     #[test]
     fn j08_documents_dns_blocked_response_behavior() {
         // RBR-11 Reproducer: Blocked responses return empty address vector or 0.0.0.0 instead of NXDOMAIN wire packet
