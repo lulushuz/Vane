@@ -49,6 +49,11 @@ pub fn get_engine_status(state: State<'_, AppState>) -> EngineStatus {
 }
 
 #[tauri::command]
+pub fn get_advanced_capabilities() -> crate::config::validator::AdvancedCapabilities {
+    crate::config::validator::AdvancedCapabilities::for_current_platform()
+}
+
+#[tauri::command]
 pub fn list_presets(state: State<'_, AppState>) -> Result<Vec<Preset>, EngineError> {
     let loader = lock_or_err!(state.config_loader)?;
     Ok(loader.all_presets())
@@ -85,36 +90,54 @@ pub fn delete_custom_preset(
     lock_or_err!(state.config_loader)?.delete_custom_preset(&preset_id, &custom_dir)
 }
 
-use crate::engine::optimizer::{OptimizePayload, Optimizer};
+use crate::optimizer::{OptimizerResultDto, ProductionOptimizerRuntime};
 
 #[tauri::command]
 pub async fn start_auto_optimize(
+    candidate_ids: Option<Vec<String>>,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<Preset, EngineError> {
-    let optimizer = Optimizer::new(app.clone());
+) -> Result<OptimizerResultDto, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
 
-    let _ = app.emit(
-        "optimize_progress",
-        OptimizePayload {
-            step: "Starting...".into(),
-            preset_name: "Preparation".into(),
-            progress_pct: 0,
-        },
-    );
+    let runtime = ProductionOptimizerRuntime::new(app.clone(), state.engine_manager.clone());
 
-    let best_preset = optimizer
-        .run_heuristic_scan()
+    state
+        .optimizer_manager
+        .run_optimizer_session(&app, &app_data, &runtime, candidate_ids)
         .await
-        .map_err(|e| EngineError::SpawnFailed(e.to_string()))?;
-
-    state.engine_manager.start(&best_preset, &app).await?;
-    Ok(best_preset)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn get_last_optimized_preset(app: AppHandle) -> Option<Preset> {
-    Optimizer::load_state(&app)
+pub fn cancel_optimizer(state: State<'_, AppState>) -> bool {
+    state.optimizer_manager.cancel_active()
+}
+
+#[tauri::command]
+pub async fn apply_optimizer_recommendation(
+    preset_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), EngineError> {
+    let preset = {
+        let loader = lock_or_err!(state.config_loader)?;
+        loader
+            .all_presets()
+            .into_iter()
+            .find(|p| p.id == preset_id)
+            .ok_or_else(|| EngineError::InvalidPreset(format!("Preset '{preset_id}' not found.")))?
+    };
+
+    state.engine_manager.start(&preset, &app).await
+}
+
+#[tauri::command]
+pub fn get_last_optimized_preset(_app: AppHandle) -> Option<Preset> {
+    None
 }
 
 #[tauri::command]
@@ -202,7 +225,9 @@ pub async fn start_engine_with_dns_guard(
         .unwrap_or(false);
     let dns_ok = forwarder_active || is_using_trusted_dns();
     if !dns_ok {
-        tracing::info!("DNS Guard: ISP default DNS detected; automatically applying Cloudflare 1.1.1.1 DNS...");
+        tracing::info!(
+            "DNS Guard: ISP default DNS detected; automatically applying Cloudflare 1.1.1.1 DNS..."
+        );
         let apply_res = crate::dns::apply_dns("1.1.1.1", "1.0.0.1");
         if apply_res.success {
             let _ = app.emit(
@@ -215,7 +240,8 @@ pub async fn start_engine_with_dns_guard(
             let _ = app.emit(
                 "log_batch",
                 vec![
-                    "[UYARI] ⚠️ Sistem DNS'i otomatik ayarlanamadı: Yönetici yetkisi gerekebilir.".to_string(),
+                    "[UYARI] ⚠️ Sistem DNS'i otomatik ayarlanamadı: Yönetici yetkisi gerekebilir."
+                        .to_string(),
                 ],
             );
         }
@@ -282,9 +308,14 @@ pub fn get_system_info() -> serde_json::Value {
 #[tauri::command]
 pub fn export_preset(file_path: String, content: String) -> Result<(), String> {
     let path = std::path::Path::new(&file_path);
-    if path.extension().and_then(|value| value.to_str()) != Some("vane") {
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    if !ext.eq_ignore_ascii_case("vane") {
         return Err("Preset exports must use the .vane extension.".into());
     }
+
     if content.len() > 1024 * 1024 {
         return Err("Preset export exceeds the 1 MiB safety limit.".into());
     }
@@ -342,8 +373,9 @@ pub async fn refresh_remote_presets(
     match fetch_remote_presets(&state.http_client, cached_version.as_deref()).await {
         RemoteFetchOutcome::Updated(manifest, sig_text, raw_json) => {
             let version = manifest.version.clone();
-            crate::config::loader::validate_remote_presets(&manifest.presets)
-                .map_err(|error| format!("Signed remote preset update is incompatible with this engine: {error}"))?;
+            crate::config::loader::validate_remote_presets(&manifest.presets).map_err(|error| {
+                format!("Signed remote preset update is incompatible with this engine: {error}")
+            })?;
             crate::presets::save_cached_presets_with_sig(
                 &manifest, &raw_json, &sig_text, &app_data,
             )
@@ -515,10 +547,7 @@ pub(crate) async fn start_dns_forwarder_runtime(
 }
 
 #[tauri::command]
-pub async fn stop_doh_forwarder(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn stop_doh_forwarder(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let _sync_guard = state.dns_sync.lock().await;
     let handle = {
         let mut guard = state
@@ -566,8 +595,6 @@ pub fn get_doh_forwarder_status(app: AppHandle, state: State<'_, AppState>) -> F
         ),
     }
 }
-
-
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -785,23 +812,24 @@ pub fn validate_socks5_proxy(proxy: String) -> Result<String, String> {
     crate::dns::forwarder::normalize_socks5_proxy(&proxy)
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DnsConfigStatus {
-    protocol: String,
-    adblock: bool,
-    cache: bool,
-    socks5_proxy: String,
-    forwarder_active: bool,
-    config_revision: u64,
-    stage: DnsApplyStage,
-}
-
-#[derive(Clone, Copy, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DnsApplyStage {
-    Persisted,
-    Applied,
+    pub protocol: String,
+    pub adblock: bool,
+    pub cache: bool,
+    pub socks5_proxy: String,
+    pub forwarder_active: bool,
+    pub config_revision: u64,
+    pub config_fingerprint: String,
+    pub stage: crate::dns::DnsApplyStage,
+    pub applied_revision: Option<u64>,
+    pub applied_fingerprint: Option<String>,
+    pub forwarder_state: crate::dns::DnsForwarderState,
+    pub kill_switch_applied: bool,
+    pub rollback_performed: bool,
+    pub rollback_succeeded: bool,
+    pub superseded: bool,
 }
 
 #[tauri::command]
@@ -811,122 +839,69 @@ pub async fn sync_dns_settings(
     adblock: bool,
     cache: bool,
     socks5_proxy: String,
-    health_check_targets: Vec<String>,
+    _health_check_targets: Vec<String>,
     emit_event: Option<bool>,
+    provider: Option<String>,
+    kill_switch: Option<bool>,
+    enabled: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<DnsConfigStatus, IpcError> {
     const OPERATION: &str = "sync_dns_settings";
-    let _sync_guard = state.dns_sync.lock().await;
-    if protocol != "doh" && protocol != "dot" {
-        return Err(IpcError::validation(
-            OPERATION,
-            "INVALID_DNS_PROTOCOL",
-            format!("Unsupported DNS transport protocol: {protocol}"),
-        ));
-    }
-    let health_check_targets = crate::config::domain::canonicalize_domain_rules(
-        &health_check_targets,
-    )
-    .map_err(|error| {
-        IpcError::validation(
-            OPERATION,
-            "INVALID_HEALTH_CHECK_TARGET",
-            format!("Invalid DNS health-check target: {error}"),
-        )
-    })?;
-    if health_check_targets.is_empty() {
-        return Err(IpcError::validation(
-            OPERATION,
-            "HEALTH_CHECK_TARGETS_EMPTY",
-            "At least one DNS health-check target is required.",
-        ));
-    }
-    let settings = crate::dns::forwarder::DnsSettings {
-        protocol: protocol.clone(),
-        adblock,
-        cache,
-        socks5_proxy: socks5_proxy.clone(),
-        health_check_targets,
-    };
-    let settings_changed = crate::dns::forwarder::read_dns_settings(&app) != settings;
-    crate::dns::forwarder::update_dns_settings_cache(settings.clone())
-        .map_err(|error| IpcError::runtime(OPERATION, "DNS_SETTINGS_PERSIST_FAILED", error))?;
-    if adblock {
-        crate::dns::forwarder::initialize_adblock(&app);
-    }
-    let running = if settings_changed {
-        let mut guard = state.forwarder.lock().map_err(|_| {
-            IpcError::runtime(
-                OPERATION,
-                "INTERNAL_STATE_ERROR",
-                "Forwarder lock poisoned.",
-            )
-        })?;
-        guard.take()
+
+    let socks_cand = if !socks5_proxy.trim().is_empty() {
+        let parts: Vec<&str> = socks5_proxy.split(':').collect();
+        let host = parts.first().copied().unwrap_or("127.0.0.1").to_string();
+        let port = parts
+            .get(1)
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(1080);
+        Some(crate::dns::DnsSocksCandidate {
+            host,
+            port,
+            username: None,
+            password: None,
+        })
     } else {
         None
     };
-    if let Some(handle) = running {
-        let endpoint = handle.endpoint;
-        let watchdog_enabled = handle.watchdog_enabled;
-        let previous_dns = handle.previous_dns.clone();
-        handle.stop().await;
-        if let Err(error) =
-            start_dns_forwarder_runtime(&app, state.inner(), watchdog_enabled, endpoint).await
-        {
-            let restored = crate::dns::restore_dns_snapshot(&previous_dns);
-            if restored.success {
-                let _ = crate::dns::clear_dns_restore_snapshot(&app);
-            }
-            return Err(IpcError::runtime(
-                OPERATION,
-                "DNS_FORWARDER_RESTART_FAILED",
-                format!(
-                    "DNS runtime restart failed; previous DNS restore success={}: {error}",
-                    restored.success
-                ),
-            ));
-        }
-        if let Ok(mut guard) = state.forwarder.lock() {
-            if let Some(handle) = guard.as_mut() {
-                handle.previous_dns = previous_dns;
-            }
-        }
-        tracing::info!("Running DNS forwarder was restarted to verify the changed settings.");
-    } else if !settings_changed {
-        tracing::info!("DNS settings were already active; no forwarder restart was needed.");
-    }
 
-    let verified = crate::dns::forwarder::read_dns_settings(&app);
-    let forwarder_active = state
-        .forwarder
-        .lock()
-        .map_err(|_| {
-            IpcError::runtime(
-                OPERATION,
-                "INTERNAL_STATE_ERROR",
-                "Forwarder lock poisoned.",
-            )
-        })?
-        .is_some();
-    let config_revision = state
-        .dns_config_revision
-        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-        + 1;
-    let result = DnsConfigStatus {
-        protocol: verified.protocol,
-        adblock: verified.adblock,
-        cache: verified.cache,
-        socks5_proxy: verified.socks5_proxy,
-        forwarder_active,
-        config_revision,
-        stage: if forwarder_active {
-            DnsApplyStage::Applied
-        } else {
-            DnsApplyStage::Persisted
-        },
+    let candidate = crate::dns::DnsConfigCandidate {
+        enabled: enabled.unwrap_or(true),
+        protocol,
+        provider,
+        adblock,
+        cache_enabled: cache,
+        socks5: socks_cand,
+        kill_switch: kill_switch.unwrap_or(false),
     };
+
+    let outcome = state
+        .dns_transaction_manager
+        .apply_candidate(candidate.clone(), &app, state.inner())
+        .await
+        .map_err(|e| IpcError::runtime(OPERATION, "DNS_TRANSACTION_FAILED", e))?;
+
+    let forwarder_active = outcome.forwarder_state == crate::dns::DnsForwarderState::Ready;
+
+    let result = DnsConfigStatus {
+        protocol: candidate.protocol.clone(),
+        adblock,
+        cache,
+        socks5_proxy,
+        forwarder_active,
+        config_revision: outcome.config_revision,
+        config_fingerprint: outcome.config_fingerprint,
+        stage: outcome.stage,
+        applied_revision: outcome.applied_revision,
+        applied_fingerprint: outcome.applied_fingerprint,
+        forwarder_state: outcome.forwarder_state,
+        kill_switch_applied: outcome.kill_switch_applied,
+        rollback_performed: outcome.rollback_performed,
+        rollback_succeeded: outcome.rollback_succeeded,
+        superseded: outcome.superseded,
+    };
+
     if emit_event.unwrap_or(true) {
         if let Err(error) = app.emit("dns_config_synced", result.clone()) {
             tracing::warn!(
@@ -934,36 +909,39 @@ pub async fn sync_dns_settings(
             );
         }
     }
-    tracing::info!(
-        "DNS settings accepted: revision={}, stage={}, protocol={}, cache={}, adblock={}, proxy={}, health_target={}",
-        config_revision,
-        if forwarder_active { "applied" } else { "persisted" },
-        result.protocol.to_uppercase(), result.cache, result.adblock,
-        if result.socks5_proxy.is_empty() { "direct" } else { "SOCKS5H" },
-        verified.health_check_targets.first().map(String::as_str).unwrap_or(DEFAULT_HEALTH_CHECK_TARGET)
-    );
+
     Ok(result)
 }
 
-#[derive(Clone, Copy, serde::Serialize)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BypassApplyStage {
     Prepared,
     ProcessStarted,
+    RolledBack,
+    Superseded,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BypassConfigStatus {
-    mode: String,
-    domain_count: usize,
-    config_revision: u64,
-    stage: BypassApplyStage,
-    engine_restarted: bool,
-    engine_running: bool,
-    whitelist_domains: Vec<String>,
-    blacklist_domains: Vec<String>,
-    active_preset_id: String,
+    pub mode: String,
+    pub domain_count: usize,
+    pub config_revision: u64,
+    pub config_fingerprint: String,
+    pub stage: BypassApplyStage,
+    pub applied_revision: Option<u64>,
+    pub applied_fingerprint: Option<String>,
+    pub engine_restarted: bool,
+    pub engine_running: bool,
+    pub rollback_performed: bool,
+    pub rollback_succeeded: bool,
+    pub superseded: bool,
+    pub whitelist_domains: Vec<String>,
+    pub blacklist_domains: Vec<String>,
+    pub canonical_whitelist_domains: Vec<String>,
+    pub canonical_blacklist_domains: Vec<String>,
+    pub active_preset_id: String,
 }
 
 #[tauri::command]
@@ -981,6 +959,7 @@ pub async fn sync_bypass_config(
 ) -> Result<BypassConfigStatus, IpcError> {
     const OPERATION: &str = "sync_bypass_config";
     let _sync_guard = state.bypass_sync.lock().await;
+
     if mode != "all" && mode != "whitelist" && mode != "blacklist" {
         return Err(IpcError::validation(
             OPERATION,
@@ -988,7 +967,8 @@ pub async fn sync_bypass_config(
             format!("Unsupported bypass mode: {mode}"),
         ));
     }
-    let whitelist_domains = crate::config::domain::canonicalize_domain_rules(&whitelist_domains)
+
+    let canonical_whitelist = crate::config::domain::canonicalize_domain_rules(&whitelist_domains)
         .map_err(|error| {
             IpcError::validation(
                 OPERATION,
@@ -996,7 +976,7 @@ pub async fn sync_bypass_config(
                 format!("Invalid whitelist domain: {error}"),
             )
         })?;
-    let blacklist_domains = crate::config::domain::canonicalize_domain_rules(&blacklist_domains)
+    let canonical_blacklist = crate::config::domain::canonicalize_domain_rules(&blacklist_domains)
         .map_err(|error| {
             IpcError::validation(
                 OPERATION,
@@ -1004,23 +984,120 @@ pub async fn sync_bypass_config(
                 format!("Invalid blacklist domain: {error}"),
             )
         })?;
-    if mode == "whitelist" && whitelist_domains.is_empty() {
+
+    if mode == "whitelist" && canonical_whitelist.is_empty() {
         return Err(IpcError::validation(
             OPERATION,
             "WHITELIST_EMPTY",
             "Whitelist mode requires at least one valid domain; the running engine was left unchanged.",
         ));
     }
+
     let canonical_list = match mode.as_str() {
-        "whitelist" => whitelist_domains.join("\n"),
-        "blacklist" => blacklist_domains.join("\n"),
+        "whitelist" => canonical_whitelist.join("\n"),
+        "blacklist" => canonical_blacklist.join("\n"),
         _ => String::new(),
     };
+
     if list.trim() != canonical_list {
         tracing::warn!(
             "Pattern list received from the interface did not match the canonical domain rules; the verified domain arrays were used."
         );
     }
+
+    let preset = state
+        .config_loader
+        .lock()
+        .map_err(|_| {
+            IpcError::runtime(
+                OPERATION,
+                "INTERNAL_STATE_ERROR",
+                "Preset loader lock is poisoned.",
+            )
+        })?
+        .find_preset(&active_preset_id)
+        .ok_or_else(|| {
+            IpcError::validation(
+                OPERATION,
+                "PRESET_NOT_FOUND",
+                format!(
+                    "Active preset '{}' was not found; Pattern restart was cancelled.",
+                    active_preset_id
+                ),
+            )
+        })?;
+
+    let config_revision_num = state
+        .bypass_config_revision
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
+    let revision = crate::engine::runtime_config::ConfigRevision::new(config_revision_num);
+
+    let candidate = crate::engine::runtime_config::candidate_from_preset_and_sources(
+        &preset,
+        &mode,
+        &canonical_list,
+        kill_switch,
+    );
+
+    let verified_config = crate::engine::runtime_config::verify_runtime_config(candidate, revision)
+        .map_err(|err| IpcError::validation(OPERATION, "VERIFICATION_FAILED", err.to_string()))?;
+
+    let tx_lock = state.engine_manager.pattern_transaction_lock();
+    let _tx_guard = tx_lock.lock().await;
+
+    let requested_rev = {
+        let rc_state = state.engine_manager.runtime_config_state();
+        let mut st = rc_state.lock().unwrap();
+        let _ = st.advance_requested_revision();
+        st.latest_requested_revision()
+    };
+
+    if revision.get() < requested_rev.get() {
+        return Ok(BypassConfigStatus {
+            mode: mode.clone(),
+            domain_count: match mode.as_str() {
+                "whitelist" => canonical_whitelist.len(),
+                "blacklist" => canonical_blacklist.len(),
+                _ => 0,
+            },
+            config_revision: revision.get(),
+            config_fingerprint: verified_config.fingerprint.to_string(),
+            stage: BypassApplyStage::Superseded,
+            applied_revision: state
+                .engine_manager
+                .applied_config()
+                .map(|a| a.verified.revision.get()),
+            applied_fingerprint: state
+                .engine_manager
+                .applied_config()
+                .map(|a| a.verified.fingerprint.to_string()),
+            engine_restarted: false,
+            engine_running: matches!(
+                state.engine_manager.current_status(),
+                crate::engine::EngineStatus::Running { .. }
+            ),
+            rollback_performed: false,
+            rollback_succeeded: false,
+            superseded: true,
+            whitelist_domains: canonical_whitelist.clone(),
+            blacklist_domains: canonical_blacklist.clone(),
+            canonical_whitelist_domains: canonical_whitelist.clone(),
+            canonical_blacklist_domains: canonical_blacklist.clone(),
+            active_preset_id,
+        });
+    }
+
+    let previous_persisted = crate::settings::read_runtime_settings(&app).ok().flatten();
+    let previous_applied = state.engine_manager.applied_config();
+
+    state
+        .engine_manager
+        .runtime_config_state()
+        .lock()
+        .unwrap()
+        .set_desired(verified_config.clone());
+
     crate::engine::manager::update_bypass_config_cache(
         mode.clone(),
         canonical_list.clone(),
@@ -1028,136 +1105,365 @@ pub async fn sync_bypass_config(
         kill_switch,
     );
 
-    let status = state.engine_manager.current_status();
-    let mut engine_restarted = false;
-    if let crate::engine::EngineStatus::Running { .. } = status {
-        tracing::info!(
-            "Bypass config changed while engine is running. Restarting engine silently..."
-        );
-        if kill_switch {
-            let forwarder_active = state
-                .forwarder
-                .lock()
-                .map_err(|_| {
-                    IpcError::runtime(
-                        OPERATION,
-                        "INTERNAL_STATE_ERROR",
-                        "Forwarder lock poisoned.",
-                    )
-                })?
-                .is_some();
-            if !forwarder_active {
-                let _dns_guard = state.dns_sync.lock().await;
-                let forwarder_active = state
-                    .forwarder
-                    .lock()
-                    .map_err(|_| {
-                        IpcError::runtime(
-                            OPERATION,
-                            "INTERNAL_STATE_ERROR",
-                            "Forwarder lock poisoned.",
-                        )
-                    })?
-                    .is_some();
-                if forwarder_active {
-                    tracing::info!("DNS forwarder became active while the Pattern update was waiting; reusing it.");
-                } else {
-                    let runtime = crate::settings::read_runtime_settings(&app)
-                        .map_err(|error| {
-                            IpcError::runtime(OPERATION, "SETTINGS_READ_FAILED", error)
-                        })?
-                        .unwrap_or_default();
-                    let endpoint = if runtime.selected_dns_id == "google" {
-                        DoHEndpoint::Google
-                    } else {
-                        DoHEndpoint::Cloudflare
-                    };
-                    start_dns_forwarder_runtime(&app, state.inner(), runtime.watchdog, endpoint)
-                        .await
-                        .map_err(|error| {
-                            IpcError::runtime(OPERATION, "DNS_FORWARDER_START_FAILED", error)
-                        })?;
-                    tracing::info!(
-                        "DNS forwarder was started before applying Kill Switch to the running engine."
-                    );
-                }
-            }
-        }
-        let preset = state
-            .config_loader
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| IpcError::runtime(OPERATION, "DATA_DIR_ERROR", e.to_string()))?;
+
+    let (prepared_config, active_filename) =
+        crate::engine::pattern_transaction::prepare_runtime_config_for_transaction(
+            verified_config.clone(),
+            &app_data_dir,
+        )
+        .map_err(|e| IpcError::runtime(OPERATION, "HOSTLIST_ERROR", e.to_string()))?;
+
+    state
+        .engine_manager
+        .runtime_config_state()
+        .lock()
+        .unwrap()
+        .set_prepared(prepared_config.clone());
+
+    let is_running = matches!(
+        state.engine_manager.current_status(),
+        crate::engine::EngineStatus::Running { .. }
+    );
+
+    if !is_running {
+        let result = BypassConfigStatus {
+            mode: mode.clone(),
+            domain_count: match mode.as_str() {
+                "whitelist" => canonical_whitelist.len(),
+                "blacklist" => canonical_blacklist.len(),
+                _ => 0,
+            },
+            config_revision: revision.get(),
+            config_fingerprint: verified_config.fingerprint.to_string(),
+            stage: BypassApplyStage::Prepared,
+            applied_revision: None,
+            applied_fingerprint: None,
+            engine_restarted: false,
+            engine_running: false,
+            rollback_performed: false,
+            rollback_succeeded: false,
+            superseded: false,
+            whitelist_domains: canonical_whitelist.clone(),
+            blacklist_domains: canonical_blacklist.clone(),
+            canonical_whitelist_domains: canonical_whitelist.clone(),
+            canonical_blacklist_domains: canonical_blacklist.clone(),
+            active_preset_id,
+        };
+
+        let _ = app.emit("bypass_config_synced", result.clone());
+        return Ok(result);
+    }
+
+    if kill_switch {
+        let forwarder_active = state
+            .forwarder
             .lock()
             .map_err(|_| {
                 IpcError::runtime(
                     OPERATION,
                     "INTERNAL_STATE_ERROR",
-                    "Preset loader lock is poisoned.",
+                    "Forwarder lock poisoned.",
                 )
             })?
-            .find_preset(&active_preset_id)
-            .ok_or_else(|| {
-                IpcError::validation(
-                    OPERATION,
-                    "PRESET_NOT_FOUND",
-                    format!(
-                        "Active preset '{}' was not found; Pattern restart was cancelled.",
-                        active_preset_id
-                    ),
-                )
-            })?;
-        state.engine_manager.stop(&app).await.map_err(|error| {
-            IpcError::runtime(
-                OPERATION,
-                "ENGINE_STOP_FAILED",
-                format!("Failed to stop engine before Pattern restart: {error}"),
-            )
-        })?;
-        if let Err(e) = state.engine_manager.start(&preset, &app).await {
-            return Err(IpcError::runtime(
-                OPERATION,
-                "ENGINE_RESTART_FAILED",
-                format!("Failed to restart engine: {e}"),
-            ));
+            .is_some();
+        if !forwarder_active {
+            let runtime = crate::settings::read_runtime_settings(&app)
+                .map_err(|error| IpcError::runtime(OPERATION, "SETTINGS_READ_FAILED", error))?
+                .unwrap_or_default();
+            let endpoint = if runtime.selected_dns_id == "google" {
+                DoHEndpoint::Google
+            } else {
+                DoHEndpoint::Cloudflare
+            };
+            start_dns_forwarder_runtime(&app, state.inner(), runtime.watchdog, endpoint)
+                .await
+                .map_err(|error| {
+                    IpcError::runtime(OPERATION, "DNS_FORWARDER_START_FAILED", error)
+                })?;
         }
-        engine_restarted = true;
     }
-    let domain_count = match mode.as_str() {
-        "whitelist" => whitelist_domains.len(),
-        "blacklist" => blacklist_domains.len(),
-        _ => 0,
-    };
-    let config_revision = state
-        .bypass_config_revision
-        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-        + 1;
-    let result = BypassConfigStatus {
-        mode: mode.clone(),
-        domain_count,
-        config_revision,
-        stage: if engine_restarted {
-            BypassApplyStage::ProcessStarted
-        } else {
-            BypassApplyStage::Prepared
-        },
-        engine_restarted,
-        engine_running: matches!(
-            state.engine_manager.current_status(),
-            crate::engine::EngineStatus::Running { .. }
-        ),
-        whitelist_domains,
-        blacklist_domains,
-        active_preset_id,
-    };
-    if let Err(error) = app.emit("bypass_config_synced", result.clone()) {
-        tracing::warn!(
-            "Bypass settings were applied, but the cross-window notification failed: {error}"
-        );
+
+    state.engine_manager.stop(&app).await.map_err(|error| {
+        IpcError::runtime(
+            OPERATION,
+            "ENGINE_STOP_FAILED",
+            format!("Failed to stop engine before Pattern restart: {error}"),
+        )
+    })?;
+
+    let candidate_start_res = state
+        .engine_manager
+        .start_prepared_config(prepared_config, &app)
+        .await;
+
+    match candidate_start_res {
+        Ok(applied_config) => {
+            let _ = state
+                .engine_manager
+                .runtime_config_state()
+                .lock()
+                .unwrap()
+                .commit_applied(applied_config.clone());
+
+            let _ = crate::engine::pattern_transaction::clean_stale_hostlists(
+                &app_data_dir,
+                active_filename.as_deref(),
+                None,
+            );
+
+            let result = BypassConfigStatus {
+                mode: mode.clone(),
+                domain_count: match mode.as_str() {
+                    "whitelist" => canonical_whitelist.len(),
+                    "blacklist" => canonical_blacklist.len(),
+                    _ => 0,
+                },
+                config_revision: revision.get(),
+                config_fingerprint: verified_config.fingerprint.to_string(),
+                stage: BypassApplyStage::ProcessStarted,
+                applied_revision: Some(applied_config.verified.revision.get()),
+                applied_fingerprint: Some(applied_config.verified.fingerprint.to_string()),
+                engine_restarted: true,
+                engine_running: true,
+                rollback_performed: false,
+                rollback_succeeded: false,
+                superseded: false,
+                whitelist_domains: canonical_whitelist.clone(),
+                blacklist_domains: canonical_blacklist.clone(),
+                canonical_whitelist_domains: canonical_whitelist.clone(),
+                canonical_blacklist_domains: canonical_blacklist.clone(),
+                active_preset_id,
+            };
+
+            let _ = app.emit("bypass_config_synced", result.clone());
+            Ok(result)
+        }
+        Err(candidate_err) => {
+            tracing::warn!(
+                "Candidate engine start failed: {candidate_err}. Initiating transactional rollback to previous configuration..."
+            );
+
+            if let Some(prev) = previous_persisted {
+                let mut settings_map = serde_json::Map::new();
+                settings_map.insert("state".into(), serde_json::to_value(&prev).unwrap());
+                let _ = crate::settings::atomic_replace_bytes(
+                    &app_data_dir.join("settings.json"),
+                    serde_json::to_string(&settings_map).unwrap().as_bytes(),
+                );
+            }
+
+            if let Some(prev_applied) = previous_applied {
+                let (prev_prep, _prev_filename) =
+                    crate::engine::pattern_transaction::prepare_runtime_config_for_transaction(
+                        prev_applied.verified.clone(),
+                        &app_data_dir,
+                    )
+                    .map_err(|e| {
+                        IpcError::runtime(OPERATION, "ROLLBACK_HOSTLIST_ERROR", e.to_string())
+                    })?;
+
+                match state
+                    .engine_manager
+                    .start_prepared_config(prev_prep, &app)
+                    .await
+                {
+                    Ok(restored_applied) => {
+                        state
+                            .engine_manager
+                            .runtime_config_state()
+                            .lock()
+                            .unwrap()
+                            .restore_applied(restored_applied.clone());
+
+                        if let Some(c_fn) = active_filename {
+                            let _ = std::fs::remove_file(app_data_dir.join(c_fn));
+                        }
+
+                        let result = BypassConfigStatus {
+                            mode: restored_applied.verified.bypass.mode.to_string(),
+                            domain_count: restored_applied.verified.bypass.domain_count,
+                            config_revision: revision.get(),
+                            config_fingerprint: verified_config.fingerprint.to_string(),
+                            stage: BypassApplyStage::RolledBack,
+                            applied_revision: Some(restored_applied.verified.revision.get()),
+                            applied_fingerprint: Some(
+                                restored_applied.verified.fingerprint.to_string(),
+                            ),
+                            engine_restarted: true,
+                            engine_running: true,
+                            rollback_performed: true,
+                            rollback_succeeded: true,
+                            superseded: false,
+                            whitelist_domains: restored_applied.verified.bypass.domains.clone(),
+                            blacklist_domains: restored_applied.verified.bypass.domains.clone(),
+                            canonical_whitelist_domains: restored_applied
+                                .verified
+                                .bypass
+                                .domains
+                                .clone(),
+                            canonical_blacklist_domains: restored_applied
+                                .verified
+                                .bypass
+                                .domains
+                                .clone(),
+                            active_preset_id,
+                        };
+
+                        let _ = app.emit("bypass_config_synced", result.clone());
+                        return Ok(result);
+                    }
+                    Err(rollback_err) => {
+                        state
+                            .engine_manager
+                            .runtime_config_state()
+                            .lock()
+                            .unwrap()
+                            .clear_applied();
+                        return Err(IpcError::runtime(
+                            OPERATION,
+                            "ENGINE_ROLLBACK_FAILED",
+                            format!(
+                                "Candidate start failed ({candidate_err}) AND rollback start failed: {rollback_err}"
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            state
+                .engine_manager
+                .runtime_config_state()
+                .lock()
+                .unwrap()
+                .clear_applied();
+
+            Err(IpcError::runtime(
+                OPERATION,
+                "ENGINE_START_FAILED",
+                format!("Candidate engine start failed: {candidate_err}"),
+            ))
+        }
     }
-    tracing::info!(
-        "Bypass pattern accepted: revision={}, mode={}, domains={}, stage={}",
-        config_revision,
-        mode,
-        domain_count,
-        if engine_restarted { "process_started" } else { "prepared" }
-    );
-    Ok(result)
 }
+
+#[tauri::command]
+pub async fn get_artifact_integrity_status(
+    app: AppHandle,
+) -> Result<crate::security::ArtifactIntegrityStatusDto, EngineError> {
+    use crate::security::{
+        ArtifactIntegrityError, ArtifactIntegrityVerifier, ArtifactPlatform,
+        Sha256ArtifactIntegrityVerifier,
+    };
+
+    let resource_root = app
+        .path()
+        .resource_dir()
+        .map_err(|e| EngineError::IoError(format!("Failed to resolve resource dir: {e}")))?;
+
+    let verifier = Sha256ArtifactIntegrityVerifier::from_embedded()?;
+    let current_platform = ArtifactPlatform::current()
+        .map(|p| format!("{p:?}"))
+        .unwrap_or_else(|| "unknown".into());
+
+    match verifier.verify_current_platform_group(&resource_root) {
+        Ok(group) => Ok(crate::security::ArtifactIntegrityStatusDto {
+            status: "verified".into(),
+            target: current_platform,
+            verified_artifacts: group.dependencies.len() + 1,
+            failed_artifact_id: None,
+            error_code: None,
+            last_verified_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs().to_string())
+                    .unwrap_or_default(),
+            ),
+        }),
+        Err(err) => {
+            let (status_str, failed_id) = match &err {
+                ArtifactIntegrityError::ArtifactMissing(id) => ("missing", Some(id.clone())),
+                ArtifactIntegrityError::ArtifactHashMismatch { id, .. } => {
+                    ("modified", Some(id.clone()))
+                }
+                ArtifactIntegrityError::ArtifactSizeMismatch { id, .. } => {
+                    ("modified", Some(id.clone()))
+                }
+                _ => ("invalid_manifest", None),
+            };
+
+            Ok(crate::security::ArtifactIntegrityStatusDto {
+                status: status_str.into(),
+                target: current_platform,
+                verified_artifacts: 0,
+                failed_artifact_id: failed_id,
+                error_code: Some(format!("{err:?}")),
+                last_verified_at: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_secs().to_string())
+                        .unwrap_or_default(),
+                ),
+            })
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn run_local_diagnostics(
+    app: AppHandle,
+) -> Result<crate::diagnostics::SystemHealthSnapshot, EngineError> {
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| EngineError::IoError(format!("Failed to resolve app_data_dir: {e}")))?;
+
+    Ok(crate::diagnostics::perform_local_consistency_checks(
+        &app_dir,
+    ))
+}
+
+static TRAFFIC_PROBE_RUNNER: std::sync::LazyLock<crate::diagnostics::TrafficProbeRunner> =
+    std::sync::LazyLock::new(crate::diagnostics::TrafficProbeRunner::new);
+
+#[tauri::command]
+pub async fn run_traffic_diagnostics(
+    targets: Option<Vec<String>>,
+) -> Result<crate::diagnostics::TrafficProbeReport, EngineError> {
+    let target_list = targets.unwrap_or_default();
+    TRAFFIC_PROBE_RUNNER
+        .run_probes(&target_list)
+        .await
+        .map_err(EngineError::IoError)
+}
+
+#[tauri::command]
+pub fn cancel_traffic_diagnostics() -> bool {
+    TRAFFIC_PROBE_RUNNER.cancel()
+}
+
+#[tauri::command]
+pub async fn export_diagnostics_bundle(
+    app: AppHandle,
+    export_path: String,
+) -> Result<String, EngineError> {
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| EngineError::IoError(format!("Failed to resolve app_data_dir: {e}")))?;
+
+    let health = crate::diagnostics::perform_local_consistency_checks(&app_dir);
+    let events = crate::diagnostics::DIAGNOSTIC_STORE.get_events(None).await;
+    let dropped = crate::diagnostics::DIAGNOSTIC_STORE.dropped_count();
+    let bundle = crate::diagnostics::create_diagnostics_bundle(health, events, dropped);
+
+    let target_path = std::path::PathBuf::from(export_path);
+    crate::diagnostics::export_bundle_to_file(&bundle, &target_path)
+        .map_err(EngineError::IoError)?;
+
+    Ok(target_path.to_string_lossy().to_string())
+}
+

@@ -54,7 +54,8 @@
 - [8. Connection Tracking (Conntrack)](#8-connection-tracking-conntrack)
 - [9. IP Cache Management](#9-ip-cache-management)
 - [10. Vane System Features](#10-vane-system-features)
-  - [10.1. DNS Guard — Local DoH / DoT / DoQ Forwarder](#101-dns-guard--local-doh--dot--doq-forwarder)
+  - [10.1. DNS Guard — Local DoH / DoT Forwarder](#101-dns-guard--local-doh--dot-forwarder)
+
   - [10.2. AdBlock DNS Filtering](#102-adblock-dns-filtering)
   - [10.3. Kill Switch — DNS Leak Protection](#103-kill-switch--dns-leak-protection)
   - [10.4. Auto-Recovery Watchdog](#104-auto-recovery-watchdog)
@@ -176,7 +177,8 @@ Before a TCP connection can be established, DNS resolution must succeed. ISPs in
 | DNS Blocking | Drop DNS request entirely | Connection times out |
 | Transparent DNS Proxy | Force all DNS through ISP resolver | ISP resolver returns censored answers |
 
-**Vane's DNS Guard** solves all of these by routing DNS through encrypted DoH/DoT/DoQ tunnels.
+**Vane's DNS Guard** solves all of these by routing DNS through encrypted DoH/DoT tunnels.
+
 
 ### 3.5. Deep Fingerprinting and Behavioral Analysis
 
@@ -694,30 +696,33 @@ The IP cache stores previously computed hop distances for destination IPs, enabl
 
 ## 10. Vane System Features
 
-### 10.1. DNS Guard — Local DoH / DoT / DoQ Forwarder
+### 10.1. DNS Guard — Local DoH / DoT Forwarder
 
 DNS Guard runs a local resolver on `127.0.0.127:5353`. It intercepts standard UDP/53 DNS queries and forwards them over encrypted channels.
 
-| Provider | Protocol | Endpoint |
-|----------|----------|----------|
-| Cloudflare | DoH | `https://cloudflare-dns.com/dns-query` |
-| Google | DoH | `https://dns.google/dns-query` |
-| AdGuard | DoH | `https://dns.adguard.com/dns-query` |
-| NextDNS | DoH | Custom via configuration |
-| Custom | DoH | User-defined URL |
+| Provider | Protocol | Endpoint | Status |
+|----------|----------|----------|--------|
+| Cloudflare | DoH / DoT | `https://cloudflare-dns.com/dns-query` | ✅ Supported |
+| Google | DoH / DoT | `https://dns.google/dns-query` | ✅ Supported |
+| AdGuard | DoH | `https://dns.adguard.com/dns-query` | ⏳ Planned |
+| NextDNS | DoH | Custom via configuration | ⏳ Planned |
+| Custom | DoH | User-defined URL | ⏳ Planned |
 
 **Feature Summary:**
 
 | Feature | Status |
 |---------|--------|
-| DNS-over-HTTPS | ✅ |
-| DNS-over-TLS | ✅ |
-| DNS-over-QUIC | ✅ |
-| In-memory DNS cache | ✅ |
-| Cache TTL respect | ✅ |
-| Local domain fallback (`.local`, `.lan`) | ✅ |
-| Concurrency limit (100 parallel requests) | ✅ |
-| SOCKS5 proxy for DoH queries | ✅ |
+| DNS-over-HTTPS | ✅ Supported |
+| DNS-over-TLS | ✅ Supported |
+| DNS-over-QUIC | ❌ Not supported (Use DoH or DoT) |
+| In-memory DNS cache | ✅ Supported |
+| Cache TTL respect | ✅ Supported |
+| Local domain fallback (`.local`, `.lan`) | ✅ Supported |
+| Concurrency limit (100 parallel requests) | ✅ Supported |
+| SOCKS5 proxy for DoH queries | ✅ Supported |
+
+> [!NOTE]
+> **Preset Format:** Canonical preset files use the `.vane` extension. Legacy `.json` files remain supported for import compatibility.
 
 ### 10.2. AdBlock DNS Filtering
 
@@ -736,10 +741,11 @@ When a blocked domain is queried, DNS Guard returns `0.0.0.0` (NXDOMAIN-equivale
 
 The Kill Switch blocks outbound UDP/TCP port 53 traffic using native OS APIs:
 
-| OS | Mechanism |
-|----|-----------|
-| Windows | Windows Filtering Platform (WFP) callout driver |
-| Linux | iptables OUTPUT chain rule |
+| OS | Mechanism | Status |
+|----|-----------|--------|
+| Windows | Windows Firewall (`netsh`) rules & WinDivert driver | ✅ Supported |
+| Linux | iptables / nftables OUTPUT chain rules | ⚠️ Experimental |
+
 
 When enabled, all DNS queries outside the encrypted DNS Guard tunnel are silently dropped. This prevents ISP-level DNS interception regardless of application configuration.
 

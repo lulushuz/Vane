@@ -85,14 +85,19 @@ pub fn spawn_dns_watchdog(
                     if let Err(error) = crate::dns::clear_dns_restore_snapshot(&app_handle) {
                         tracing::error!("DNS watchdog recovered connectivity but could not clear the recovery snapshot: {error}");
                     }
-                    tracing::info!("System DNS was restored successfully after the upstream failure.");
+                    tracing::info!(
+                        "System DNS was restored successfully after the upstream failure."
+                    );
                     let _ = app_handle.emit("dns_status_changed", ());
                     let _ = app_handle.emit(
                         "dns_auto_applied",
                         "DNS_WATCHDOG_PREVIOUS_CONFIGURATION_RESTORED",
                     );
                 } else {
-                    tracing::error!("Failed to restore system DNS after the upstream failure: {:?}", res.error);
+                    tracing::error!(
+                        "Failed to restore system DNS after the upstream failure: {:?}",
+                        res.error
+                    );
                 }
 
                 // Exit watchdog since we reverted

@@ -298,15 +298,18 @@ pub async fn check_dns_block(domain: String) -> Result<DnsCheckResult, IpcError>
             "No changes needed.".to_string(),
         ),
         (false, true) => (
-            "🔍 DNS Block Detected! IP connection works but your system DNS is poisoned.".to_string(),
+            "🔍 DNS Block Detected! IP connection works but your system DNS is poisoned."
+                .to_string(),
             "Change your DNS server to Cloudflare (1.1.1.1) or Google (8.8.8.8). \
-            Windows Settings > Network & Internet > Ethernet/Wi-Fi > DNS server assignment.".to_string(),
+            Windows Settings > Network & Internet > Ethernet/Wi-Fi > DNS server assignment."
+                .to_string(),
         ),
         (false, false) => (
             "⚠️ DPI + DNS Block: Both system DNS and direct IP access are blocked.".to_string(),
             "1) First change your DNS to 1.1.1.1. \
             2) Then find the best DPI bypass method using Smart Scan. \
-            3) When both are working, discord.com will be accessible.".to_string(),
+            3) When both are working, discord.com will be accessible."
+                .to_string(),
         ),
     };
 

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "applicationVersion": "2.1.4",
+  "artifacts": [
+    {
+      "id": "builtin-presets",
+      "relativePath": "presets/builtin.json",
+      "size": 5332,
+      "sha256": "6716028522e795b1245d982598f296b2014cd9ecfdcedab4196fc057d697b551",
+      "required": true
+    },
+    {
+      "id": "remote-presets-template",
+      "relativePath": "presets/remote_template.json",
+      "size": 4414,
+      "sha256": "0f93fe72f68416a7cf0d2d4a0a7eb3dd5d2eb75e46233b42bdbc3bf6202b9187",
+      "required": true
+    }
+  ]
+}

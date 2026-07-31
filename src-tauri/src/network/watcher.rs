@@ -33,9 +33,9 @@ fn run_message_loop(app: tauri::AppHandle) {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DispatchMessageW, GetMessageW,
-        RegisterClassW, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WS_OVERLAPPED,
-        WNDCLASSW, RegisterDeviceNotificationW, DEVICE_NOTIFY_WINDOW_HANDLE,
+        CreateWindowExW, DispatchMessageW, GetMessageW, RegisterClassW,
+        RegisterDeviceNotificationW, DEVICE_NOTIFY_WINDOW_HANDLE, HWND_MESSAGE, MSG,
+        WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPED,
     };
 
     // GUID for network adapters device class:
@@ -81,7 +81,10 @@ fn run_message_loop(app: tauri::AppHandle) {
             PCWSTR(class_name.as_ptr()),
             PCWSTR::null(),
             WS_OVERLAPPED,
-            0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
             HWND_MESSAGE,
             None,
             None,
@@ -138,8 +141,8 @@ unsafe extern "system" fn wnd_proc(
     wparam: windows::Win32::Foundation::WPARAM,
     lparam: windows::Win32::Foundation::LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
-    use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, WM_DEVICECHANGE};
     use tauri::Emitter;
+    use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, WM_DEVICECHANGE};
 
     const DBT_DEVICEARRIVAL: usize = 0x8000;
     const DBT_DEVICEREMOVECOMPLETE: usize = 0x8004;
@@ -152,7 +155,9 @@ unsafe extern "system" fn wnd_proc(
                     let now = std::time::Instant::now();
                     LAST_EVENT_TIME.with(|last_time_cell| {
                         let last = last_time_cell.get();
-                        if last.is_none_or(|t| now.duration_since(t) > std::time::Duration::from_millis(500)) {
+                        if last.is_none_or(|t| {
+                            now.duration_since(t) > std::time::Duration::from_millis(500)
+                        }) {
                             last_time_cell.set(Some(now));
                             tracing::info!(
                                 "WM_DEVICECHANGE: Network change detected (event=0x{:X}).",
@@ -171,4 +176,6 @@ unsafe extern "system" fn wnd_proc(
 
 /// No-op for non-Windows targets.
 #[cfg(not(target_os = "windows"))]
-pub fn spawn_network_watcher(_app: tauri::AppHandle) -> Result<(), String> { Ok(()) }
+pub fn spawn_network_watcher(_app: tauri::AppHandle) -> Result<(), String> {
+    Ok(())
+}

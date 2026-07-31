@@ -176,10 +176,11 @@ export function CustomPresetView() {
                 Import from File
                 <input
                   type="file"
-                  accept=".json"
+                  accept=".vane,.json"
                   onChange={handleImportJson}
                   style={{ display: 'none' }}
                 />
+
               </label>
             </div>
           </div>

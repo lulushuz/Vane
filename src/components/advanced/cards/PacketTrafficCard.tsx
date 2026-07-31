@@ -47,7 +47,7 @@ export function PacketTrafficCard({ config: c, update }: Props) {
             <label>{isTr ? 'Harici TTL Algılama (TTL Ext)' : 'External TTL Evasion'}</label>
             <span>{isTr ? 'Paketle gelen winws bu bayrağı desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support this flag.'}</span>
           </div>
-          <NumberInput disabled value={c.fakeTtlExt} min={0} max={64} onChange={(v) => update('fakeTtlExt', v)} />
+          <NumberInput disabled value={parseInt(c.fakeTtlExt || '0', 10)} min={0} max={64} onChange={(v) => update('fakeTtlExt', String(v))} />
         </div>
 
         {/* MSS Fix */}
@@ -56,7 +56,7 @@ export function PacketTrafficCard({ config: c, update }: Props) {
             <label>{isTr ? 'MSS Boyutu Düzeltmesi' : 'MSS Fix'}</label>
             <span>{isTr ? 'Paketle gelen winws --mss bayrağını desteklemediği için kullanılamaz.' : 'Unavailable because the bundled winws does not support --mss.'}</span>
           </div>
-          <NumberInput disabled value={c.mssFix} min={800} max={1500} onChange={(v) => update('mssFix', v)} />
+          <NumberInput disabled value={c.mssFix || 0} min={800} max={1500} onChange={(v) => update('mssFix', v)} />
         </div>
 
         {/* Desync Repeats */}

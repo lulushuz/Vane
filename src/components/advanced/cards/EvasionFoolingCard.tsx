@@ -25,7 +25,7 @@ export function EvasionFoolingCard({ config: c, update }: Props) {
   const handleToggleFlag = (flag: string) => {
     const active = c.desyncFooling.includes(flag);
     const next = active 
-      ? c.desyncFooling.filter(f => f !== flag)
+      ? c.desyncFooling.filter((f: string) => f !== flag)
       : [...c.desyncFooling, flag];
     update('desyncFooling', next);
   };

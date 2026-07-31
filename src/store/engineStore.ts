@@ -79,7 +79,7 @@ interface EngineStore {
   domainList: string;
   whitelistDomains: string[];
   blacklistDomains: string[];
-  dnsProtocol: 'doh' | 'dot' | 'doq';
+  dnsProtocol: 'doh' | 'dot';
   dnsAdBlock: boolean;
   dnsCache: boolean;
   proxySocks5: string;
@@ -113,9 +113,10 @@ interface EngineStore {
   setDomainList: (list: string) => void;
   setWhitelistDomains: (list: string[]) => void;
   setBlacklistDomains: (list: string[]) => void;
-  setDnsProtocol: (protocol: 'doh' | 'dot' | 'doq') => void;
+  setDnsProtocol: (protocol: 'doh' | 'dot') => void;
   setDnsAdBlock: (enabled: boolean) => void;
   setDnsCache: (enabled: boolean) => void;
+
   setProxySocks5: (addr: string) => Promise<boolean>;
   setKillSwitch: (enabled: boolean) => void;
   setWatchdog: (enabled: boolean) => void;
@@ -144,6 +145,7 @@ let bypassSyncTimeout: ReturnType<typeof setTimeout> | null = null;
 let dnsSyncTimeout: ReturnType<typeof setTimeout> | null = null;
 let bypassSyncRevision = 0;
 let dnsSyncRevision = 0;
+let lifecycleToken = 0;
 let pendingDnsRollback: Partial<Pick<
   EngineStore,
   'dnsProtocol' | 'dnsAdBlock' | 'dnsCache' | 'proxySocks5' | 'healthCheckTargets'
@@ -280,7 +282,7 @@ export const useEngineStore = create<EngineStore>()(
         return (async () => {
           try {
             await invoke('sync_dns_settings', {
-              protocol: state.dnsProtocol === 'doq' ? 'doh' : state.dnsProtocol,
+              protocol: state.dnsProtocol,
               adblock: state.dnsAdBlock,
               cache: state.dnsCache,
               socks5Proxy: proxySocks5,
@@ -308,7 +310,7 @@ export const useEngineStore = create<EngineStore>()(
             const ipcError = normalizeIpcError(error);
             try {
               await invoke('sync_dns_settings', {
-                protocol: state.dnsProtocol === 'doq' ? 'doh' : state.dnsProtocol,
+                protocol: state.dnsProtocol,
                 adblock: state.dnsAdBlock,
                 cache: state.dnsCache,
                 socks5Proxy: previous,
@@ -452,17 +454,17 @@ export const useEngineStore = create<EngineStore>()(
         if (dnsSyncTimeout) clearTimeout(dnsSyncTimeout);
         dnsSyncTimeout = setTimeout(() => {
           const state = get();
-          const protocol = state.dnsProtocol === 'doq' ? 'doh' : state.dnsProtocol;
-          if (state.dnsProtocol === 'doq') set({ dnsProtocol: 'doh' });
+          const protocol = state.dnsProtocol;
           invoke<DnsConfigStatus>('sync_dns_settings', {
             protocol,
+
             adblock: state.dnsAdBlock,
             cache: state.dnsCache,
             socks5Proxy: state.proxySocks5,
             healthCheckTargets: state.healthCheckTargets,
             emitEvent: true,
           }).then((verified) => {
-            if (revision !== dnsSyncRevision) return;
+            if (revision !== dnsSyncRevision || verified.stage === 'superseded' || (verified as any).superseded) return;
             pendingDnsRollback = {};
             const tr = get().language === 'tr';
             const activeText = verified.stage === 'applied'
@@ -539,6 +541,7 @@ export const useEngineStore = create<EngineStore>()(
       },
 
       startEngine: async (presetId) => {
+        const token = ++lifecycleToken;
         const id = presetId || get().activePresetId;
         if (!id) return;
 
@@ -565,8 +568,9 @@ export const useEngineStore = create<EngineStore>()(
             activePresetId: current.activePresetId,
           });
           await invoke<DnsConfigStatus>('sync_dns_settings', {
-            protocol: current.dnsProtocol === 'doq' ? 'doh' : current.dnsProtocol,
+            protocol: current.dnsProtocol,
             adblock: current.dnsAdBlock,
+
             cache: current.dnsCache,
             socks5Proxy: current.proxySocks5,
             healthCheckTargets: current.healthCheckTargets,
@@ -599,6 +603,7 @@ export const useEngineStore = create<EngineStore>()(
             if (!applied.success) throw new Error(applied.error || 'Saved DNS settings could not be restored.');
           }
           const result = await invoke<EngineStatus>('start_engine_with_dns_guard', { presetId: id });
+          if (token !== lifecycleToken) return;
           set({ status: result });
 
           if (result.variant === 'running') {
@@ -607,6 +612,7 @@ export const useEngineStore = create<EngineStore>()(
             get().appendLog(get().language === 'tr' ? `[ERROR] DPI motoru hatası: ${result.message}` : `[ERROR] DPI engine error: ${result.message}`, 'error');
           }
         } catch (err) {
+          if (token !== lifecycleToken) return;
           const rollback = pendingDnsRollback;
           pendingDnsRollback = {};
           if (Object.keys(rollback).length > 0) set(rollback);
@@ -617,8 +623,10 @@ export const useEngineStore = create<EngineStore>()(
       },
 
       stopEngine: async () => {
+        const token = ++lifecycleToken;
         try {
           await invoke('stop_engine');
+          if (token !== lifecycleToken) return;
           set({ status: { variant: 'stopped' } });
           get().appendLog(get().language === 'tr' ? '[ENGINE] DPI bypass durduruldu.' : '[ENGINE] DPI bypass stopped.', 'warn');
         } catch (err) {

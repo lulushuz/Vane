@@ -164,7 +164,7 @@ export function DpiDesyncCard({ config: c, update }: Props) {
             <label>{isTr ? 'HTTP Bölme Konumu' : 'HTTP Split Position'}</label>
             <span>{isTr ? 'Bu ayrı konum bayrağı paketle gelen winws tarafından desteklenmiyor.' : 'This separate position flag is not supported by the bundled winws.'}</span>
           </div>
-          <NumberInput disabled value={c.splitPosHttpReq} min={0} max={1500} onChange={(v) => update('splitPosHttpReq', v)} />
+          <NumberInput disabled value={parseInt(c.splitPosHttpReq || '0', 10)} min={0} max={1500} onChange={(v) => update('splitPosHttpReq', String(v))} />
         </div>
 
         {/* TLS Split Type */}
@@ -186,7 +186,7 @@ export function DpiDesyncCard({ config: c, update }: Props) {
             <label>{isTr ? 'TLS Bölme Konumu' : 'TLS Split Position'}</label>
             <span>{isTr ? 'Bu ayrı konum bayrağı paketle gelen winws tarafından desteklenmiyor.' : 'This separate position flag is not supported by the bundled winws.'}</span>
           </div>
-          <NumberInput disabled value={c.splitPosTls} min={0} max={1500} onChange={(v) => update('splitPosTls', v)} />
+          <NumberInput disabled value={parseInt(c.splitPosTls || '0', 10)} min={0} max={1500} onChange={(v) => update('splitPosTls', String(v))} />
         </div>
       </div>
     </div>

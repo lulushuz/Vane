@@ -1,6 +1,6 @@
 #[cfg(target_os = "windows")]
 pub fn get_total_network_bytes() -> (u64, u64) {
-    use windows::Win32::NetworkManagement::IpHelper::{GetIfTable2, MIB_IF_TABLE2, FreeMibTable};
+    use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
 
     let mut table_ptr: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
     unsafe {

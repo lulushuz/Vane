@@ -83,7 +83,7 @@
     "icon": "🧩",
     "args": [
       "--wf-tcp=443",
-      "--dpi-desync=syndata",
+      "--dpi-desync=syndata,multisplit",
       "--dpi-desync-fooling=md5sig",
       "--dpi-desync-split-pos=1"
     ],
@@ -142,7 +142,7 @@
     "icon": "👻",
     "args": [
       "--wf-tcp=443",
-      "--dpi-desync=fake,syndata",
+      "--dpi-desync=syndata,fake",
       "--dpi-desync-autottl",
       "--dpi-desync-fooling=md5sig"
     ],
