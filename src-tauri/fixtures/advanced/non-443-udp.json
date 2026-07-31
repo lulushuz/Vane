@@ -1,0 +1,13 @@
+{
+  "name": "non-443-udp",
+  "platform": "windows",
+  "inputArgs": [
+    "--wf-udp=50000-65535",
+    "--dpi-desync=fake"
+  ],
+  "valid": true,
+  "expectedCanonicalArgs": [
+    "--wf-udp=50000-65535",
+    "--dpi-desync=fake"
+  ]
+}

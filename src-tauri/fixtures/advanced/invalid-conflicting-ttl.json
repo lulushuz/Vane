@@ -1,0 +1,12 @@
+{
+  "name": "invalid-conflicting-ttl",
+  "platform": "windows",
+  "inputArgs": [
+    "--wf-tcp=80,443",
+    "--dpi-desync=fake",
+    "--dpi-desync-autottl",
+    "--dpi-desync-ttl=5"
+  ],
+  "valid": false,
+  "expectedCanonicalArgs": []
+}

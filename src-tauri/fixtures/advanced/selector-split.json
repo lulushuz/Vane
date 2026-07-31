@@ -1,0 +1,15 @@
+{
+  "name": "selector-split",
+  "platform": "windows",
+  "inputArgs": [
+    "--wf-tcp=443",
+    "--dpi-desync=split",
+    "--dpi-desync-split-pos=sniext+1"
+  ],
+  "valid": true,
+  "expectedCanonicalArgs": [
+    "--wf-tcp=443",
+    "--dpi-desync=split",
+    "--dpi-desync-split-pos=sniext+1"
+  ]
+}
