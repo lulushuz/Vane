@@ -1,0 +1,88 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "vane-dpi-2.1.4-SBOM",
+  "documentNamespace": "https://vane.app/spdx/vane-dpi/2.1.4",
+  "creationInfo": {
+    "creators": [
+      "Tool: Vane SBOM Generator 1.0"
+    ],
+    "created": "2026-07-31T19:46:53.340Z"
+  },
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-RootPackage",
+      "name": "vane-dpi",
+      "versionInfo": "2.1.4",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "MIT",
+      "supplier": "Organization: Archey DPI Engineering Team"
+    },
+    {
+      "SPDXID": "SPDXRef-NativeArtifact-windows-winws",
+      "name": "windows-winws",
+      "versionInfo": "v1.6.2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "GPL-3.0-or-later",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "2da71e80878dc270ac83f5893ecbb841f9752a57f1da8ff9325636b4346bc632"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-NativeArtifact-windows-windivert-sys",
+      "name": "windows-windivert-sys",
+      "versionInfo": "v2.2.0",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "LGPL-3.0-or-later",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-NativeArtifact-windows-windivert-dll",
+      "name": "windows-windivert-dll",
+      "versionInfo": "v2.2.0",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "LGPL-3.0-or-later",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-NativeArtifact-windows-cygwin-dll",
+      "name": "windows-cygwin-dll",
+      "versionInfo": "v3.4.6",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "GPL-3.0-or-later",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "103104a52e5293ce418944725df19e2bf81ad9269b9a120d71d39028e821499b"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-NativeArtifact-linux-nfqws",
+      "name": "linux-nfqws",
+      "versionInfo": "v1.6.2",
+      "downloadLocation": "NOASSERTION",
+      "licenseConcluded": "GPL-3.0-or-later",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "8d3452ce0e0b9d9fed2a3a087b1caecfd39a910b7a31b304078fcbed3ea0e33c"
+        }
+      ]
+    }
+  ]
+}

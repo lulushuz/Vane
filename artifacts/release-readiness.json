@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "version": "2.1.4",
+  "commit": "5e6de56e3dd5d5299f73fa4a4f9ac3732ada9238",
+  "timestamp": "2026-07-31T19:46:53.444Z",
+  "tests": {
+    "frontend": "passed",
+    "rustLib": "passed",
+    "rustAllTargets": "passed",
+    "rustAllFeatures": "passed"
+  },
+  "security": {
+    "artifactManifest": "passed",
+    "cargoAudit": "passed",
+    "npmAudit": "passed",
+    "secretScan": "passed"
+  },
+  "packaging": {
+    "windowsNsis": "passed",
+    "linuxAppImage": "not-executed"
+  },
+  "signing": {
+    "windowsApp": "not-executed",
+    "windowsInstaller": "not-executed",
+    "tauriUpdater": "not-executed"
+  },
+  "acceptance": {
+    "windowsPrivileged": "not-executed",
+    "linuxPrivileged": "not-executed"
+  },
+  "releaseDecision": "BLOCKED",
+  "releaseDecisionReason": "UNSIGNED RELEASE CANDIDATE — REQUIRES PRODUCTION CODE SIGNING & LIVE VM ACCEPTANCE"
+}
