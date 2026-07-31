@@ -1,4 +1,7 @@
-# AI Release Preparation Report — Vane DPI v2.1.4
+# AI Release Preparation Report — Vane DPI v2.1.4 (Legacy Baseline)
+
+> **Note:** This report covers the P00–P15 hardening work performed on the 2.1.4 legacy baseline.
+> The active application version has been realigned to **1.0.0-rc.1**. See [version-realignment.md](version-realignment.md).
 
 ## 1. Repository
 

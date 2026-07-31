@@ -12,9 +12,23 @@
   <a href="README.md"><img src="https://img.shields.io/badge/lang-en-red.svg" alt="en"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=derleme" alt="Derleme Durumu">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="Lisans">
-  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square" alt="Sürüm">
+  <img src="https://img.shields.io/badge/sürüm-1.0.0--rc.1-orange?style=flat-square" alt="Release Candidate">
   <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
 </p>
+
+> **⚠️ Release Candidate — Yalnızca Test Amaçlıdır**
+>
+> | | |
+> |---|---|
+> | **Mevcut release candidate** | `1.0.0-rc.1` — imzasız, yalnızca test |
+> | **Kararlı sürüm** | Henüz yayınlanmadı |
+> | **Eski geliştirme hattı** | `2.x` (Git geçmişinde korunmaktadır) |
+> | **Production imzalama** | Beklemede |
+>
+> Önceki `2.x` yapıları geliştirme aşaması anlık görüntüleriydi. Resmî production sürümlemesi,
+> sertleştirilmiş P00–P15 mimarisi üzerine inşa edilen `1.0.0-rc.1` ile başlamaktadır.
+> Mevcut `2.x` kullanıcıları bu sürümü **manuel olarak** kurmalıdır — otomatik güncelleyici
+> SemVer düşürme işlemi sunamaz. Bkz. [version-realignment.md](docs/release/version-realignment.md).
 
 ---
 

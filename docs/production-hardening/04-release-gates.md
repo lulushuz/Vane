@@ -14,7 +14,7 @@ graph TD
     G2 --> G3[Gate 3: Security & Supply Chain]
     G3 --> G4[Gate 4: Platform Acceptance]
     G4 --> G5[Gate 5: Release Artifact Integrity]
-    G5 --> RELEASE((Stable Release v2.2.0+))
+    G5 --> RELEASE((Stable Release v1.0.0))
 ```
 
 ---

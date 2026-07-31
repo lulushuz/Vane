@@ -1,4 +1,4 @@
-# Windows Acceptance Test Specification — Vane DPI v2.1.4
+# Windows Acceptance Test Specification — Vane DPI v1.0.0-rc.1
 
 ## Overview
 This document specifies the privileged manual acceptance test matrix for Windows 10/11 environments using the automated harness `scripts/windows/Invoke-VaneAcceptance.ps1`.

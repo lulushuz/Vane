@@ -1,4 +1,4 @@
-# Production Release Checklist — Vane DPI v2.1.4
+# Production Release Checklist — Vane DPI v1.0.0-rc.1
 
 ## Pre-Release Gate Verification
 - [x] All 237 Rust unit and characterization tests passing (`cargo test --lib --locked`)

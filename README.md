@@ -12,9 +12,23 @@
   <a href="README.tr.md"><img src="https://img.shields.io/badge/lang-tr-blue.svg" alt="tr"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=build" alt="Build Status">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="License">
-  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/release-1.0.0--rc.1-orange?style=flat-square" alt="Release Candidate">
   <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
 </p>
+
+> **⚠️ Release Candidate — Testing Only**
+>
+> | | |
+> |---|---|
+> | **Current release candidate** | `1.0.0-rc.1` — unsigned, testing only |
+> | **Stable release** | Not yet published |
+> | **Legacy development line** | `2.x` (preserved in Git history) |
+> | **Production signing** | Pending |
+>
+> Previous `2.x` builds were development-stage snapshots. The official production versioning begins
+> with `1.0.0-rc.1`, built on the hardened P00–P15 architecture.
+> Existing `2.x` users must install this version **manually** — the auto-updater cannot offer a
+> SemVer downgrade. See [version-realignment.md](docs/release/version-realignment.md).
 
 ---
 

@@ -1,4 +1,4 @@
-# Linux Acceptance Test Specification — Vane DPI v2.1.4
+# Linux Acceptance Test Specification — Vane DPI v1.0.0-rc.1
 
 ## Overview
 This document specifies the privileged manual acceptance test matrix for Linux environments (Ubuntu 22.04 / 24.04 LTS).
