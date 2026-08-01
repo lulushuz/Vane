@@ -1,0 +1,6 @@
+# Explicitly set default behavior to text=auto
+* text=auto
+
+# Enforce LF for preset JSON files to guarantee identical byte sizes across Windows & Linux checkout
+presets/*.json text eol=lf
+src-tauri/security/*.json text eol=lf
