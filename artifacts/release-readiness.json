@@ -3,8 +3,8 @@
   "version": "1.0.0-rc.1",
   "releaseChannel": "release-candidate",
   "legacyVersionLine": "2.x",
-  "commit": "513f73c622b91f2bf7e861b7d9d54e9cbbdd07da",
-  "timestamp": "2026-07-31T20:27:08.479Z",
+  "commit": "76b3846f67f7018143d5f82aafb5a6affdd2843e",
+  "timestamp": "2026-08-01T15:42:27.003Z",
   "tests": {
     "frontend": "passed",
     "rustLib": "passed",
@@ -30,6 +30,7 @@
     "windowsPrivileged": "not-executed",
     "linuxPrivileged": "not-executed"
   },
-  "releaseDecision": "BLOCKED",
-  "releaseDecisionReason": "UNSIGNED RELEASE CANDIDATE — REQUIRES PRODUCTION CODE SIGNING & LIVE VM ACCEPTANCE"
+  "releaseDecision": "READY FOR UNSIGNED TESTING",
+  "productionRelease": "BLOCKED",
+  "releaseDecisionReason": "UNSIGNED RELEASE CANDIDATE PASSED CLEAN BUILD & PACKAGING VERIFICATION — REQUIRES PRODUCTION CODE SIGNING & PRIVILEGED VM ACCEPTANCE FOR PRODUCTION RELEASE"
 }

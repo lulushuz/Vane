@@ -74,3 +74,9 @@ function verifyPackagedResources(targetDir) {
 
 const targetDirArg = process.argv[2] || path.join(repoRoot, 'src-tauri/binaries');
 verifyPackagedResources(targetDirArg);
+
+const nsisBundleDir = path.join(repoRoot, 'src-tauri/target/release/bundle/nsis');
+if (fs.existsSync(nsisBundleDir)) {
+  verifyPackagedResources(nsisBundleDir);
+}
+

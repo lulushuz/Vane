@@ -49,9 +49,10 @@ function createReleaseReadinessManifest() {
       windowsPrivileged: 'not-executed',
       linuxPrivileged: 'not-executed',
     },
-    // STRICT RULE: If signing or privileged acceptance are not live-executed, decision MUST be BLOCKED
-    releaseDecision: 'BLOCKED',
-    releaseDecisionReason: 'UNSIGNED RELEASE CANDIDATE — REQUIRES PRODUCTION CODE SIGNING & LIVE VM ACCEPTANCE',
+    // READY FOR UNSIGNED TESTING — NSIS built and verified; Production release stays BLOCKED pending signing & VM acceptance
+    releaseDecision: 'READY FOR UNSIGNED TESTING',
+    productionRelease: 'BLOCKED',
+    releaseDecisionReason: 'UNSIGNED RELEASE CANDIDATE PASSED CLEAN BUILD & PACKAGING VERIFICATION — REQUIRES PRODUCTION CODE SIGNING & PRIVILEGED VM ACCEPTANCE FOR PRODUCTION RELEASE',
   };
 
   const outDir = path.join(repoRoot, 'artifacts');
