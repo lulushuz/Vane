@@ -27,17 +27,23 @@ pub fn enable_autostart(exe_path: &str) -> Result<(), String> {
     let escaped_path = exe_path.replace('"', "\"\"");
     let task_run = format!("\"{}\" --autostart", escaped_path);
     let mut cmd = Command::new("schtasks");
-    cmd.args(["/create", "/tn", TASK_NAME, "/tr", &task_run, "/sc", "onlogon", "/rl", "highest", "/f"])
-       .creation_flags(CREATE_NO_WINDOW);
+    cmd.args([
+        "/create", "/tn", TASK_NAME, "/tr", &task_run, "/sc", "onlogon", "/rl", "highest", "/f",
+    ])
+    .creation_flags(CREATE_NO_WINDOW);
 
-    let status = cmd.status()
+    let status = cmd
+        .status()
         .map_err(|e| format!("schtasks çalıştırılamadı: {}", e))?;
 
     if status.success() {
         tracing::info!("Auto-start görevi oluşturuldu: \"{}\"", TASK_NAME);
         Ok(())
     } else {
-        Err(format!("schtasks /create başarısız (exit: {:?}). Yönetici yetkisi gereklidir.", status.code()))
+        Err(format!(
+            "schtasks /create başarısız (exit: {:?}). Yönetici yetkisi gereklidir.",
+            status.code()
+        ))
     }
 }
 
@@ -45,9 +51,10 @@ pub fn enable_autostart(exe_path: &str) -> Result<(), String> {
 pub fn disable_autostart() -> Result<(), String> {
     let mut cmd = Command::new("schtasks");
     cmd.args(["/delete", "/tn", TASK_NAME, "/f"])
-       .creation_flags(CREATE_NO_WINDOW);
+        .creation_flags(CREATE_NO_WINDOW);
 
-    let status = cmd.status()
+    let status = cmd
+        .status()
         .map_err(|e| format!("schtasks çalıştırılamadı: {}", e))?;
 
     // Exit code 1 means the task was not found — treat as success (idempotent).
@@ -55,7 +62,10 @@ pub fn disable_autostart() -> Result<(), String> {
         tracing::info!("Auto-start görevi silindi: \"{}\"", TASK_NAME);
         Ok(())
     } else {
-        Err(format!("schtasks /delete başarısız (exit: {:?})", status.code()))
+        Err(format!(
+            "schtasks /delete başarısız (exit: {:?})",
+            status.code()
+        ))
     }
 }
 
@@ -63,7 +73,7 @@ pub fn disable_autostart() -> Result<(), String> {
 pub fn is_autostart_enabled() -> bool {
     let mut cmd = Command::new("schtasks");
     cmd.args(["/query", "/tn", TASK_NAME])
-       .creation_flags(CREATE_NO_WINDOW);
+        .creation_flags(CREATE_NO_WINDOW);
     match cmd.output() {
         Ok(output) => output.status.success(),
         Err(_) => false,
@@ -81,9 +91,7 @@ pub fn enable_autostart(exe_path: &str) -> Result<(), String> {
         return Err("Geçersiz exe_path karakterleri tespit edildi".to_string());
     }
 
-    let escaped_path = exe_path
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"");
+    let escaped_path = exe_path.replace('\\', "\\\\").replace('"', "\\\"");
 
     let service_dir = systemd_user_dir()?;
     std::fs::create_dir_all(&service_dir)
@@ -110,7 +118,10 @@ pub fn enable_autostart(exe_path: &str) -> Result<(), String> {
         .ok();
     systemctl_user(&["enable", SYSTEMD_SERVICE_NAME])?;
 
-    tracing::info!("Linux systemd auto-start aktif edildi: {}.service", SYSTEMD_SERVICE_NAME);
+    tracing::info!(
+        "Linux systemd auto-start aktif edildi: {}.service",
+        SYSTEMD_SERVICE_NAME
+    );
     Ok(())
 }
 
@@ -143,9 +154,11 @@ pub fn is_autostart_enabled() -> bool {
 
 #[cfg(target_os = "linux")]
 fn systemd_user_dir() -> Result<std::path::PathBuf, String> {
-    let home = std::env::var("HOME")
-        .map_err(|_| "HOME ortam değişkeni bulunamadı.".to_string())?;
-    Ok(std::path::PathBuf::from(home).join(".config").join("systemd").join("user"))
+    let home = std::env::var("HOME").map_err(|_| "HOME ortam değişkeni bulunamadı.".to_string())?;
+    Ok(std::path::PathBuf::from(home)
+        .join(".config")
+        .join("systemd")
+        .join("user"))
 }
 
 #[cfg(target_os = "linux")]
@@ -159,6 +172,10 @@ fn systemctl_user(args: &[&str]) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
-        Err(format!("systemctl {:?} başarısız (exit: {:?})", args, status.code()))
+        Err(format!(
+            "systemctl {:?} başarısız (exit: {:?})",
+            args,
+            status.code()
+        ))
     }
 }

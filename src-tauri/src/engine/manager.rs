@@ -83,6 +83,8 @@ pub struct EngineManager {
     status: Arc<Mutex<EngineStatus>>,
     state: Arc<Mutex<EngineState>>,
     generation: Arc<AtomicU64>,
+    runtime_config_state: Arc<Mutex<crate::engine::runtime_state::RuntimeConfigState>>,
+    pattern_transaction_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Default for EngineManager {
@@ -97,9 +99,38 @@ impl EngineManager {
             status: Arc::new(Mutex::new(EngineStatus::Stopped)),
             state: Arc::new(Mutex::new(EngineState::Idle)),
             generation: Arc::new(AtomicU64::new(0)),
+            runtime_config_state: Arc::new(Mutex::new(
+                crate::engine::runtime_state::RuntimeConfigState::new(
+                    crate::engine::runtime_config::ConfigRevision::new(1),
+                ),
+            )),
+            pattern_transaction_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
+    pub(crate) fn runtime_config_state(
+        &self,
+    ) -> Arc<Mutex<crate::engine::runtime_state::RuntimeConfigState>> {
+        self.runtime_config_state.clone()
+    }
+
+    pub(crate) fn pattern_transaction_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.pattern_transaction_lock.clone()
+    }
+
+    pub(crate) fn desired_config(
+        &self,
+    ) -> Option<crate::engine::runtime_config::VerifiedRuntimeConfig> {
+        self.runtime_config_state.lock().ok()?.desired().cloned()
+    }
+
+    pub(crate) fn applied_config(
+        &self,
+    ) -> Option<crate::engine::runtime_config::AppliedRuntimeConfig> {
+        self.runtime_config_state.lock().ok()?.applied().cloned()
+    }
+
+    #[allow(dead_code)]
     fn verify_binary_hash(path: &std::path::Path, expected_hex: &str) -> Result<(), EngineError> {
         use sha2::{Digest, Sha256};
         use std::fs::File;
@@ -130,107 +161,65 @@ impl EngineManager {
         }
     }
 
-    // Safely resolves binary path from Resource
+    // Safely resolves binary path from Resource using binary integrity verifier
     fn resolve_binary_path(
         dispatcher: &impl EngineEventDispatcher,
     ) -> Result<std::path::PathBuf, EngineError> {
-        #[cfg(target_os = "windows")]
-        {
-            let path = dispatcher
-                .resolve_path(
-                    "binaries/winws-x86_64-pc-windows-msvc.exe",
-                    tauri::path::BaseDirectory::Resource,
-                )
-                .map_err(|e| {
-                    EngineError::BinaryNotFound(format!("Tauri Path resolve error: {}", e))
-                })?;
-            if !path.exists() {
-                return Err(EngineError::BinaryNotFound(format!(
-                    "winws.exe not found at: {}",
-                    path.display()
-                )));
-            }
-            Self::verify_binary_hash(
-                &path,
-                "2DA71E80878DC270AC83F5893ECBB841F9752A57F1DA8FF9325636B4346BC632",
-            )?;
-            Ok(path)
-        }
+        use crate::security::{ArtifactIntegrityVerifier, Sha256ArtifactIntegrityVerifier};
 
-        #[cfg(target_os = "linux")]
-        {
-            let path = dispatcher
-                .resolve_path(
-                    "binaries/nfqws-x86_64-unknown-linux-gnu",
-                    tauri::path::BaseDirectory::Resource,
-                )
-                .map_err(|e| {
-                    EngineError::BinaryNotFound(format!("Tauri Path resolve error: {}", e))
-                })?;
-            if !path.exists() {
-                return Err(EngineError::BinaryNotFound(format!(
-                    "nfqws not found at: {}",
-                    path.display()
-                )));
-            }
-            Self::verify_binary_hash(
-                &path,
-                "8D3452CE0E0B9D9FED2A3A087B1CAECFD39A910B7A31B304078FCBED3EA0E33C",
-            )?;
-            // Ensure executable permissions
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = std::fs::metadata(&path) {
-                let mut perms = metadata.permissions();
-                if perms.mode() & 0o111 != 0o111 {
-                    perms.set_mode(0o755);
-                    if let Err(e) = std::fs::set_permissions(&path, perms) {
-                        tracing::warn!("Could not set executable permissions on nfqws: {}", e);
-                        return Err(EngineError::IoError(format!(
-                            "Could not set executable permissions on nfqws: {}",
-                            e
-                        )));
-                    }
-                }
-            }
-            Ok(path)
-        }
+        let resource_root = dispatcher
+            .resolve_path("", tauri::path::BaseDirectory::Resource)
+            .map_err(|e| EngineError::BinaryNotFound(format!("Tauri Path resolve error: {e}")))?;
+
+        let verifier = Sha256ArtifactIntegrityVerifier::from_embedded()?;
+        let verified_group = verifier.verify_current_platform_group(&resource_root)?;
+
+        Ok(verified_group.executable.canonical_path)
     }
 
-    fn prepare_args(preset_args: &[String]) -> Vec<String> {
-        #[cfg(target_os = "windows")]
-        {
-            preset_args.to_vec()
-        }
-        #[cfg(target_os = "linux")]
-        {
-            let mut linux_args = Vec::new();
-            linux_args.push("--qnum=200".to_string());
-            for arg in preset_args {
-                if arg.starts_with("--wf-")
-                    || arg.starts_with("--windivert")
-                    || arg.starts_with("tcp.")
-                    || arg.starts_with("udp.")
-                    || arg.starts_with("icmp.")
-                {
-                    continue;
-                }
-                linux_args.push(arg.clone());
-            }
-            linux_args
-        }
+    #[allow(dead_code)]
+    pub(crate) fn prepare_args(preset_args: &[String]) -> Vec<String> {
+        let dummy_preset = Preset {
+            id: "dummy".to_string(),
+            label: "Dummy".to_string(),
+            description: String::new(),
+            icon: String::new(),
+            args: preset_args.to_vec(),
+            is_custom: false,
+            priority: 0,
+            category: Default::default(),
+        };
+        let input = crate::engine::launch_plan::EngineLaunchInput {
+            preset: &dummy_preset,
+            platform: crate::engine::launch_plan::EnginePlatform::current(),
+            executable: std::path::PathBuf::from(if cfg!(target_os = "windows") {
+                "C:\\dummy\\winws.exe"
+            } else {
+                "/dummy/nfqws"
+            }),
+            bypass: crate::engine::launch_plan::LaunchBypassInput {
+                mode: crate::engine::launch_plan::LaunchBypassMode::All,
+                domain_list: String::new(),
+                hostlist_path: None,
+                kill_switch: false,
+            },
+        };
+        crate::engine::launch_plan::build_engine_launch_plan(input)
+            .map(|plan| plan.final_arguments)
+            .unwrap_or_else(|_| preset_args.to_vec())
     }
 
-    pub async fn start<D: EngineEventDispatcher + Clone + 'static>(
+    pub(crate) async fn start_prepared_config<D: EngineEventDispatcher + Clone + 'static>(
         &self,
-        preset: &Preset,
+        prepared: crate::engine::runtime_config::PreparedRuntimeConfig,
         dispatcher: &D,
-    ) -> Result<(), EngineError> {
+    ) -> Result<crate::engine::runtime_config::AppliedRuntimeConfig, EngineError> {
         #[cfg(target_os = "windows")]
         if !is_elevated() {
             return Err(EngineError::InsufficientPrivileges);
         }
 
-        validate_preset_args(&preset.args)?;
+        validate_preset_args(&prepared.verified.preset.arguments)?;
 
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let rx = {
@@ -256,15 +245,15 @@ impl EngineManager {
         };
 
         let app_handle = dispatcher.clone_app_handle();
-        let preset_clone = preset.clone();
+        let preset_clone = prepared.verified.preset.to_preset();
         let state_clone = self.state.clone();
         let status_clone = self.status.clone();
         let dispatcher_clone = dispatcher.clone();
 
-        let handle_res = spawn_and_run(&preset_clone, &app_handle, rx).await;
+        let handle_res = spawn_and_run_prepared(&prepared, &app_handle, rx).await;
 
         match handle_res {
-            Ok(handle) => {
+            Ok((handle, applied)) => {
                 let pid = handle.pid();
                 if !set_state_running_if_starting(&state_clone, generation, handle) {
                     tracing::info!(generation, pid, "Stale engine start result was discarded.");
@@ -272,9 +261,13 @@ impl EngineManager {
                 }
 
                 self.set_status(EngineStatus::Running { pid }, &dispatcher_clone);
-                tracing::info!("Engine started: preset='{}', pid={}", preset.id, pid);
+                tracing::info!(
+                    "Engine started: preset='{}', pid={}, revision={}",
+                    prepared.verified.preset.id,
+                    pid,
+                    prepared.verified.revision.get()
+                );
 
-                // Spawn process watcher supervisor
                 let generation_counter = self.generation.clone();
                 tokio::spawn(async move {
                     watch_process(
@@ -288,7 +281,7 @@ impl EngineManager {
                     .await;
                 });
 
-                Ok(())
+                Ok(applied)
             }
             Err(e) => {
                 if !set_state_failed_if_starting(&state_clone, generation, e.clone()) {
@@ -307,10 +300,64 @@ impl EngineManager {
         }
     }
 
-    pub async fn stop(
+    pub async fn start<D: EngineEventDispatcher + Clone + 'static>(
         &self,
-        dispatcher: &impl EngineEventDispatcher,
+        preset: &Preset,
+        dispatcher: &D,
     ) -> Result<(), EngineError> {
+        let app_handle = dispatcher.clone_app_handle();
+        let desired = self.desired_config();
+        let prepared = if let Some(d) = desired {
+            let app_data_dir = app_handle
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (prep, _) =
+                crate::engine::pattern_transaction::prepare_runtime_config_for_transaction(
+                    d,
+                    &app_data_dir,
+                )
+                .map_err(|e| EngineError::ConfigParseError(e.to_string()))?;
+            prep
+        } else {
+            let bypass_config = read_bypass_config(&app_handle)?;
+            bypass_config.validate_for_start()?;
+            let candidate = crate::engine::runtime_config::candidate_from_preset_and_sources(
+                preset,
+                &bypass_config.mode,
+                &bypass_config.domain_list,
+                bypass_config.kill_switch,
+            );
+            let revision = crate::engine::runtime_config::ConfigRevision::new(1);
+            let verified =
+                crate::engine::runtime_config::verify_runtime_config(candidate, revision)?;
+            self.runtime_config_state()
+                .lock()
+                .unwrap()
+                .set_desired(verified.clone());
+            let app_data_dir = app_handle
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (prep, _) =
+                crate::engine::pattern_transaction::prepare_runtime_config_for_transaction(
+                    verified,
+                    &app_data_dir,
+                )
+                .map_err(|e| EngineError::ConfigParseError(e.to_string()))?;
+            prep
+        };
+
+        let applied = self.start_prepared_config(prepared, dispatcher).await?;
+        let _ = self
+            .runtime_config_state()
+            .lock()
+            .unwrap()
+            .commit_applied(applied);
+        Ok(())
+    }
+
+    pub async fn stop(&self, dispatcher: &impl EngineEventDispatcher) -> Result<(), EngineError> {
         if let Err(error) = apply_kill_switch(false) {
             tracing::error!("Engine stop continued, but DNS kill-switch cleanup failed: {error}");
         }
@@ -398,7 +445,7 @@ use std::sync::RwLock;
 struct BypassConfig {
     mode: String,
     domain_list: String,
-    proxy: String,
+    _proxy: String,
     kill_switch: bool,
 }
 
@@ -407,7 +454,7 @@ impl BypassConfig {
         Self {
             mode: "all".to_string(),
             domain_list: String::new(),
-            proxy: String::new(),
+            _proxy: String::new(),
             kill_switch: false,
         }
     }
@@ -432,7 +479,7 @@ pub fn update_bypass_config_cache(mode: String, list: String, proxy: String, kil
         *guard = Some(BypassConfig {
             mode,
             domain_list: list,
-            proxy,
+            _proxy: proxy,
             kill_switch,
         });
     }
@@ -475,7 +522,7 @@ fn read_bypass_config(app: &AppHandle) -> Result<BypassConfig, EngineError> {
     let config = BypassConfig {
         mode: settings.bypass_mode,
         domain_list: domains.join("\n"),
-        proxy: settings.proxy_socks5,
+        _proxy: settings.proxy_socks5,
         kill_switch: settings.kill_switch,
     };
     Ok(config)
@@ -545,31 +592,87 @@ pub(crate) fn apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
     #[cfg(target_os = "linux")]
     {
         let _ = std::process::Command::new("iptables")
-            .args(["-D", "OUTPUT", "!", "-d", "127.0.0.1", "-p", "udp", "--dport", "53", "-j", "DROP"])
+            .args([
+                "-D",
+                "OUTPUT",
+                "!",
+                "-d",
+                "127.0.0.1",
+                "-p",
+                "udp",
+                "--dport",
+                "53",
+                "-j",
+                "DROP",
+            ])
             .status();
         let _ = std::process::Command::new("iptables")
-            .args(["-D", "OUTPUT", "!", "-d", "127.0.0.1", "-p", "tcp", "--dport", "53", "-j", "DROP"])
+            .args([
+                "-D",
+                "OUTPUT",
+                "!",
+                "-d",
+                "127.0.0.1",
+                "-p",
+                "tcp",
+                "--dport",
+                "53",
+                "-j",
+                "DROP",
+            ])
             .status();
         let _ = std::process::Command::new("ip6tables")
-            .args(["-D", "OUTPUT", "!", "-d", "::1", "-p", "udp", "--dport", "53", "-j", "DROP"])
+            .args([
+                "-D", "OUTPUT", "!", "-d", "::1", "-p", "udp", "--dport", "53", "-j", "DROP",
+            ])
             .status();
         let _ = std::process::Command::new("ip6tables")
-            .args(["-D", "OUTPUT", "!", "-d", "::1", "-p", "tcp", "--dport", "53", "-j", "DROP"])
+            .args([
+                "-D", "OUTPUT", "!", "-d", "::1", "-p", "tcp", "--dport", "53", "-j", "DROP",
+            ])
             .status();
 
         if enabled {
             tracing::info!("DNS Kill Switch aktif ediliyor (iptables)...");
             let udp_status = std::process::Command::new("iptables")
-                .args(["-A", "OUTPUT", "!", "-d", "127.0.0.1", "-p", "udp", "--dport", "53", "-j", "DROP"])
+                .args([
+                    "-A",
+                    "OUTPUT",
+                    "!",
+                    "-d",
+                    "127.0.0.1",
+                    "-p",
+                    "udp",
+                    "--dport",
+                    "53",
+                    "-j",
+                    "DROP",
+                ])
                 .status()?;
             let tcp_status = std::process::Command::new("iptables")
-                .args(["-A", "OUTPUT", "!", "-d", "127.0.0.1", "-p", "tcp", "--dport", "53", "-j", "DROP"])
+                .args([
+                    "-A",
+                    "OUTPUT",
+                    "!",
+                    "-d",
+                    "127.0.0.1",
+                    "-p",
+                    "tcp",
+                    "--dport",
+                    "53",
+                    "-j",
+                    "DROP",
+                ])
                 .status()?;
             let udp6_status = std::process::Command::new("ip6tables")
-                .args(["-A", "OUTPUT", "!", "-d", "::1", "-p", "udp", "--dport", "53", "-j", "DROP"])
+                .args([
+                    "-A", "OUTPUT", "!", "-d", "::1", "-p", "udp", "--dport", "53", "-j", "DROP",
+                ])
                 .status()?;
             let tcp6_status = std::process::Command::new("ip6tables")
-                .args(["-A", "OUTPUT", "!", "-d", "::1", "-p", "tcp", "--dport", "53", "-j", "DROP"])
+                .args([
+                    "-A", "OUTPUT", "!", "-d", "::1", "-p", "tcp", "--dport", "53", "-j", "DROP",
+                ])
                 .status()?;
             if !udp_status.success()
                 || !tcp_status.success()
@@ -661,7 +764,7 @@ fn parse_bypass_config(content: &str) -> Result<BypassConfig, EngineError> {
     Ok(BypassConfig {
         mode,
         domain_list: domains.join("\n"),
-        proxy: state
+        _proxy: state
             .get("proxySocks5")
             .and_then(|value| value.as_str())
             .unwrap_or("")
@@ -717,11 +820,17 @@ mod bypass_config_tests {
     }
 }
 
-async fn spawn_and_run(
-    preset: &Preset,
+async fn spawn_and_run_prepared(
+    prepared: &crate::engine::runtime_config::PreparedRuntimeConfig,
     app: &AppHandle,
     _cancel_rx: tokio::sync::oneshot::Receiver<()>,
-) -> Result<ProcessHandle, EngineError> {
+) -> Result<
+    (
+        ProcessHandle,
+        crate::engine::runtime_config::AppliedRuntimeConfig,
+    ),
+    EngineError,
+> {
     let winws_path = EngineManager::resolve_binary_path(app)?;
     #[cfg(target_os = "windows")]
     let working_dir = winws_path.parent().ok_or_else(|| {
@@ -731,46 +840,14 @@ async fn spawn_and_run(
         ))
     })?;
 
-    let mut prepared_args = EngineManager::prepare_args(&preset.args);
+    let prepared_args = prepared.launch_plan.final_arguments.clone();
+    let kill_switch = prepared.verified.bypass.kill_switch;
 
-    let bypass_config = read_bypass_config(app)?;
-    bypass_config.validate_for_start()?;
-    let bypass_mode = bypass_config.mode;
-    let domain_list = bypass_config.domain_list;
-    let kill_switch = bypass_config.kill_switch;
-    let _proxy_socks5 = bypass_config.proxy;
-
-    if bypass_mode == "whitelist" || bypass_mode == "blacklist" {
-        let app_data = app.path().app_data_dir().map_err(|e| {
-            EngineError::IoError(format!("Pattern storage path is unavailable: {}", e))
-        })?;
-        std::fs::create_dir_all(&app_data).map_err(|e| {
-            EngineError::IoError(format!("Pattern storage could not be created: {}", e))
-        })?;
-        let domains_file_path = app_data.join("domains.txt");
-        crate::settings::atomic_replace_bytes(&domains_file_path, domain_list.as_bytes())
-            .map_err(|e| EngineError::IoError(format!("Pattern list could not be written: {e}")))?;
-        let file_path_str = domains_file_path.to_string_lossy().to_string();
-        let domain_count = domain_list
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .count();
-        if bypass_mode == "whitelist" {
-            prepared_args.push(format!("--hostlist={}", file_path_str));
-            tracing::info!(
-                "Pattern verified: DPI bypass will run only for {} whitelisted domains.",
-                domain_count
-            );
-        } else {
-            prepared_args.push(format!("--hostlist-exclude={}", file_path_str));
-            tracing::info!(
-                "Pattern verified: {} blacklisted domains will be excluded from DPI bypass.",
-                domain_count
-            );
-        }
-    } else {
-        tracing::info!("Pattern verified: DPI bypass will run for all sites.");
-    }
+    tracing::info!(
+        "Prepared runtime config spawning: revision={}, fingerprint={}",
+        prepared.verified.revision.get(),
+        prepared.verified.fingerprint.prefix(8)
+    );
 
     if kill_switch {
         let forwarder_active = app
@@ -783,6 +860,7 @@ async fn spawn_and_run(
             ));
         }
     }
+
     apply_kill_switch(kill_switch)?;
     let mut kill_switch_rollback = KillSwitchRollback {
         active: kill_switch,
@@ -812,7 +890,6 @@ async fn spawn_and_run(
                  fi; \
              }}; \
              trap clean_up EXIT INT TERM HUP; \
-             killall nfqws-x86_64-unknown-linux-gnu 2>/dev/null; \
              if command -v nft >/dev/null 2>&1; then \
                  nft delete table ip vane_mangle 2>/dev/null; \
                  nft add table ip vane_mangle || exit 1; \
@@ -916,7 +993,11 @@ async fn spawn_and_run(
 
         let handle = ProcessHandle::new(child, pid, None);
         kill_switch_rollback.disarm();
-        Ok(handle)
+        let applied = crate::engine::runtime_config::AppliedRuntimeConfig::process_started(
+            prepared.verified.clone(),
+            pid,
+        );
+        Ok((handle, applied))
     }
 
     #[cfg(target_os = "windows")]
@@ -971,7 +1052,11 @@ async fn spawn_and_run(
 
         let handle = ProcessHandle::new(child, pid, job_guard);
         kill_switch_rollback.disarm();
-        Ok(handle)
+        let applied = crate::engine::runtime_config::AppliedRuntimeConfig::process_started(
+            prepared.verified.clone(),
+            pid,
+        );
+        Ok((handle, applied))
     }
 }
 
@@ -1029,8 +1114,34 @@ fn watch_process(
                         rx
                     };
 
-                    match spawn_and_run(&preset, &app, rx).await {
-                        Ok(new_handle) => {
+                    let app_data_dir = app
+                        .path()
+                        .app_data_dir()
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+                    let prepared_res = (|| -> Result<crate::engine::runtime_config::PreparedRuntimeConfig, EngineError> {
+                        let bypass_config = read_bypass_config(&app)?;
+                        bypass_config.validate_for_start()?;
+                        let candidate = crate::engine::runtime_config::candidate_from_preset_and_sources(
+                            &preset,
+                            &bypass_config.mode,
+                            &bypass_config.domain_list,
+                            bypass_config.kill_switch,
+                        );
+                        let revision = crate::engine::runtime_config::ConfigRevision::new(1);
+                        let verified = crate::engine::runtime_config::verify_runtime_config(candidate, revision)?;
+                        let (prep, _) = crate::engine::pattern_transaction::prepare_runtime_config_for_transaction(verified, &app_data_dir)
+                            .map_err(|e| EngineError::ConfigParseError(e.to_string()))?;
+                        Ok(prep)
+                    })();
+
+                    let spawn_res = match prepared_res {
+                        Ok(prep) => spawn_and_run_prepared(&prep, &app, rx).await,
+                        Err(e) => Err(e),
+                    };
+
+                    match spawn_res {
+                        Ok((new_handle, _applied)) => {
                             let new_pid = new_handle.pid();
                             if !set_state_running_if_starting(&state, generation, new_handle) {
                                 tracing::info!(

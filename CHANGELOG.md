@@ -7,7 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.0-rc.1] - Unreleased
+
+> **Versioning Realignment:** Previous 2.x releases were development-stage builds. This release
+> candidate represents the first version built on the fully hardened P00–P15 production architecture.
+> See [docs/release/legacy-2x-versioning.md](docs/release/legacy-2x-versioning.md) for details.
+
+### Architecture
+
+- Unified verified runtime configuration with revisioned hostlist and transactional application
+- Transactional Pattern and DNS application with rollback on failure
+- Owned engine lifecycle — unique installation UUIDs, no global taskkill/killall
+- Unified preset validation corpus and advanced configuration contract
+- Linux NFQUEUE filter planner with typed TCP/UDP intent and strict platform isolation
+- Optimizer lifecycle isolation — no direct binary spawning, original state restoration
+- Native artifact integrity verification — fail-closed SHA-256 verification for all bundled binaries
+- Privacy-safe diagnostics — bounded event store, redacted bundle export, stale-response guard
+- Locked CI builds and packaged resource verification
+
+### Release Status
+
+- Unsigned release candidate — testing only
+- Windows clean-VM acceptance pending
+- Linux privileged acceptance pending
+- Production code signing pending
+
+### Migration
+
+- Previous 2.x development builds are classified as legacy
+- Automatic update from 2.1.4 is **not supported** (SemVer regression — see [version-realignment.md](docs/release/version-realignment.md))
+- Manual installation required for existing 2.x users
+- Application settings in AppData expected to be preserved (unverified — pending VM test)
+
+---
+
 ## [2.1.4] - 2026-07-29
+
 
 ### Fixed
 - **TR-1 Preset Desync Optimization:** Updated `TR 1` preset rules to use fake packet injection (`--dpi-desync=fake,multidisorder` with `split-pos=1` and `fooling=badseq`) to bypass updated Turkish ISP (Türk Telekom / Superonline) DPI hardware filters.

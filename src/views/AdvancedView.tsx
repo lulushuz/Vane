@@ -189,19 +189,26 @@ export function AdvancedView() {
     try {
       const filePath = await save({
         filters: [{
-          name: 'JSON',
-          extensions: ['json']
+          name: 'Vane Preset',
+          extensions: ['vane']
         }],
-        defaultPath: `${preset.id}.json`
+        defaultPath: `${preset.id}.vane`
       });
       
       if (filePath) {
-        await invoke('export_preset', { filePath, content: jsonStr });
+        let finalPath = filePath;
+        if (!finalPath.toLowerCase().endsWith('.vane')) {
+          finalPath = `${finalPath}.vane`;
+        }
+        await invoke('export_preset', { filePath: finalPath, content: jsonStr });
       }
     } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      appendLog(`Export error: ${errMsg}`, 'error');
       console.error('Export error:', e);
     }
   };
+
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -290,8 +297,9 @@ export function AdvancedView() {
 
           <input 
             type="file" 
-            accept=".json" 
+            accept=".vane,.json" 
             ref={fileInputRef} 
+
             style={{ display: 'none' }} 
             onChange={(e) => {
               handleFileChange(e);

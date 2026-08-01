@@ -1,0 +1,5 @@
+{
+  "variant": "error",
+  "message": "WinDivert driver failed to open",
+  "code": "DRIVER_ERROR"
+}

@@ -33,6 +33,9 @@ pub enum EngineError {
 
     #[error("Authorization error: {0}")]
     AuthorizationFailed(String),
+
+    #[error("Vane motor dosyalarının bütünlük doğrulaması başarısız oldu: {0}")]
+    ArtifactIntegrityError(String),
 }
 
 impl EngineError {
@@ -48,6 +51,7 @@ impl EngineError {
             Self::IoError(_) => "IO_ERROR",
             Self::BinaryNotFound(_) => "BINARY_NOT_FOUND",
             Self::AuthorizationFailed(_) => "AUTHORIZATION_FAILED",
+            Self::ArtifactIntegrityError(_) => "ARTIFACT_INTEGRITY_FAILED",
         }
     }
 }
@@ -55,6 +59,12 @@ impl EngineError {
 impl From<std::io::Error> for EngineError {
     fn from(e: std::io::Error) -> Self {
         Self::IoError(e.to_string())
+    }
+}
+
+impl From<crate::security::ArtifactIntegrityError> for EngineError {
+    fn from(e: crate::security::ArtifactIntegrityError) -> Self {
+        Self::ArtifactIntegrityError(e.to_string())
     }
 }
 

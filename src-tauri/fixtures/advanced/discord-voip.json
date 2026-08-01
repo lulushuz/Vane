@@ -1,0 +1,15 @@
+{
+  "name": "discord-voip",
+  "platform": "windows",
+  "inputArgs": [
+    "--wf-udp=50000-65535",
+    "--dpi-desync=fake",
+    "--dpi-desync-repeats=6"
+  ],
+  "valid": true,
+  "expectedCanonicalArgs": [
+    "--wf-udp=50000-65535",
+    "--dpi-desync=fake",
+    "--dpi-desync-repeats=6"
+  ]
+}

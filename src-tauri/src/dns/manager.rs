@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
 #[cfg(target_os = "windows")]
 use std::process::Command;
+use tauri::{AppHandle, Manager};
 
 /// Constant for CREATE_NO_WINDOW flag on Windows to prevent console window flashing.
 #[cfg(target_os = "windows")]
@@ -62,16 +62,21 @@ pub fn save_dns_restore_snapshot(
     adapters: &[NetworkAdapter],
 ) -> Result<(), String> {
     if adapters.is_empty() {
-        return Err("The current DNS configuration is empty; recovery snapshot was not written.".into());
+        return Err(
+            "The current DNS configuration is empty; recovery snapshot was not written.".into(),
+        );
     }
     let path = dns_snapshot_path(app)?;
     if path.exists() {
-        let existing = std::fs::read(&path)
-            .map_err(|error| format!("Existing DNS recovery snapshot could not be read: {error}"))?;
+        let existing = std::fs::read(&path).map_err(|error| {
+            format!("Existing DNS recovery snapshot could not be read: {error}")
+        })?;
         let existing: PersistedDnsSnapshot = serde_json::from_slice(&existing)
             .map_err(|error| format!("Existing DNS recovery snapshot is corrupt: {error}"))?;
         if existing.version != 1 || existing.adapters.is_empty() {
-            return Err("Existing DNS recovery snapshot has an unsupported or empty format.".into());
+            return Err(
+                "Existing DNS recovery snapshot has an unsupported or empty format.".into(),
+            );
         }
         return Ok(());
     }
@@ -89,7 +94,9 @@ pub fn clear_dns_restore_snapshot(app: &AppHandle) -> Result<(), String> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("DNS recovery snapshot could not be removed: {error}")),
+        Err(error) => Err(format!(
+            "DNS recovery snapshot could not be removed: {error}"
+        )),
     }
 }
 

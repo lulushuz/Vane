@@ -269,8 +269,8 @@ export function DnsView() {
               options={[
                 { value: 'doh', label: 'DNS over HTTPS (DoH)', description: language === 'tr' ? 'HTTPS üzerinden şifreli DNS' : 'Encrypted DNS over HTTPS' },
                 { value: 'dot', label: 'DNS over TLS (DoT)', description: language === 'tr' ? 'TLS üzerinden şifreli DNS' : 'Encrypted DNS over TLS' },
-                { value: 'doq', label: 'DNS over QUIC (DoQ)', description: language === 'tr' ? 'Bu sürümde henüz desteklenmiyor' : 'Not supported in this version yet', disabled: true },
               ]}
+
               onChange={setDnsProtocol}
             />
           </div>

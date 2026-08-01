@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "applicationVersion": "1.0.0-rc.1",
+  "artifacts": [
+    {
+      "id": "windows-winws",
+      "platform": "windows-x86_64",
+      "role": "engine-executable",
+      "relativePath": "binaries/winws-x86_64-pc-windows-msvc.exe",
+      "size": 223232,
+      "sha256": "2da71e80878dc270ac83f5893ecbb841f9752a57f1da8ff9325636b4346bc632",
+      "required": true,
+      "component": "zapret-winws",
+      "componentVersion": "v1.6.2",
+      "license": "GPL-3.0-or-later"
+    },
+    {
+      "id": "windows-windivert-sys",
+      "platform": "windows-x86_64",
+      "role": "driver",
+      "relativePath": "binaries/WinDivert64.sys",
+      "size": 94144,
+      "sha256": "8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2",
+      "required": true,
+      "component": "windivert",
+      "componentVersion": "v2.2.0",
+      "license": "LGPL-3.0-or-later"
+    },
+    {
+      "id": "windows-windivert-dll",
+      "platform": "windows-x86_64",
+      "role": "dynamic-library",
+      "relativePath": "binaries/WinDivert.dll",
+      "size": 47616,
+      "sha256": "c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2",
+      "required": true,
+      "component": "windivert",
+      "componentVersion": "v2.2.0",
+      "license": "LGPL-3.0-or-later"
+    },
+    {
+      "id": "windows-cygwin-dll",
+      "platform": "windows-x86_64",
+      "role": "runtime-dependency",
+      "relativePath": "binaries/cygwin1.dll",
+      "size": 2954293,
+      "sha256": "103104a52e5293ce418944725df19e2bf81ad9269b9a120d71d39028e821499b",
+      "required": true,
+      "component": "cygwin",
+      "componentVersion": "v3.4.6",
+      "license": "GPL-3.0-or-later"
+    },
+    {
+      "id": "linux-nfqws",
+      "platform": "linux-x86_64",
+      "role": "engine-executable",
+      "relativePath": "binaries/nfqws-x86_64-unknown-linux-gnu",
+      "size": 125760,
+      "sha256": "8d3452ce0e0b9d9fed2a3a087b1caecfd39a910b7a31b304078fcbed3ea0e33c",
+      "required": true,
+      "component": "zapret-nfqws",
+      "componentVersion": "v1.6.2",
+      "license": "GPL-3.0-or-later"
+    }
+  ]
+}

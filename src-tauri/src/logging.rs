@@ -46,23 +46,32 @@ where
         let target = metadata.target();
 
         // Module path'e göre Türkçe kategori etiketi belirle
-        let tag = if target.contains("engine") || target.contains("manager") || target.contains("process") {
+        let tag = if target.contains("engine")
+            || target.contains("manager")
+            || target.contains("process")
+        {
             "MOTOR"
         } else if target.contains("adblock") {
             "ADBLOCK"
-        } else if target.contains("dns") || target.contains("forwarder") || target.contains("resolver") {
+        } else if target.contains("dns")
+            || target.contains("forwarder")
+            || target.contains("resolver")
+        {
             "DNS"
         } else if target.contains("sanitizer") || target.contains("privilege") {
             "GÜVENLİK"
         } else if target.contains("updater") || target.contains("update") {
             "GÜNCELLEME"
-        } else if target.contains("autostart") || target.contains("watcher") || target.contains("network") {
+        } else if target.contains("autostart")
+            || target.contains("watcher")
+            || target.contains("network")
+        {
             "SİSTEM"
         } else {
             match *metadata.level() {
                 tracing::Level::ERROR => "HATA",
-                tracing::Level::WARN  => "UYARI",
-                _                     => "SİSTEM",
+                tracing::Level::WARN => "UYARI",
+                _ => "SİSTEM",
             }
         };
 

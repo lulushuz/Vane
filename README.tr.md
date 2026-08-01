@@ -12,9 +12,23 @@
   <a href="README.md"><img src="https://img.shields.io/badge/lang-en-red.svg" alt="en"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=derleme" alt="Derleme Durumu">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="Lisans">
-  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square" alt="Sürüm">
+  <img src="https://img.shields.io/badge/sürüm-1.0.0--rc.1-orange?style=flat-square" alt="Release Candidate">
   <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
 </p>
+
+> **⚠️ Release Candidate — Yalnızca Test Amaçlıdır**
+>
+> | | |
+> |---|---|
+> | **Mevcut release candidate** | `1.0.0-rc.1` — imzasız, yalnızca test |
+> | **Kararlı sürüm** | Henüz yayınlanmadı |
+> | **Eski geliştirme hattı** | `2.x` (Git geçmişinde korunmaktadır) |
+> | **Production imzalama** | Beklemede |
+>
+> Önceki `2.x` yapıları geliştirme aşaması anlık görüntüleriydi. Resmî production sürümlemesi,
+> sertleştirilmiş P00–P15 mimarisi üzerine inşa edilen `1.0.0-rc.1` ile başlamaktadır.
+> Mevcut `2.x` kullanıcıları bu sürümü **manuel olarak** kurmalıdır — otomatik güncelleyici
+> SemVer düşürme işlemi sunamaz. Bkz. [version-realignment.md](docs/release/version-realignment.md).
 
 ---
 
@@ -54,7 +68,8 @@
 - [8. Bağlantı Takibi (Conntrack)](#8-bağlantı-takibi-conntrack)
 - [9. IP Önbelleği Yönetimi](#9-ip-önbelleği-yönetimi)
 - [10. Vane Sistem Özellikleri](#10-vane-sistem-özellikleri)
-  - [10.1. DNS Koruma — Yerel DoH / DoT / DoQ Yönlendiricisi](#101-dns-koruma--yerel-doh--dot--doq-yönlendiricisi)
+  - [10.1. DNS Koruma — Yerel DoH / DoT Yönlendiricisi](#101-dns-koruma--yerel-doh--dot-yönlendiricisi)
+
   - [10.2. AdBlock DNS Filtresi](#102-adblock-dns-filtresi)
   - [10.3. Kill Switch — DNS Sızıntı Koruması](#103-kill-switch--dns-sızıntı-koruması)
   - [10.4. Otomatik Kurtarma Watchdog'u](#104-otomatik-kurtarma-watchdogu)
@@ -90,7 +105,8 @@ Vane, [zapret](https://github.com/bol-van/zapret) DPI engeli aşma motorunun mod
 |-------|-------------|----------|
 | Motor başlatma | 20+ argümanla elle CLI | Tek tıklama |
 | DNS şifreleme | Manuel DoH/DoT yapılandırması | Dahili DNS Guard |
-| Güvenlik duvarı kuralları | Elle iptables/WFP kurulumu | Otomatik |
+| Güvenlik duvarı kuralları | Elle iptables/netsh kurulumu | Otomatik |
+
 | DNS sızıntı koruması | Harici araçlar gerekli | Entegre Kill Switch |
 | Preset yönetimi | Metin dosyaları | Görsel düzenleyici + uzak senkronizasyon |
 | İkili dosya bütünlüğü | Doğrulanmıyor | Başlangıçta SHA-256 doğrulaması |
@@ -176,7 +192,8 @@ TCP bağlantısı kurulmadan önce alan adının çözümlenmesi gerekir. İSS'l
 | DNS Engelleme | DNS isteğini tamamen düşürür | Bağlantı zaman aşımına uğrar |
 | Şeffaf DNS Proxy | Tüm DNS'i İSS çözümleyicisinden geçirir | İSS sansürlü yanıtlar döndürür |
 
-**Vane'in DNS Guard'ı**, tüm DNS sorgularını şifreli DoH/DoT/DoQ tünelleri üzerinden yönlendirerek bunların tamamını çözer.
+**Vane'in DNS Guard'ı**, tüm DNS sorgularını şifreli DoH/DoT tünelleri üzerinden yönlendirerek bunların tamamını çözer.
+
 
 ### 3.5. Derin Parmak İzi ve Davranış Analizi
 
@@ -558,30 +575,33 @@ IP önbelleği, önceden hesaplanan atlama mesafelerini saklayarak yeni oturumla
 
 ## 10. Vane Sistem Özellikleri
 
-### 10.1. DNS Koruma — Yerel DoH / DoT / DoQ Yönlendiricisi
+### 10.1. DNS Koruma — Yerel DoH / DoT Yönlendiricisi
 
 DNS Guard, `127.0.0.127:5353` üzerinde yerel bir çözümleyici çalıştırır. Standart UDP/53 DNS sorgularını şifreli kanallar üzerinden iletir.
 
-| Sağlayıcı | Protokol | Uç Nokta |
-|-----------|----------|----------|
-| Cloudflare | DoH | `https://cloudflare-dns.com/dns-query` |
-| Google | DoH | `https://dns.google/dns-query` |
-| AdGuard | DoH | `https://dns.adguard.com/dns-query` |
-| NextDNS | DoH | Yapılandırma üzerinden özel |
-| Özel | DoH | Kullanıcı tanımlı URL |
+| Sağlayıcı | Protokol | Uç Nokta | Durum |
+|-----------|----------|----------|-------|
+| Cloudflare | DoH / DoT | `https://cloudflare-dns.com/dns-query` | ✅ Destekleniyor |
+| Google | DoH / DoT | `https://dns.google/dns-query` | ✅ Destekleniyor |
+| AdGuard | DoH | `https://dns.adguard.com/dns-query` | ⏳ Planlanıyor |
+| NextDNS | DoH | Yapılandırma üzerinden özel | ⏳ Planlanıyor |
+| Özel | DoH | Kullanıcı tanımlı URL | ⏳ Planlanıyor |
 
 **Özellik Özeti:**
 
 | Özellik | Durum |
 |---------|-------|
-| DNS-over-HTTPS | ✅ |
-| DNS-over-TLS | ✅ |
-| DNS-over-QUIC | ✅ |
-| Bellek içi DNS önbelleği | ✅ |
-| Önbellek TTL'ye uyum | ✅ |
-| Yerel alan adı yedek desteği (`.local`, `.lan`) | ✅ |
-| Eş zamanlılık limiti (100 paralel istek) | ✅ |
-| DoH sorguları için SOCKS5 proxy | ✅ |
+| DNS-over-HTTPS | ✅ Destekleniyor |
+| DNS-over-TLS | ✅ Destekleniyor |
+| DNS-over-QUIC | ❌ Desteklenmiyor (DoH veya DoT kullanın) |
+| Bellek içi DNS önbelleği | ✅ Destekleniyor |
+| Önbellek TTL'ye uyum | ✅ Destekleniyor |
+| Yerel alan adı yedek desteği (`.local`, `.lan`) | ✅ Destekleniyor |
+| Eş zamanlılık limiti (100 paralel istek) | ✅ Destekleniyor |
+| DoH sorguları için SOCKS5 proxy | ✅ Destekleniyor |
+
+> [!NOTE]
+> **Preset Formatı:** Kanonik preset dosyaları `.vane` uzantısını kullanır. Eski `.json` dosyaları içe aktarma uyumluluğu için desteklenmeye devam eder.
 
 ### 10.2. AdBlock DNS Filtresi
 
@@ -598,10 +618,11 @@ DNS Guard, DNS düzeyinde engelleme için [StevenBlack hosts listesini](https://
 
 Kill Switch, yerel işletim sistemi API'leri kullanarak giden UDP/TCP port 53 trafiğini engeller:
 
-| İS | Mekanizma |
-|----|-----------|
-| Windows | Windows Filtreleme Platformu (WFP) |
-| Linux | iptables OUTPUT zincir kuralı |
+| İS | Mekanizma | Durum |
+|----|-----------|-------|
+| Windows | Windows Firewall (`netsh`) kuralları & WinDivert sürücüsü | ✅ Destekleniyor |
+| Linux | iptables / nftables OUTPUT zincir kuralları | ⚠️ Deneysel (Experimental) |
+
 
 Etkinleştirildiğinde, şifreli DNS Guard tüneli dışındaki tüm DNS sorguları sessizce düşürülür.
 

@@ -50,7 +50,8 @@ export interface DnsConfigStatus {
   socks5Proxy: string;
   forwarderActive: boolean;
   configRevision: number;
-  stage: 'persisted' | 'applied';
+  stage: 'persisted' | 'applied' | 'superseded' | 'disabled' | 'rolled_back' | 'forwarder_started';
+  superseded?: boolean;
 }
 
 export function normalizeIpcError(error: unknown): IpcErrorPayload {
@@ -70,3 +71,69 @@ export function normalizeIpcError(error: unknown): IpcErrorPayload {
     message: error instanceof Error ? error.message : String(error),
   };
 }
+
+export type DiagnosticSeverity = 'debug' | 'info' | 'warning' | 'error' | 'critical';
+export type DiagnosticComponent = 'engine' | 'config' | 'dns' | 'firewall' | 'optimizer' | 'security' | 'system';
+export type HealthState = 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+export type DpiBypassAssessment = 'inconclusive' | 'unknown';
+
+export interface SubsystemHealth {
+  name: string;
+  state: HealthState;
+  message: string;
+  lastCheckedMs: number;
+}
+
+export interface SystemHealthSnapshot {
+  overall: HealthState;
+  subsystems: SubsystemHealth[];
+  timestampMs: number;
+}
+
+export interface TargetProbeResult {
+  target: string;
+  success: boolean;
+  statusCode?: number;
+  latencyMs?: number;
+  error?: string;
+}
+
+export interface TrafficProbeReport {
+  targets: TargetProbeResult[];
+  successRatio: number;
+  medianLatencyMs?: number;
+  assessment: DpiBypassAssessment;
+  timestampMs: number;
+}
+
+export interface DiagnosticEvent {
+  sequence: number;
+  timestampEpochMs: number;
+  monotonicNs: number;
+  component: DiagnosticComponent;
+  code: string;
+  severity: DiagnosticSeverity;
+  fields: Record<string, string | number | boolean>;
+}
+
+export interface ArtifactIntegrityStatusDto {
+  status: 'verified' | 'missing' | 'modified' | 'invalid_manifest' | 'unsupported_target' | string;
+  target: string;
+  verifiedArtifacts: number;
+  failedArtifactId?: string;
+  errorCode?: string;
+  lastVerifiedAt?: string;
+}
+
+export interface DiagnosticsBundle {
+  schemaVersion: string;
+  appVersion: string;
+  platform: string;
+  timestampMs: number;
+  healthSnapshot: SystemHealthSnapshot;
+  events: DiagnosticEvent[];
+  droppedEventCount: number;
+  truncated: boolean;
+  secretScannerPassed: boolean;
+}
+

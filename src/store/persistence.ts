@@ -18,14 +18,27 @@ export function migratePersistedEngineState(persistedState: unknown): PersistedS
     throw new Error('Persisted settings schema is not an object.');
   }
 
-  const state = persistedState as PersistedState;
+  const state = { ...(persistedState as PersistedState) };
+  const dnsProtocol = state.dnsProtocol === 'doq' ? 'doh' : (state.dnsProtocol === 'dot' ? 'dot' : 'doh');
+
+  // P09: Clean unsupported phantom Advanced fields from persisted state
+  delete state.mssFix;
+  delete state.customPayload;
+  delete state.fakeTlsSni;
+  delete state.bindAddress;
+  delete state.ipset;
+  delete state.tpws;
+
   return {
     ...state,
+    advancedConfigSchemaVersion: 2,
     whitelistDomains: normalizePersistedDomains(state.whitelistDomains),
     blacklistDomains: normalizePersistedDomains(state.blacklistDomains),
     dnsForwarderEnabled: state.dnsForwarderEnabled === true,
+    dnsProtocol,
   };
 }
+
 
 export function activePatternDomains(
   mode: 'all' | 'whitelist' | 'blacklist',

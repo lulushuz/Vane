@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0-rc.1",
+  "releaseChannel": "release-candidate",
+  "legacyVersionLine": "2.x",
+  "commit": "76b3846f67f7018143d5f82aafb5a6affdd2843e",
+  "timestamp": "2026-08-01T15:42:27.003Z",
+  "tests": {
+    "frontend": "passed",
+    "rustLib": "passed",
+    "rustAllTargets": "passed",
+    "rustAllFeatures": "passed"
+  },
+  "security": {
+    "artifactManifest": "passed",
+    "cargoAudit": "passed",
+    "npmAudit": "passed",
+    "secretScan": "passed"
+  },
+  "packaging": {
+    "windowsNsis": "passed",
+    "linuxAppImage": "not-executed"
+  },
+  "signing": {
+    "windowsApp": "not-executed",
+    "windowsInstaller": "not-executed",
+    "tauriUpdater": "not-executed"
+  },
+  "acceptance": {
+    "windowsPrivileged": "not-executed",
+    "linuxPrivileged": "not-executed"
+  },
+  "releaseDecision": "READY FOR UNSIGNED TESTING",
+  "productionRelease": "BLOCKED",
+  "releaseDecisionReason": "UNSIGNED RELEASE CANDIDATE PASSED CLEAN BUILD & PACKAGING VERIFICATION — REQUIRES PRODUCTION CODE SIGNING & PRIVILEGED VM ACCEPTANCE FOR PRODUCTION RELEASE"
+}

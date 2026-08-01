@@ -1,0 +1,15 @@
+{
+  "name": "basic-split",
+  "platform": "windows",
+  "inputArgs": [
+    "--wf-tcp=80,443",
+    "--dpi-desync=split",
+    "--dpi-desync-split-pos=2"
+  ],
+  "valid": true,
+  "expectedCanonicalArgs": [
+    "--wf-tcp=80,443",
+    "--dpi-desync=split",
+    "--dpi-desync-split-pos=2"
+  ]
+}

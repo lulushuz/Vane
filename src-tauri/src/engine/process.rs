@@ -4,11 +4,11 @@ use tokio::process::Child as AsyncChild;
 #[cfg(target_os = "windows")]
 use crate::engine::job::JobObjectGuard;
 
-/* 
+/*
    Structure holding ownership of the running winws process.
    RAII semantics: when `ProcessHandle` is dropped, the process is
    automatically terminated. On Windows, the `JobObjectGuard` additionally
-   ensures kernel-level cleanup even if Vane itself is force-killed. 
+   ensures kernel-level cleanup even if Vane itself is force-killed.
 */
 pub struct ProcessHandle {
     child: Option<AsyncChild>,
@@ -31,10 +31,8 @@ impl ProcessHandle {
     pub fn new(
         child: AsyncChild,
         pid: u32,
-        #[cfg(target_os = "windows")]
-        job_guard: Option<JobObjectGuard>,
-        #[cfg(target_os = "linux")]
-        route_guard: Option<crate::network::router::NetworkRouteGuard>,
+        #[cfg(target_os = "windows")] job_guard: Option<JobObjectGuard>,
+        #[cfg(target_os = "linux")] route_guard: Option<crate::network::router::NetworkRouteGuard>,
     ) -> Self {
         Self {
             child: Some(child),
@@ -60,9 +58,9 @@ impl ProcessHandle {
             use windows::Win32::System::Console::GenerateConsoleCtrlEvent;
             use windows::Win32::System::Console::CTRL_BREAK_EVENT;
 
-            /* 
+            /*
                CTRL_BREAK_EVENT to the process group of winws.
-               This allows winws to catch the signal and flush WinDivert handles. 
+               This allows winws to catch the signal and flush WinDivert handles.
             */
             let _ = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.pid) };
         }
@@ -83,8 +81,13 @@ impl ProcessHandle {
                 tracing::info!(pid = self.pid, ?status, "Engine process exited cleanly.");
                 return Ok(());
             }
-            Ok(Err(error)) => tracing::warn!(pid = self.pid, %error, "Could not wait for the engine process; escalating termination."),
-            Err(_) => tracing::warn!(pid = self.pid, "Engine process missed its graceful shutdown deadline; escalating termination."),
+            Ok(Err(error)) => {
+                tracing::warn!(pid = self.pid, %error, "Could not wait for the engine process; escalating termination.")
+            }
+            Err(_) => tracing::warn!(
+                pid = self.pid,
+                "Engine process missed its graceful shutdown deadline; escalating termination."
+            ),
         }
 
         child.start_kill().map_err(|error| {
@@ -92,7 +95,11 @@ impl ProcessHandle {
         })?;
         match tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await {
             Ok(Ok(status)) => {
-                tracing::info!(pid = self.pid, ?status, "Engine process force-kill completed.");
+                tracing::info!(
+                    pid = self.pid,
+                    ?status,
+                    "Engine process force-kill completed."
+                );
                 Ok(())
             }
             Ok(Err(error)) => Err(EngineError::IoError(format!(
@@ -118,7 +125,7 @@ impl ProcessHandle {
     }
 }
 
-/* 
+/*
    RAII Drop — forceful kill on scope exit.
    Graceful kill is handled by `EngineManager::stop()` which awaits
    `terminate()` before dropping the handle.

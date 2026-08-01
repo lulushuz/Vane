@@ -1,0 +1,6 @@
+{
+  "code": "WHITELIST_EMPTY",
+  "message": "Whitelist requires a domain.",
+  "operation": "sync_bypass_config",
+  "retryable": false
+}

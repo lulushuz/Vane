@@ -8,22 +8,30 @@ use tauri::{AppHandle, Emitter, Listener, Manager};
 
 // Constant for CREATE_NO_WINDOW flag on Windows to prevent console window flashing.
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub mod autostart;
 pub mod commands;
 pub mod config;
+pub mod diagnostics;
 pub mod dns;
 pub mod engine;
 pub mod http;
 pub mod ipc;
 pub mod logging;
 pub mod network;
+pub mod optimizer;
+pub mod platform;
 pub mod presets;
 pub mod privilege;
+pub(crate) mod security;
 pub mod settings;
 pub mod tray;
 pub mod updater;
+
+#[cfg(test)]
+mod characterization;
 
 use crate::config::loader::ConfigLoader;
 use crate::dns::ForwarderHandle;
@@ -47,6 +55,8 @@ pub struct AppState {
     pub bypass_config_revision: AtomicU64,
     pub dns_sync: tokio::sync::Mutex<()>,
     pub dns_config_revision: AtomicU64,
+    pub dns_transaction_manager: std::sync::Arc<crate::dns::DnsTransactionManager>,
+    pub optimizer_manager: std::sync::Arc<crate::optimizer::OptimizerSessionManager>,
 }
 
 /*
@@ -55,23 +65,9 @@ pub struct AppState {
 */
 #[cfg(target_os = "windows")]
 fn kill_existing_winws() {
-    tracing::info!("Startup cleanup: Searching for existing winws process...");
-    let result = std::process::Command::new("taskkill")
-        .args(["/F", "/IM", "winws-x86_64-pc-windows-msvc.exe"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-
-    match result {
-        Ok(out) if out.status.success() => {
-            tracing::info!("Zombie winws process terminated.");
-        }
-        Ok(_) => {
-            tracing::debug!("No winws process found to clean up (normal).");
-        }
-        Err(e) => {
-            tracing::warn!("taskkill could not be run: {}", e);
-        }
-    }
+    tracing::info!(
+        "Startup: Global process cleanup disabled in P07 to enforce owned process lifecycle."
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -122,7 +118,10 @@ async fn autostart_engine_with_last_preset(app: AppHandle) {
     };
     let preset_id = settings.active_preset_id.clone();
 
-    if !matches!(settings.bypass_mode.as_str(), "all" | "whitelist" | "blacklist") {
+    if !matches!(
+        settings.bypass_mode.as_str(),
+        "all" | "whitelist" | "blacklist"
+    ) {
         tracing::error!("Auto-start: Saved Pattern mode is invalid; engine startup was cancelled.");
         return;
     }
@@ -139,7 +138,9 @@ async fn autostart_engine_with_last_preset(app: AppHandle) {
         }
     };
     if settings.bypass_mode == "whitelist" && active_domains.is_empty() {
-        tracing::error!("Auto-start: Whitelist mode has no valid domains; engine startup was cancelled safely.");
+        tracing::error!(
+            "Auto-start: Whitelist mode has no valid domains; engine startup was cancelled safely."
+        );
         return;
     }
     crate::engine::manager::update_bypass_config_cache(
@@ -288,6 +289,9 @@ pub fn run() {
             kill_existing_winws();
             #[cfg(target_os = "windows")]
             cleanup_stale_windivert();
+            let inst_id = crate::dns::get_or_create_installation_id(app.handle());
+            let _ = crate::dns::recover_orphan_kill_switch_rules(app.handle(), &inst_id);
+            let _ = crate::platform::linux::recover_orphan_linux_filter_rules(app.handle(), &inst_id);
             if let Err(error) = crate::engine::manager::apply_kill_switch(false) {
                 tracing::error!("Startup cleanup could not remove a stale DNS kill-switch rule: {error}");
             }
@@ -406,6 +410,9 @@ pub fn run() {
             // System Tray setup
             crate::tray::setup_tray(app)?;
 
+            let dns_tx_manager = std::sync::Arc::new(crate::dns::DnsTransactionManager::new());
+            let optimizer_manager = std::sync::Arc::new(crate::optimizer::OptimizerSessionManager::new());
+
             // Global singleton HTTP client for pooled request reusing
             app.manage(AppState {
                 engine_manager: EngineManager::new(),
@@ -416,6 +423,8 @@ pub fn run() {
                 bypass_config_revision: AtomicU64::new(0),
                 dns_sync: tokio::sync::Mutex::new(()),
                 dns_config_revision: AtomicU64::new(0),
+                dns_transaction_manager: dns_tx_manager,
+                optimizer_manager,
             });
 
             // Auto-start: if launched via Task Scheduler / systemd, resume the last DPI preset.
@@ -449,12 +458,15 @@ pub fn run() {
             commands::start_engine,
             commands::stop_engine,
             commands::get_engine_status,
+            commands::get_advanced_capabilities,
             commands::list_presets,
             commands::save_custom_preset,
             commands::delete_custom_preset,
             http::check_url_health,
             http::check_dns_block,
             commands::start_auto_optimize,
+            commands::cancel_optimizer,
+            commands::apply_optimizer_recommendation,
             commands::get_last_optimized_preset,
             commands::list_dns_providers,
             commands::get_network_adapters,
@@ -490,6 +502,11 @@ pub fn run() {
             commands::validate_socks5_proxy,
             commands::sync_dns_settings,
             commands::sync_bypass_config,
+            commands::get_artifact_integrity_status,
+            commands::run_local_diagnostics,
+            commands::run_traffic_diagnostics,
+            commands::cancel_traffic_diagnostics,
+            commands::export_diagnostics_bundle,
             settings::settings_get,
             settings::settings_set,
             settings::settings_remove,

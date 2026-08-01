@@ -1,0 +1,11 @@
+{
+  "mode": "whitelist",
+  "domainCount": 1,
+  "configRevision": 2,
+  "stage": "process_started",
+  "engineRestarted": true,
+  "engineRunning": true,
+  "whitelistDomains": ["example.com"],
+  "blacklistDomains": [],
+  "activePresetId": "default"
+}

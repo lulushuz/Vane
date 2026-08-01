@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager};
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RuntimeSettings {
     pub active_preset_id: String,
@@ -48,7 +48,7 @@ impl Default for RuntimeSettings {
 
 static SETTINGS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static WINDOW_SNAPSHOTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-const SETTINGS_KEY: &str = "vane-settings";
+pub(crate) const SETTINGS_KEY: &str = "vane-settings";
 const MAX_SETTINGS_BYTES: usize = 1024 * 1024;
 
 fn validate_ipc_key(key: &str) -> Result<(), String> {
@@ -84,7 +84,7 @@ fn paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
     Ok((dir.join("settings.json"), dir.join("settings.json.bak")))
 }
 
-fn parse_store(path: &Path) -> Result<Map<String, Value>, String> {
+pub(crate) fn parse_store(path: &Path) -> Result<Map<String, Value>, String> {
     if !path.exists() {
         return Ok(Map::new());
     }
@@ -98,7 +98,10 @@ fn parse_store(path: &Path) -> Result<Map<String, Value>, String> {
         .ok_or_else(|| format!("{} does not contain a JSON object", path.display()))
 }
 
-fn load_with_recovery(primary: &Path, backup: &Path) -> Result<Map<String, Value>, String> {
+pub(crate) fn load_with_recovery(
+    primary: &Path,
+    backup: &Path,
+) -> Result<Map<String, Value>, String> {
     if !primary.exists() && backup.exists() {
         let store = parse_store(backup)?;
         if !store.is_empty() {
@@ -146,7 +149,11 @@ fn replace_file(temp: &Path, target: &Path) -> Result<(), String> {
     std::fs::rename(temp, target).map_err(|e| e.to_string())
 }
 
-fn atomic_write(primary: &Path, backup: &Path, store: &Map<String, Value>) -> Result<(), String> {
+pub(crate) fn atomic_write(
+    primary: &Path,
+    backup: &Path,
+    store: &Map<String, Value>,
+) -> Result<(), String> {
     use std::io::Write;
 
     let bytes = serde_json::to_vec_pretty(store).map_err(|e| e.to_string())?;

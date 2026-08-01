@@ -18,7 +18,9 @@ where
 
             if prefix.is_some() {
                 // stderr line — engine error
-                let formatted = if line.contains("cannot access hostlist file") || line.contains("file_open_test") {
+                let formatted = if line.contains("cannot access hostlist file")
+                    || line.contains("file_open_test")
+                {
                     format!("[HATA] ❌ Hostlist kural dosyası okunamadı: {}", line)
                 } else if line.contains("Access is denied") || line.contains("Permission denied") {
                     format!("[HATA] 🛡️ Erişim reddedildi — Lütfen Vane'i Yönetici olarak çalıştırın! ({})", line)
@@ -29,7 +31,10 @@ where
             } else {
                 // stdout line — engine output
                 let formatted = if line.contains("windivert") || line.contains("filter") {
-                    format!("[MOTOR] 🛡️ WinDivert sürücüsü paket filtresini başlattı: {}", line)
+                    format!(
+                        "[MOTOR] 🛡️ WinDivert sürücüsü paket filtresini başlattı: {}",
+                        line
+                    )
                 } else {
                     format!("[MOTOR] {}", line)
                 };

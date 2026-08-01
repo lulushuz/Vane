@@ -1,6 +1,6 @@
 use crate::config::preset::{builtin_presets, Preset};
+use crate::config::validator::{validate_preset, PresetSource};
 use crate::engine::error::EngineError;
-use crate::engine::sanitizer::validate_preset_args;
 
 /*
    Structure responsible for loading and querying presets.
@@ -36,9 +36,13 @@ impl ConfigLoader {
        is appended later via `load_custom_presets_from`.
     */
     pub fn new() -> Self {
-        Self {
-            presets: builtin_presets(),
+        let presets = builtin_presets();
+        for p in &presets {
+            if let Err(e) = validate_preset(p, PresetSource::BuiltIn) {
+                panic!("Built-in preset {} failed validation: {}", p.id, e);
+            }
         }
+        Self { presets }
     }
 
     /*
@@ -63,7 +67,7 @@ impl ConfigLoader {
 
             match serde_json::from_str::<Preset>(&content) {
                 Ok(mut preset) => {
-                    if !is_valid_id(&preset.id) || validate_preset_args(&preset.args).is_err() {
+                    if validate_preset(&preset, PresetSource::Custom).is_err() {
                         tracing::error!(
                             "Unsafe or invalid custom preset was quarantined: {:?}",
                             path
@@ -81,9 +85,7 @@ impl ConfigLoader {
                     let recovered = std::fs::read_to_string(&backup_path)
                         .ok()
                         .and_then(|backup| serde_json::from_str::<Preset>(&backup).ok())
-                        .filter(|preset| {
-                            is_valid_id(&preset.id) && validate_preset_args(&preset.args).is_ok()
-                        });
+                        .filter(|preset| validate_preset(preset, PresetSource::Custom).is_ok());
                     if let Some(mut preset) = recovered {
                         preset.is_custom = true;
                         tracing::error!(
@@ -127,10 +129,9 @@ impl ConfigLoader {
 
         /*
            Security: authoritative validation of arguments before disk persistence.
-           This prevents "Import JSON" or malformed custom preset paths from
-           storing dangerous shell-injection payloads.
         */
-        validate_preset_args(&preset.args)?;
+        validate_preset(&preset, PresetSource::Custom)
+            .map_err(|e| EngineError::InvalidPreset(e.to_string()))?;
 
         let filename = format!("{}.json", preset.id);
         let path = dir.join(filename);
@@ -220,8 +221,7 @@ pub fn validate_remote_presets(
 }
 
 fn validate_remote_preset(preset: &crate::config::preset::Preset) -> Result<(), EngineError> {
-    if !is_valid_id(&preset.id) {
-        return Err(EngineError::InvalidId(preset.id.clone()));
-    }
-    validate_preset_args(&preset.args)
+    validate_preset(preset, PresetSource::RemoteSigned)
+        .map_err(|e| EngineError::InvalidPreset(e.to_string()))?;
+    Ok(())
 }

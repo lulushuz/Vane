@@ -61,7 +61,7 @@ export function SafetyProxyView() {
     const activeDomains = bypassMode === 'whitelist' ? whitelistDomains : blacklistDomains;
     try {
       await invoke('sync_dns_settings', {
-        protocol: dnsProtocol === 'doq' ? 'doh' : dnsProtocol,
+        protocol: dnsProtocol,
         adblock: dnsAdBlock,
         cache: dnsCache,
         socks5Proxy: verifiedProxy,
@@ -96,7 +96,7 @@ export function SafetyProxyView() {
       // backend step above succeeds.
       try {
         await invoke('sync_dns_settings', {
-          protocol: dnsProtocol === 'doq' ? 'doh' : dnsProtocol,
+          protocol: dnsProtocol,
           adblock: dnsAdBlock,
           cache: dnsCache,
           socks5Proxy: oldSettings.proxySocks5,

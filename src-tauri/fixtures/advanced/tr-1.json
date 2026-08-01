@@ -1,0 +1,17 @@
+{
+  "name": "tr-1",
+  "platform": "windows",
+  "inputArgs": [
+    "--wf-tcp=80,443",
+    "--dpi-desync=fake,split",
+    "--dpi-desync-fooling=md5sig",
+    "--dpi-desync-repeats=2"
+  ],
+  "valid": true,
+  "expectedCanonicalArgs": [
+    "--wf-tcp=80,443",
+    "--dpi-desync=fake,split",
+    "--dpi-desync-repeats=2",
+    "--dpi-desync-fooling=md5sig"
+  ]
+}

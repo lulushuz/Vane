@@ -104,9 +104,7 @@ fn validate_single_arg(arg: &str) -> Result<(), EngineError> {
         validate_port_spec(value)?;
     } else if let Some(value) = arg.strip_prefix("--dpi-desync-cutoff=") {
         validate_cutoff(value)?;
-    } else if let Some(value) = arg
-        .strip_prefix("--dpi-desync=")
-    {
+    } else if let Some(value) = arg.strip_prefix("--dpi-desync=") {
         validate_strategy(value)?;
     } else if let Some(value) = arg.strip_prefix("--dpi-desync-fooling=") {
         validate_fooling(value)?;
@@ -118,9 +116,7 @@ fn validate_single_arg(arg: &str) -> Result<(), EngineError> {
         validate_number(value, 1, 255, "TTL")?;
     } else if let Some(value) = arg.strip_prefix("--dpi-desync-repeats=") {
         validate_number(value, 1, 100, "repeat count")?;
-    } else if let Some(value) = arg
-        .strip_prefix("--dpi-desync-split-pos=")
-    {
+    } else if let Some(value) = arg.strip_prefix("--dpi-desync-split-pos=") {
         validate_split_positions(value)?;
     } else if let Some(value) = arg.strip_prefix("--wssize=") {
         validate_number(value, 1, 16_777_216, "TCP window")?;
@@ -236,10 +232,29 @@ fn validate_split_positions(value: &str) -> Result<(), EngineError> {
 
 fn validate_strategy(value: &str) -> Result<(), EngineError> {
     const MODES: &[&str] = &[
-        "synack", "syndata", "fake", "fakeknown", "rst", "rstack", "hopbyhop",
-        "destopt", "ipfrag1", "multisplit", "multidisorder", "fakedsplit",
-        "fakeddisorder", "hostfakesplit", "ipfrag2", "udplen", "tamper",
-        "split", "split2", "disorder", "disorder2", "oob", "oob2",
+        "synack",
+        "syndata",
+        "fake",
+        "fakeknown",
+        "rst",
+        "rstack",
+        "hopbyhop",
+        "destopt",
+        "ipfrag1",
+        "multisplit",
+        "multidisorder",
+        "fakedsplit",
+        "fakeddisorder",
+        "hostfakesplit",
+        "ipfrag2",
+        "udplen",
+        "tamper",
+        "split",
+        "split2",
+        "disorder",
+        "disorder2",
+        "oob",
+        "oob2",
     ];
     if value.is_empty() || value.split(',').any(|mode| !MODES.contains(&mode)) {
         return Err(EngineError::InvalidPreset(
@@ -251,7 +266,14 @@ fn validate_strategy(value: &str) -> Result<(), EngineError> {
 
 fn validate_fooling(value: &str) -> Result<(), EngineError> {
     const MODES: &[&str] = &[
-        "none", "md5sig", "badseq", "badsum", "datanoack", "ts", "hopbyhop", "hopbyhop2",
+        "none",
+        "md5sig",
+        "badseq",
+        "badsum",
+        "datanoack",
+        "ts",
+        "hopbyhop",
+        "hopbyhop2",
     ];
     if value.is_empty() || value.split(',').any(|mode| !MODES.contains(&mode)) {
         return Err(EngineError::InvalidPreset(
@@ -351,15 +373,30 @@ mod tests {
 
     #[test]
     fn exact_flags_reject_appended_text() {
-        for arg in ["--debuganything", "--windivertanything", "--dpi-desync-any-protocol=true"] {
-            assert!(validate_preset_args(&[arg.to_string()]).is_err(), "invalid exact flag passed: {arg}");
+        for arg in [
+            "--debuganything",
+            "--windivertanything",
+            "--dpi-desync-any-protocol=true",
+        ] {
+            assert!(
+                validate_preset_args(&[arg.to_string()]).is_err(),
+                "invalid exact flag passed: {arg}"
+            );
         }
     }
 
     #[test]
     fn semantic_values_are_checked() {
-        for arg in ["--wf-tcp=0", "--wf-udp=70000", "--bind-addr=not-an-ip", "--dpi-desync-ttl=999"] {
-            assert!(validate_preset_args(&[arg.to_string()]).is_err(), "invalid value passed: {arg}");
+        for arg in [
+            "--wf-tcp=0",
+            "--wf-udp=70000",
+            "--bind-addr=not-an-ip",
+            "--dpi-desync-ttl=999",
+        ] {
+            assert!(
+                validate_preset_args(&[arg.to_string()]).is_err(),
+                "invalid value passed: {arg}"
+            );
         }
     }
 

@@ -1,0 +1,9 @@
+{
+  "protocol": "doh",
+  "adblock": true,
+  "cache": true,
+  "socks5Proxy": "",
+  "forwarderActive": true,
+  "configRevision": 1,
+  "stage": "applied"
+}

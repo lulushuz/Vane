@@ -1,7 +1,7 @@
 {
   "name": "vane-dpi",
   "private": true,
-  "version": "2.1.4",
+  "version": "1.0.0-rc.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "framer-motion": "^11",
     "lucide-react": "^1.8.0",
@@ -21,7 +21,7 @@
     "zustand": "^4"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "^2.11.0",
     "@types/node": "^25.6.0",
     "@types/react": "^18",
     "@types/react-dom": "^18",

@@ -1,0 +1,11 @@
+{
+  "name": "invalid-hostlist-injection",
+  "platform": "windows",
+  "inputArgs": [
+    "--wf-tcp=80,443",
+    "--dpi-desync=fake",
+    "--hostlist=C:\\windows\\system32\\drivers\\etc\\hosts"
+  ],
+  "valid": false,
+  "expectedCanonicalArgs": []
+}

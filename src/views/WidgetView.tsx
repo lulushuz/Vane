@@ -24,10 +24,25 @@ export function WidgetView() {
   const isError = status.variant === 'error';
 
   const [authError, setAuthError] = useState<string | null>(null);
+  const [integrityError, setIntegrityError] = useState<string | null>(null);
   const [version, setVersion] = useState<string>('');
 
   useEffect(() => {
     getVersion().then(setVersion);
+    // Fetch binary artifact integrity status on mount
+    invoke<{ status: string }>('get_artifact_integrity_status')
+      .then((res) => {
+        if (res && res.status !== 'verified') {
+          setIntegrityError(
+            'Vane motor dosyalarının bütünlük doğrulaması başarısız oldu. Güvenlik nedeniyle motor başlatılmadı. Uygulamayı güvenilir kaynaktan yeniden kurmanız önerilir.'
+          );
+        } else {
+          setIntegrityError(null);
+        }
+      })
+      .catch(() => {
+        /* Fail-closed or ignore if API unavailable */
+      });
   }, []);
 
   useEffect(() => {
@@ -40,6 +55,9 @@ export function WidgetView() {
 
   const handleToggle = useCallback(async () => {
     if (isStarting || isActionLoading) return;
+    if (integrityError) {
+      return;
+    }
     setIsActionLoading(true);
     try {
       if (isRunning) {
@@ -50,7 +68,8 @@ export function WidgetView() {
     } finally {
       setIsActionLoading(false);
     }
-  }, [isRunning, isStarting, isActionLoading, startEngine, stopEngine]);
+  }, [isRunning, isStarting, isActionLoading, integrityError, startEngine, stopEngine]);
+
 
   const openSettings = async () => {
     try {
@@ -157,7 +176,7 @@ export function WidgetView() {
         <button
           className={`${styles.mainToggleBtn} ${isRunning ? styles.on : isStarting ? styles.starting : styles.off}`}
           onClick={handleToggle}
-          disabled={isStarting || isActionLoading}
+          disabled={isStarting || isActionLoading || Boolean(integrityError)}
           data-tauri-drag-region="false"
         >
           <motion.svg
@@ -182,7 +201,12 @@ export function WidgetView() {
           </motion.svg>
         </button>
 
-        {isError && status.variant === 'error' && (
+        {integrityError ? (
+          <div className={styles.errorBox}>
+            <AlertCircle size={14} />
+            <span title={integrityError}>{integrityError}</span>
+          </div>
+        ) : isError && status.variant === 'error' && (
           <div className={styles.errorBox}>
             <AlertCircle size={14} />
             <span title={status.message}>
@@ -192,6 +216,7 @@ export function WidgetView() {
             </span>
           </div>
         )}
+
 
         <div className={`${styles.statusText} ${isRunning ? styles.textOn : isError ? styles.textError : styles.textOff}`}>
           {isStarting

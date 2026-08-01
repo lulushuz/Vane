@@ -1,0 +1,15 @@
+{
+  "name": "youtube-quic",
+  "platform": "windows",
+  "inputArgs": [
+    "--wf-udp=443",
+    "--dpi-desync=fake",
+    "--dpi-desync-repeats=11"
+  ],
+  "valid": true,
+  "expectedCanonicalArgs": [
+    "--wf-udp=443",
+    "--dpi-desync=fake",
+    "--dpi-desync-repeats=11"
+  ]
+}
