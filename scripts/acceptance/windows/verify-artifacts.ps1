@@ -1,10 +1,3 @@
-# verify-artifacts.ps1 — Verifies native driver and sidecar binaries
-$installDir = "C:\Program Files\Vane"
-$required = @("winws.exe", "WinDivert64.sys", "WinDivert.dll", "cygwin1.dll")
-foreach ($file in $required) {
-    $path = "$installDir\resources\binaries\$file"
-    if (-not (Test-Path $path)) {
-        throw "Required native artifact missing: $file"
-    }
-}
-Write-Host "All native sidecar artifacts verified."
+$ErrorActionPreference='Stop';$count=0;$manifest=Get-Content 'src-tauri/security/native-artifacts.json' -Raw|ConvertFrom-Json
+foreach($item in $manifest.artifacts|Where-Object platform -eq 'windows-x86_64'){$file=Get-ChildItem 'C:\Program Files\Vane' -Filter (Split-Path $item.relativePath -Leaf) -Recurse;if(@($file).Count-ne 1){throw "Occurrence mismatch: $($item.id)"};if($file.Length-ne $item.size){throw "Size mismatch: $($item.id)"};if((Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()-ne $item.sha256){throw "Hash mismatch: $($item.id)"};$count+=3}
+[ordered]@{name='verify-artifacts';status='PASSED';assertionCount=$count}|ConvertTo-Json -Compress
