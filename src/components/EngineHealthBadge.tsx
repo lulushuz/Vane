@@ -25,7 +25,7 @@ const MANUAL_CHECK_COOLDOWN_MS = 5_000;
  */
 export function EngineHealthBadge() {
   const { status, presets, activePresetId, healthCheckTargets, bypassMode, whitelistDomains } = useEngineStore();
-  const isRunning = status.variant === 'running';
+  const isRunning = status.variant === 'ready';
   const activePreset = presets.find((p) => p.id === activePresetId);
   const presetLabel = activePreset?.label ?? activePresetId ?? 'Default';
 

@@ -56,7 +56,7 @@ export function AdvancedView() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const t = translations[language];
 
-  const isRunning = status.variant === 'running';
+  const isRunning = status.variant === 'ready';
   const [isApplying, setIsApplying] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [isReset, setIsReset] = useState(false);

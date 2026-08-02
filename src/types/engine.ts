@@ -6,6 +6,8 @@
 export type EngineStatus =
   | { variant: 'stopped' }
   | { variant: 'starting' }
+  | { variant: 'waitingForReadiness'; pid: number }
+  | { variant: 'ready'; pid: number; generation: number; revision: number; fingerprint: string }
   | { variant: 'running'; pid: number }
   | { variant: 'error'; message: string; code?: string };
 

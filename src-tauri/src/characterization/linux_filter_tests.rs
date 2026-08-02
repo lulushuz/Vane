@@ -22,18 +22,9 @@ mod tests {
     }
 
     #[test]
-    fn group_a01_filter_intent_default_tcp_80_443() {
+    fn group_a01_filter_intent_has_no_implicit_ports() {
         let intent = LinuxFilterIntent::from_specs(None, None, "all");
-        assert_eq!(
-            intent.tcp_ports,
-            vec![
-                PortRange { start: 80, end: 80 },
-                PortRange {
-                    start: 443,
-                    end: 443
-                }
-            ]
-        );
+        assert!(intent.tcp_ports.is_empty());
         assert!(intent.udp_ports.is_empty());
         assert!(!intent.requires_quic);
     }

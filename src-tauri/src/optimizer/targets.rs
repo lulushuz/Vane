@@ -30,21 +30,21 @@ pub struct ResolvedMeasurementTarget {
 pub fn default_measurement_targets() -> Vec<MeasurementTarget> {
     vec![
         MeasurementTarget {
-            id: MeasurementTargetId("youtube_target".into()),
+            id: MeasurementTargetId("youtube".into()),
             host: "www.youtube.com".into(),
             port: 443,
             path: Some("/".into()),
             protocol: MeasurementProtocol::Https,
         },
         MeasurementTarget {
-            id: MeasurementTargetId("discord_target".into()),
+            id: MeasurementTargetId("discord".into()),
             host: "discord.com".into(),
             port: 443,
             path: Some("/".into()),
             protocol: MeasurementProtocol::Https,
         },
         MeasurementTarget {
-            id: MeasurementTargetId("x_target".into()),
+            id: MeasurementTargetId("x".into()),
             host: "x.com".into(),
             port: 443,
             path: Some("/".into()),

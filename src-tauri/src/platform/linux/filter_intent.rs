@@ -20,7 +20,7 @@ impl LinuxFilterIntent {
         declared_udp: Option<&str>,
         hostlist_mode: &str,
     ) -> Self {
-        let tcp_ports = parse_port_spec(declared_tcp.unwrap_or("80,443"));
+        let tcp_ports = parse_port_spec(declared_tcp.unwrap_or(""));
         let udp_ports = parse_port_spec(declared_udp.unwrap_or(""));
 
         let requires_quic = udp_ports.iter().any(|r| r.start <= 443 && 443 <= r.end);

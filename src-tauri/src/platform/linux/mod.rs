@@ -6,6 +6,7 @@ pub mod iptables;
 pub mod nftables;
 pub mod ownership;
 pub mod recovery;
+pub mod runtime;
 
 pub use capabilities::{probe_linux_capabilities, LinuxPlatformCapabilities, LinuxPlatformError};
 pub use executor::{FakeLinuxFirewallExecutor, LinuxFirewallExecutor, SystemLinuxFirewallExecutor};
@@ -21,3 +22,4 @@ pub use recovery::{
     clear_linux_filter_metadata, recover_orphan_linux_filter_rules, save_linux_filter_metadata,
     PersistedLinuxFilterMetadata,
 };
+pub use runtime::{deterministic_queue, LinuxFilterGuard};

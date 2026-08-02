@@ -134,10 +134,11 @@ pub fn build_linux_filter_plan(
 
     let remove_steps = rollback_steps.clone();
 
+    let queue_number = ownership.queue_number;
     LinuxFilterPlan {
         ownership,
         backend,
-        queue_number: 200,
+        queue_number,
         ipv4_rules,
         ipv6_rules,
         apply_steps,

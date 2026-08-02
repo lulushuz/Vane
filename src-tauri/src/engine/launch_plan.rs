@@ -154,7 +154,6 @@ pub(crate) fn build_engine_launch_plan(
             prepared_args.extend(input.preset.args.iter().cloned());
         }
         EnginePlatform::Linux => {
-            prepared_args.push("--qnum=200".to_string());
             for arg in &input.preset.args {
                 if arg.starts_with("--wf-")
                     || arg.starts_with("--windivert")
@@ -266,7 +265,7 @@ pub(crate) fn build_engine_launch_plan(
         },
         EnginePlatform::Linux => PlatformLaunchPlan::Linux {
             arguments: final_args.clone(),
-            queue_number: 200,
+            queue_number: 0,
             current_firewall_behavior: LinuxFirewallBehavior {
                 tcp_ports: parsed_tcp_ports,
                 udp_ports: parsed_udp_ports,

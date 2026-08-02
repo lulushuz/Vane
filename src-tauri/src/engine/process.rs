@@ -17,6 +17,8 @@ pub struct ProcessHandle {
     _job_guard: Option<JobObjectGuard>,
     #[cfg(target_os = "linux")]
     _route_guard: Option<crate::network::router::NetworkRouteGuard>,
+    #[cfg(target_os = "linux")]
+    _filter_guard: Option<crate::platform::linux::LinuxFilterGuard>,
 }
 
 impl std::fmt::Debug for ProcessHandle {
@@ -33,6 +35,7 @@ impl ProcessHandle {
         pid: u32,
         #[cfg(target_os = "windows")] job_guard: Option<JobObjectGuard>,
         #[cfg(target_os = "linux")] route_guard: Option<crate::network::router::NetworkRouteGuard>,
+        #[cfg(target_os = "linux")] filter_guard: Option<crate::platform::linux::LinuxFilterGuard>,
     ) -> Self {
         Self {
             child: Some(child),
@@ -41,6 +44,8 @@ impl ProcessHandle {
             _job_guard: job_guard,
             #[cfg(target_os = "linux")]
             _route_guard: route_guard,
+            #[cfg(target_os = "linux")]
+            _filter_guard: filter_guard,
         }
     }
 
