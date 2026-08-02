@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static MONOTONIC_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static PROCESS_START: std::sync::LazyLock<std::time::Instant> =
+    std::sync::LazyLock::new(std::time::Instant::now);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -111,7 +113,7 @@ impl DiagnosticEvent {
             .unwrap_or_default()
             .as_millis() as u64;
 
-        let monotonic_ns = std::time::Instant::now().elapsed().as_nanos() as u64;
+        let monotonic_ns = PROCESS_START.elapsed().as_nanos().min(u64::MAX as u128) as u64;
 
         Self {
             sequence,
