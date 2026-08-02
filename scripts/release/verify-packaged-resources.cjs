@@ -16,14 +16,6 @@ function walk(dir, out = []) {
   }
   return out;
 }
-function expandNestedPayloads(extractor, extractDir) {
-  const archives = walk(extractDir).filter((file) => /(?:^|[\\/])app-(?:32|64|arm64)\.7z$/i.test(file));
-  if (archives.length !== 1) throw new Error(`Expected one NSIS application payload archive, found ${archives.length}`);
-  const payloadDir = path.join(extractDir, 'installed-payload');
-  fs.mkdirSync(payloadDir);
-  execFileSync(extractor, ['x', '-y', `-o${payloadDir}`, archives[0]], { stdio: 'pipe' });
-  return payloadDir;
-}
 function findExtractor() {
   const requested = option('--extractor') || process.env.SEVEN_ZIP;
   const candidates = [requested, 'C:\\Program Files\\7-Zip\\7z.exe', 'C:\\Program Files (x86)\\7-Zip\\7z.exe', '7z'];
@@ -59,16 +51,15 @@ function main() {
   const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vane-nsis-'));
   try {
     execFileSync(extractor, ['x', '-y', `-o${extractDir}`, path.resolve(installer)], { stdio: 'pipe' });
-    const payloadDir = expandNestedPayloads(extractor, extractDir);
-    const files = walk(payloadDir);
+    const files = walk(extractDir);
     if (!files.some((file) => /^(?:vane|vane-dpi)\.exe$/i.test(path.basename(file)))) throw new Error('Vane application executable missing');
     const forbidden = /\.(?:pdb|map|pem|key|pfx|env|log|rs|ts|tsx)$/i;
     const bad = files.filter((file) => forbidden.test(file) || file.replaceAll('\\', '/').includes('/node_modules/'));
     if (bad.length) throw new Error(`Unexpected package files: ${bad.map(path.basename).join(', ')}`);
     const nativeManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src-tauri/security/native-artifacts.json')));
     const contentManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src-tauri/security/content-artifacts.json')));
-    const nativeArtifacts = verifyManifest(nativeManifest, files, 'windows-x86_64', payloadDir);
-    const contentArtifacts = verifyManifest(contentManifest, files, 'windows-x86_64', payloadDir);
+    const nativeArtifacts = verifyManifest(nativeManifest, files, 'windows-x86_64', extractDir);
+    const contentArtifacts = verifyManifest(contentManifest, files, 'windows-x86_64', extractDir);
     for (const required of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
       if (!files.some((file) => path.basename(file).toLowerCase() === required.toLowerCase())) throw new Error(`${required} missing`);
     }
