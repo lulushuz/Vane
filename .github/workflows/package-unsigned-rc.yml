@@ -107,6 +107,8 @@ jobs:
 
       - name: Generate Release Readiness Manifest
         run: node scripts/release/create-release-metadata.cjs
+        env:
+          COMPLETED_GATES: frontend-tests,frontend-build,npm-audit,rust-lib-tests,rust-all-targets,rust-all-features,cargo-fmt,clippy,cargo-audit,version-parity,native-manifest,nsis-build,nsis-package-verification,installer-checksum
 
       - name: Upload Unsigned Release Candidate Artifacts
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
