@@ -75,12 +75,8 @@ jobs:
       - name: Build Unsigned Tauri Application
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
         with:
-          tagName: ""
-          releaseName: ""
-          draft: false
-          prerelease: false
+          args: --bundles nsis --config src-tauri/tauri.unsigned.conf.json
           includeUpdaterJson: false
-          includeNsis: true
 
       - name: Install verified pinned 7-Zip
         shell: powershell
