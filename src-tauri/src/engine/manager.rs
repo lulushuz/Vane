@@ -928,7 +928,7 @@ async fn spawn_and_run_prepared(
                 .traffic_filter
                 .effective_linux_udp_spec
                 .as_deref(),
-            prepared.verified.bypass.mode.as_str(),
+            crate::platform::linux::LinuxHostlistMode::from(prepared.verified.bypass.mode),
         );
         let filter_guard = crate::platform::linux::LinuxFilterGuard::apply(
             app,

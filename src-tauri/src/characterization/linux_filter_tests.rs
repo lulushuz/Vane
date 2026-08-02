@@ -3,9 +3,40 @@ mod tests {
     use crate::platform::linux::{
         build_linux_filter_plan, render_iptables_step_args, render_nftables_batch,
         render_nftables_cleanup, FakeLinuxFirewallExecutor, LinuxFilterIntent,
-        LinuxFirewallBackend, LinuxFirewallExecutor, LinuxPlatformCapabilities, LinuxRuleOwnership,
-        PersistedLinuxFilterMetadata, PortRange,
+        LinuxFirewallBackend, LinuxFirewallExecutor, LinuxHostlistMode, LinuxPlatformCapabilities,
+        LinuxRuleOwnership, PersistedLinuxFilterMetadata, PortRange,
     };
+
+    #[test]
+    fn runtime_all_maps_to_linux_all() {
+        assert_eq!(
+            LinuxHostlistMode::from(crate::engine::runtime_config::RuntimeBypassMode::All),
+            LinuxHostlistMode::All
+        );
+    }
+
+    #[test]
+    fn runtime_whitelist_maps_to_linux_whitelist() {
+        assert_eq!(
+            LinuxHostlistMode::from(crate::engine::runtime_config::RuntimeBypassMode::Whitelist),
+            LinuxHostlistMode::Whitelist
+        );
+    }
+
+    #[test]
+    fn runtime_blacklist_maps_to_linux_blacklist() {
+        assert_eq!(
+            LinuxHostlistMode::from(crate::engine::runtime_config::RuntimeBypassMode::Blacklist),
+            LinuxHostlistMode::Blacklist
+        );
+    }
+
+    #[test]
+    fn linux_filter_intent_preserves_typed_hostlist_mode() {
+        let intent =
+            LinuxFilterIntent::from_specs(Some("443"), Some("443"), LinuxHostlistMode::Whitelist);
+        assert_eq!(intent.hostlist_mode, LinuxHostlistMode::Whitelist);
+    }
 
     fn mock_capabilities(nftables: bool, iptables: bool) -> LinuxPlatformCapabilities {
         LinuxPlatformCapabilities {
@@ -23,7 +54,7 @@ mod tests {
 
     #[test]
     fn group_a01_filter_intent_has_no_implicit_ports() {
-        let intent = LinuxFilterIntent::from_specs(None, None, "all");
+        let intent = LinuxFilterIntent::from_specs(None, None, LinuxHostlistMode::All);
         assert!(intent.tcp_ports.is_empty());
         assert!(intent.udp_ports.is_empty());
         assert!(!intent.requires_quic);
@@ -31,7 +62,7 @@ mod tests {
 
     #[test]
     fn group_a02_filter_intent_tcp_only_443() {
-        let intent = LinuxFilterIntent::from_specs(Some("443"), None, "whitelist");
+        let intent = LinuxFilterIntent::from_specs(Some("443"), None, LinuxHostlistMode::Whitelist);
         assert_eq!(
             intent.tcp_ports,
             vec![PortRange {
@@ -44,7 +75,8 @@ mod tests {
 
     #[test]
     fn group_a03_filter_intent_custom_tcp_range() {
-        let intent = LinuxFilterIntent::from_specs(Some("8080-8090,443"), None, "all");
+        let intent =
+            LinuxFilterIntent::from_specs(Some("8080-8090,443"), None, LinuxHostlistMode::All);
         assert_eq!(
             intent.tcp_ports,
             vec![
@@ -62,7 +94,8 @@ mod tests {
 
     #[test]
     fn group_a04_filter_intent_udp_quic_443() {
-        let intent = LinuxFilterIntent::from_specs(Some("80,443"), Some("443"), "all");
+        let intent =
+            LinuxFilterIntent::from_specs(Some("80,443"), Some("443"), LinuxHostlistMode::All);
         assert_eq!(
             intent.udp_ports,
             vec![PortRange {
@@ -75,7 +108,8 @@ mod tests {
 
     #[test]
     fn group_a05_filter_intent_discord_voip_udp_range() {
-        let intent = LinuxFilterIntent::from_specs(Some("443"), Some("50000-65535"), "all");
+        let intent =
+            LinuxFilterIntent::from_specs(Some("443"), Some("50000-65535"), LinuxHostlistMode::All);
         assert_eq!(
             intent.udp_ports,
             vec![PortRange {
@@ -89,7 +123,8 @@ mod tests {
     #[test]
     fn group_c01_nftables_plan_generation_and_ownership() {
         let caps = mock_capabilities(true, true);
-        let intent = LinuxFilterIntent::from_specs(Some("80,443"), Some("443"), "all");
+        let intent =
+            LinuxFilterIntent::from_specs(Some("80,443"), Some("443"), LinuxHostlistMode::All);
         let ownership =
             LinuxRuleOwnership::new("inst-12345678", "instance-87654321", 1, 10, "fp123", 200);
 
@@ -116,7 +151,11 @@ mod tests {
     #[test]
     fn group_d01_iptables_fallback_plan_and_comment_ownership() {
         let caps = mock_capabilities(false, true);
-        let intent = LinuxFilterIntent::from_specs(Some("443"), Some("50000-65535"), "whitelist");
+        let intent = LinuxFilterIntent::from_specs(
+            Some("443"),
+            Some("50000-65535"),
+            LinuxHostlistMode::Whitelist,
+        );
         let ownership =
             LinuxRuleOwnership::new("inst-12345678", "instance-87654321", 2, 15, "fp456", 200);
 
@@ -136,7 +175,8 @@ mod tests {
     #[test]
     fn group_e01_partial_apply_rollback_simulation() {
         let caps = mock_capabilities(false, true);
-        let intent = LinuxFilterIntent::from_specs(Some("80,443"), Some("443"), "all");
+        let intent =
+            LinuxFilterIntent::from_specs(Some("80,443"), Some("443"), LinuxHostlistMode::All);
         let ownership = LinuxRuleOwnership::new("inst-123", "inst-876", 1, 1, "fp", 200);
         let plan = build_linux_filter_plan(ownership, &intent, &caps);
 

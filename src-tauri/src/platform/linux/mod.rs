@@ -10,7 +10,7 @@ pub mod runtime;
 
 pub use capabilities::{probe_linux_capabilities, LinuxPlatformCapabilities, LinuxPlatformError};
 pub use executor::{FakeLinuxFirewallExecutor, LinuxFirewallExecutor, SystemLinuxFirewallExecutor};
-pub use filter_intent::{LinuxFilterIntent, PortRange};
+pub use filter_intent::{LinuxFilterIntent, LinuxHostlistMode, PortRange};
 pub use filter_plan::{
     build_linux_filter_plan, LinuxFilterPlan, LinuxFirewallBackend, LinuxFirewallRule,
     LinuxFirewallStep,
