@@ -82,14 +82,23 @@ jobs:
           includeUpdaterJson: false
           includeNsis: true
 
-      - name: Install pinned 7-Zip
-        run: choco install 7zip --version=24.9.0 --yes --no-progress
+      - name: Install verified pinned 7-Zip
+        shell: powershell
+        run: |
+          $metadata = Get-Content scripts/release/tools/7zip.json -Raw | ConvertFrom-Json
+          $installer = Join-Path $env:RUNNER_TEMP "7zip-$($metadata.version)-x64.exe"
+          Invoke-WebRequest -Uri $metadata.downloadUrl -OutFile $installer
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $metadata.sha256) { throw "7-Zip installer SHA-256 mismatch" }
+          $process = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "7-Zip installation failed: $($process.ExitCode)" }
+          if (-not (Test-Path 'C:\Program Files\7-Zip\7z.exe')) { throw "Verified 7-Zip executable missing" }
 
       - name: Verify Packaged Resources
         shell: powershell
         run: |
           $installer = (Get-ChildItem src-tauri/target/release/bundle/nsis/*setup.exe | Select-Object -First 1).FullName
-          node scripts/release/verify-packaged-resources.cjs --installer $installer --extractor 'C:\Program Files\7-Zip\7z.exe'
+          node scripts/release/verify-packaged-resources.cjs --installer $installer --extractor 'C:\Program Files\7-Zip\7z.exe' --output artifacts/evidence/nsis-package-verification.json
 
       - name: Generate Software Bill of Materials (SBOM)
         run: node scripts/release/generate-sbom.cjs

@@ -570,7 +570,7 @@ fn read_bypass_config(app: &AppHandle) -> Result<BypassConfig, EngineError> {
  * exclusively owned by DnsTransactionManager and its persisted ownership metadata.
  */
 #[cfg(any())]
-fn removed_legacy_apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
+fn disabled_legacy_dns_firewall_mutation(enabled: bool) -> Result<(), EngineError> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -592,7 +592,7 @@ fn removed_legacy_apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
             "firewall",
             "delete",
             "rule",
-            "name=VaneDNSKillSwitch",
+            "name=DisabledLegacyVaneDnsRule",
         ])?;
         if !removed {
             tracing::debug!("No existing Vane DNS kill-switch rule was removed.");
@@ -601,13 +601,13 @@ fn removed_legacy_apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
         if enabled {
             let udp_added = run_netsh(&[
                     "advfirewall", "firewall", "add", "rule",
-                    "name=VaneDNSKillSwitch", "dir=out", "action=block",
+                    "name=DisabledLegacyVaneDnsRule", "dir=out", "action=block",
                     "protocol=UDP", "remoteport=53",
                     "remoteip=0.0.0.0-127.0.0.0,127.0.0.2-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
                 ])?;
             let tcp_added = run_netsh(&[
                     "advfirewall", "firewall", "add", "rule",
-                    "name=VaneDNSKillSwitch", "dir=out", "action=block",
+                    "name=DisabledLegacyVaneDnsRule", "dir=out", "action=block",
                     "protocol=TCP", "remoteport=53",
                     "remoteip=0.0.0.0-127.0.0.0,127.0.0.2-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
                 ])?;
@@ -617,7 +617,7 @@ fn removed_legacy_apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
                     "firewall",
                     "delete",
                     "rule",
-                    "name=VaneDNSKillSwitch",
+                    "name=DisabledLegacyVaneDnsRule",
                 ]);
                 return Err(EngineError::AuthorizationFailed(
                     "DNS kill switch could not be applied to Windows Firewall.".to_string(),
@@ -721,7 +721,7 @@ fn removed_legacy_apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
                 || !udp6_status.success()
                 || !tcp6_status.success()
             {
-                let _ = removed_legacy_apply_kill_switch(false);
+                let _ = disabled_legacy_dns_firewall_mutation(false);
                 return Err(EngineError::AuthorizationFailed(
                     "DNS kill switch could not verify IPv4 and IPv6 iptables rules.".to_string(),
                 ));
@@ -750,7 +750,7 @@ impl Drop for KillSwitchRollback {
     fn drop(&mut self) {
         if self.active {
             tracing::warn!("Engine startup failed; rolling back the DNS kill switch.");
-            let _ = removed_legacy_apply_kill_switch(false);
+            let _ = disabled_legacy_dns_firewall_mutation(false);
         }
     }
 }

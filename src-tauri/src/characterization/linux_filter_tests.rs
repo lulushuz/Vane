@@ -174,3 +174,16 @@ mod tests {
         assert_eq!(deserialized.queue_number, 200);
     }
 }
+#[test]
+fn production_linux_path_does_not_contain_global_table_cleanup() {
+    let source = include_str!("../engine/manager.rs");
+    assert!(!source.contains("nft delete table"));
+    assert!(!source.contains("vane_mangle"));
+}
+
+#[test]
+fn production_linux_path_does_not_use_hardcoded_queue_200() {
+    let source = include_str!("../engine/manager.rs");
+    assert!(!source.contains("queue-num 200"));
+    assert!(!source.contains("--qnum=200"));
+}

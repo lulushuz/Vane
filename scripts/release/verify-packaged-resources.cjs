@@ -25,6 +25,7 @@ function findExtractor() {
   throw new Error('Pinned 7-Zip extractor is required; pass --extractor or SEVEN_ZIP');
 }
 function verifyManifest(manifest, files, platform, extractDir) {
+  const verified = [];
   for (const artifact of manifest.artifacts.filter((item) => item.required && (!item.platform || item.platform === platform))) {
     const normalized = artifact.relativePath.replaceAll('\\', '/').toLowerCase();
     const matches = files.filter((file) => {
@@ -35,7 +36,9 @@ function verifyManifest(manifest, files, platform, extractDir) {
     const stat = fs.lstatSync(matches[0]);
     if (!stat.isFile() || stat.size !== artifact.size) throw new Error(`${artifact.id}: size/type mismatch`);
     if (sha256(matches[0]) !== artifact.sha256) throw new Error(`${artifact.id}: SHA-256 mismatch`);
+    verified.push({ id: artifact.id, relativePath: artifact.relativePath, status: 'verified', size: stat.size, sha256: artifact.sha256 });
   }
+  return verified;
 }
 function main() {
   const installer = option('--installer');
@@ -43,6 +46,8 @@ function main() {
     throw new Error('--installer must identify an existing NSIS .exe');
   }
   const extractor = findExtractor();
+  const outputPath = path.resolve(option('--output') || path.join(repoRoot, 'artifacts/evidence/nsis-package-verification.json'));
+  const startedAt = new Date().toISOString();
   const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vane-nsis-'));
   try {
     execFileSync(extractor, ['x', '-y', `-o${extractDir}`, path.resolve(installer)], { stdio: 'pipe' });
@@ -53,18 +58,20 @@ function main() {
     if (bad.length) throw new Error(`Unexpected package files: ${bad.map(path.basename).join(', ')}`);
     const nativeManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src-tauri/security/native-artifacts.json')));
     const contentManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src-tauri/security/content-artifacts.json')));
-    verifyManifest(nativeManifest, files, 'windows-x86_64', extractDir);
-    verifyManifest(contentManifest, files, 'windows-x86_64', extractDir);
+    const nativeArtifacts = verifyManifest(nativeManifest, files, 'windows-x86_64', extractDir);
+    const contentArtifacts = verifyManifest(contentManifest, files, 'windows-x86_64', extractDir);
     for (const required of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
       if (!files.some((file) => path.basename(file).toLowerCase() === required.toLowerCase())) throw new Error(`${required} missing`);
     }
-    const evidence = { schemaVersion: 1, gate: 'nsis-package-verification', status: 'passed', exitCode: 0,
-      command: 'verify-packaged-resources --installer', completedAt: new Date().toISOString(),
-      commit: process.env.GITHUB_SHA || require('child_process').execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim(),
-      installer: { fileName: path.basename(installer), size: fs.statSync(installer).size, sha256: sha256(installer) },
-      extractedFileCount: files.length };
-    const evidenceDir = path.join(repoRoot, 'artifacts/evidence'); fs.mkdirSync(evidenceDir, { recursive: true });
-    fs.writeFileSync(path.join(evidenceDir, 'nsis-package-verification.json'), `${JSON.stringify(evidence, null, 2)}\n`);
+    const sourceCommit = process.env.GITHUB_SHA || require('child_process').execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+    const extractorVersion = execFileSync(extractor, ['i'], { encoding: 'utf8' }).match(/7-Zip\s+([\d.]+)/i)?.[1] || 'unknown';
+    const evidence = { schemaVersion: 1, gate: 'nsis-package-verification', status: 'passed', sourceCommit,
+      workflowRunId: process.env.GITHUB_RUN_ID || null, exitCode: 0, startedAt, completedAt: new Date().toISOString(),
+      installer: { name: path.basename(installer), size: fs.statSync(installer).size, sha256: sha256(installer), authenticodeStatus: 'NotSigned' },
+      extractor: { name: '7-Zip', version: extractorVersion, sha256: fs.existsSync(extractor) ? sha256(extractor) : null },
+      nativeArtifacts, contentArtifacts, unexpectedFiles: [], extractedFileCount: files.length };
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
   } finally { fs.rmSync(extractDir, { recursive: true, force: true }); }
 }
 try { main(); } catch (error) { console.error(error.message); process.exit(1); }
