@@ -119,16 +119,19 @@ pub(crate) fn build_engine_launch_plan(
         EnginePlatform::Windows => EngineBinaryKind::Winws,
         EnginePlatform::Linux => EngineBinaryKind::Nfqws,
     };
-    let working_directory = input
-        .executable
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| {
-            EngineError::BinaryNotFound(format!(
-                "Binary path'in parent klasörü alınamadı: {:?}",
-                input.executable
-            ))
-        })?;
+    let working_directory = match input.platform {
+        EnginePlatform::Windows => input.executable.to_str().and_then(|path| {
+            path.rsplit_once(['\\', '/'])
+                .map(|(parent, _)| PathBuf::from(parent))
+        }),
+        EnginePlatform::Linux => input.executable.parent().map(Path::to_path_buf),
+    }
+    .ok_or_else(|| {
+        EngineError::BinaryNotFound(format!(
+            "Binary path'in parent klasörü alınamadı: {:?}",
+            input.executable
+        ))
+    })?;
 
     let binary_plan = EngineBinaryPlan {
         executable: input.executable.clone(),

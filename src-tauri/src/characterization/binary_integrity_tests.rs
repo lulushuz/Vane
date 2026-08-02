@@ -14,6 +14,17 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
 
+    #[cfg(unix)]
+    fn make_executable(path: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(_path: &std::path::Path) {}
+
     // ─── Group A: Manifest Validation ───
 
     #[test]
@@ -91,6 +102,7 @@ mod tests {
             let mut f = File::create(&dummy_path).unwrap();
             f.write_all(b"original content").unwrap();
         }
+        make_executable(&dummy_path);
 
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
