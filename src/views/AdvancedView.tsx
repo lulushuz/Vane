@@ -10,7 +10,11 @@ import {
   type AdvancedConfig,
   DEFAULT_ADVANCED_CONFIG,
 } from '../store/engineStore';
-import { parseArgsToConfig, serializeConfigToArgs } from '../utils/argsParser';
+import { parseAdvancedArguments } from '../utils/argsParser';
+import { serializeVerifiedAdvancedConfig } from '../utils/advancedSerializer';
+import { validateAdvancedCandidate } from '../utils/advancedValidator';
+import { uiConfigToAdvancedCandidate, verifiedAdvancedConfigToUi } from '../utils/advancedUiContract';
+import type { AdvancedCapabilities, VerifiedAdvancedConfig } from '../types/advanced';
 import { validateImportedPreset } from '../utils/presetValidator';
 import type { Preset } from '../types/engine';
 import { translations } from '../utils/translations';
@@ -63,8 +67,15 @@ export function AdvancedView() {
   const [profileName, setProfileName] = useState(language === 'tr' ? 'Özel Profilim' : 'My Custom Preset');
 
   const [snapshot, setSnapshot] = useState<AdvancedConfig>(advancedConfig);
+  const [capabilities, setCapabilities] = useState<AdvancedCapabilities | null>(null);
 
   const activePreset = presets.find(p => p.id === activePresetId);
+
+  useEffect(() => {
+    invoke<AdvancedCapabilities>('get_advanced_capabilities')
+      .then(setCapabilities)
+      .catch((error) => appendLog(`[ADVANCED] Capability discovery failed: ${error}`, 'error'));
+  }, [appendLog]);
 
   const handlePresetSelect = async (newId: string) => {
     setActivePreset(newId);
@@ -83,11 +94,20 @@ export function AdvancedView() {
   }, [setAdvancedDirty]);
 
   useEffect(() => {
-    if (!activePresetId) return;
+    if (!activePresetId || !capabilities) return;
     const preset = presets.find(p => p.id === activePresetId);
     if (!preset?.args) return;
 
-    const parsed = parseArgsToConfig(preset.args);
+    const parseResult = parseAdvancedArguments(preset.args, capabilities);
+    const validation = validateAdvancedCandidate(parseResult.candidate, capabilities);
+    if (!validation.valid) {
+      appendLog(`[ADVANCED] Preset validation failed: ${validation.errors.map((issue) => issue.message).join('; ')}`, 'error');
+      return;
+    }
+    const parsed = {
+      ...verifiedAdvancedConfigToUi(validation.config),
+      invalidArgs: parseResult.diagnostics.map((diagnostic) => diagnostic.argument),
+    };
     if (parsed.invalidArgs.length > 0) {
       appendLog(
         language === 'tr'
@@ -100,7 +120,7 @@ export function AdvancedView() {
     setSnapshot(parsed);
     setIsDirty(false);
     setProfileName(preset.isCustom ? preset.label : 'My Custom Preset');
-  }, [activePresetId, presets, setAdvancedConfig, appendLog, language]);
+  }, [activePresetId, presets, setAdvancedConfig, appendLog, language, capabilities]);
 
   const update = <K extends keyof AdvancedConfig>(key: K, value: AdvancedConfig[K]) => {
     setAdvancedConfig({ [key]: value } as Partial<AdvancedConfig>);
@@ -125,12 +145,19 @@ export function AdvancedView() {
     setIsReset(false);
   };
 
+  const validateCurrentConfig = (): VerifiedAdvancedConfig => {
+    if (!capabilities) throw new Error('Advanced capabilities are not available');
+    const result = validateAdvancedCandidate(uiConfigToAdvancedCandidate(advancedConfig), capabilities);
+    if (!result.valid) throw new Error(result.errors.map((issue) => issue.message).join('; '));
+    return result.config;
+  };
+
   const buildPreset = (name: string): Preset => ({
     id: slugify(name),
     label: name,
     description: 'Custom configuration created from the Advanced tab.',
     icon: '⚙️',
-    args: serializeConfigToArgs(advancedConfig),
+    args: serializeVerifiedAdvancedConfig(validateCurrentConfig()),
     isCustom: true,
     priority: 10,
     category: 'custom',
@@ -230,7 +257,16 @@ export function AdvancedView() {
         const preset = validation.preset;
         preset.id = slugify(preset.label || `imported-${Date.now()}`);
 
-        const parsed = parseArgsToConfig(preset.args);
+        if (!capabilities) throw new Error('Advanced capabilities are not available');
+        const parseResult = parseAdvancedArguments(preset.args, capabilities);
+        const validationResult = validateAdvancedCandidate(parseResult.candidate, capabilities);
+        if (!validationResult.valid) {
+          throw new Error(validationResult.errors.map((issue) => issue.message).join('; '));
+        }
+        const parsed = {
+          ...verifiedAdvancedConfigToUi(validationResult.config),
+          invalidArgs: parseResult.diagnostics.map((diagnostic) => diagnostic.argument),
+        };
         if (parsed.invalidArgs.length > 0) {
           appendLog(
             language === 'tr'
@@ -287,7 +323,7 @@ export function AdvancedView() {
             <button 
               className={styles.actionBtn} 
               onClick={handleExport} 
-              disabled={!profileName.trim()} 
+              disabled={!profileName.trim() || !capabilities}
               title={language === 'tr' ? 'Profili Dışa Aktar' : 'Export Profile'}
             >
               <HardDriveDownload size={16} />
@@ -336,7 +372,7 @@ export function AdvancedView() {
       <UnsavedBanner 
         isDirty={isDirty} 
         isReset={isReset} 
-        isApplying={isApplying} 
+        isApplying={isApplying || !capabilities}
         profileName={profileName} 
         setProfileName={setProfileName} 
         onCancel={handleCancel} 

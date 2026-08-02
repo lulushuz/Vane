@@ -3,6 +3,7 @@ import type {
   AdvancedConfigCandidate,
   AdvancedValidationIssue,
   AdvancedValidationResult,
+  CapabilityStatus,
   DesyncMethod,
   FoolingMethod,
   PortRange,
@@ -282,6 +283,27 @@ export function validateAdvancedConfig(
     passthrough.push(arg as ValidatedPassthroughArg);
   }
 
+  const rejectUnsupported = (field: string, state: CapabilityStatus, active: boolean) => {
+    if (active && state.state === 'unsupported') {
+      errors.push({ field, message: state.reason || `${field} is unsupported on this platform` });
+    }
+  };
+
+  for (const method of methods) {
+    const capability = capabilities.methods[method];
+    if (capability) rejectUnsupported('methods', capability, true);
+  }
+  rejectUnsupported('tcpPorts', capabilities.traffic.tcpFiltering, traffic.tcp.length > 0);
+  rejectUnsupported('tcpPorts', capabilities.traffic.customTcpPorts, traffic.tcp.length > 0);
+  rejectUnsupported('udpPorts', capabilities.traffic.udpFiltering, traffic.udp.length > 0);
+  rejectUnsupported('udpPorts', capabilities.traffic.customUdpPorts, traffic.udp.length > 0);
+  rejectUnsupported('ttlMode', capabilities.options.autoTtl, ttl.mode === 'auto');
+  rejectUnsupported('ttlValue', capabilities.options.fixedTtl, ttl.mode === 'fixed');
+  rejectUnsupported('repeats', capabilities.options.repeats, repeats !== undefined);
+  rejectUnsupported('fooling', capabilities.options.fooling, fooling.length > 0);
+  rejectUnsupported('splitPosition', capabilities.options.splitPosition, split !== undefined);
+  rejectUnsupported('windowSize', capabilities.options.windowSize, windowSize !== undefined);
+
   if (errors.length > 0) {
     return { valid: false, errors, warnings };
   }
@@ -299,3 +321,5 @@ export function validateAdvancedConfig(
 
   return { valid: true, config: verifiedConfig, warnings };
 }
+
+export const validateAdvancedCandidate = validateAdvancedConfig;
