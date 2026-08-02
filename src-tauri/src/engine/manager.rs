@@ -804,7 +804,7 @@ async fn spawn_and_run_prepared(
             prepared.verified.clone(),
             pid,
         );
-        return Ok((handle, applied));
+        Ok((handle, applied))
     }
 
     #[cfg(all(target_os = "linux", any()))]
