@@ -1,36 +1,78 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "version": "1.0.0-rc.1",
-  "releaseChannel": "release-candidate",
-  "legacyVersionLine": "2.x",
-  "commit": "76b3846f67f7018143d5f82aafb5a6affdd2843e",
-  "timestamp": "2026-08-01T15:42:27.003Z",
-  "tests": {
-    "frontend": "passed",
-    "rustLib": "passed",
-    "rustAllTargets": "passed",
-    "rustAllFeatures": "passed"
+  "sourceCommit": "5714855667fa8e1c62d9a6e6fa32f7bb9bf6daf8",
+  "evidenceCommit": "5714855667fa8e1c62d9a6e6fa32f7bb9bf6daf8",
+  "workflowRunId": null,
+  "artifactSha256": null,
+  "generatedAt": "2026-08-02T15:38:44.216Z",
+  "gates": {
+    "frontend-tests": {
+      "gate": "frontend-tests",
+      "status": "not-executed"
+    },
+    "frontend-build": {
+      "gate": "frontend-build",
+      "status": "not-executed"
+    },
+    "npm-audit": {
+      "gate": "npm-audit",
+      "status": "not-executed"
+    },
+    "rust-lib-tests": {
+      "gate": "rust-lib-tests",
+      "status": "not-executed"
+    },
+    "rust-all-targets": {
+      "gate": "rust-all-targets",
+      "status": "not-executed"
+    },
+    "rust-all-features": {
+      "gate": "rust-all-features",
+      "status": "not-executed"
+    },
+    "cargo-fmt": {
+      "gate": "cargo-fmt",
+      "status": "not-executed"
+    },
+    "clippy": {
+      "gate": "clippy",
+      "status": "not-executed"
+    },
+    "cargo-audit": {
+      "gate": "cargo-audit",
+      "status": "not-executed"
+    },
+    "version-parity": {
+      "gate": "version-parity",
+      "status": "not-executed"
+    },
+    "native-manifest": {
+      "gate": "native-manifest",
+      "status": "not-executed"
+    },
+    "nsis-build": {
+      "gate": "nsis-build",
+      "status": "not-executed"
+    },
+    "nsis-package-verification": {
+      "gate": "nsis-package-verification",
+      "status": "not-executed"
+    },
+    "installer-checksum": {
+      "gate": "installer-checksum",
+      "status": "not-executed"
+    },
+    "secret-scan": {
+      "gate": "secret-scan",
+      "status": "not-executed"
+    }
   },
-  "security": {
-    "artifactManifest": "passed",
-    "cargoAudit": "passed",
-    "npmAudit": "passed",
-    "secretScan": "passed"
-  },
-  "packaging": {
-    "windowsNsis": "passed",
-    "linuxAppImage": "not-executed"
-  },
-  "signing": {
-    "windowsApp": "not-executed",
-    "windowsInstaller": "not-executed",
-    "tauriUpdater": "not-executed"
-  },
-  "acceptance": {
-    "windowsPrivileged": "not-executed",
-    "linuxPrivileged": "not-executed"
-  },
-  "releaseDecision": "READY FOR UNSIGNED TESTING",
+  "releaseDecision": "BLOCKED",
   "productionRelease": "BLOCKED",
-  "releaseDecisionReason": "UNSIGNED RELEASE CANDIDATE PASSED CLEAN BUILD & PACKAGING VERIFICATION — REQUIRES PRODUCTION CODE SIGNING & PRIVILEGED VM ACCEPTANCE FOR PRODUCTION RELEASE"
+  "remainingHumanBlockers": [
+    "Windows Authenticode signing",
+    "Tauri updater signing",
+    "Windows 11 privileged VM acceptance"
+  ]
 }

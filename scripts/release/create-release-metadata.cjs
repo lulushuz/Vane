@@ -1,69 +1,62 @@
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const repoRoot = path.resolve(__dirname, '../..');
+const evidenceDir = path.join(repoRoot, 'artifacts', 'evidence');
+const requiredGates = [
+  'frontend-tests', 'frontend-build', 'npm-audit', 'rust-lib-tests',
+  'rust-all-targets', 'rust-all-features', 'cargo-fmt', 'clippy',
+  'cargo-audit', 'version-parity', 'native-manifest', 'nsis-build',
+  'nsis-package-verification', 'installer-checksum', 'secret-scan',
+];
 
-function getCommitSha() {
+function sourceCommit() {
+  return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+}
+
+function readGate(gate, commit) {
+  const file = path.join(evidenceDir, `${gate}.json`);
+  if (!fs.existsSync(file)) return { gate, status: 'not-executed' };
   try {
-    return execSync('git rev-parse HEAD', { cwd: repoRoot, encoding: 'utf8' }).trim();
-  } catch (e) {
-    return '5e6de56e3dd5d5299f73fa4a4f9ac3732ada9238';
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (value.schemaVersion !== 1 || value.gate !== gate || typeof value.exitCode !== 'number'
+      || typeof value.command !== 'string' || typeof value.completedAt !== 'string') {
+      return { gate, status: 'invalid' };
+    }
+    if (value.commit !== commit) return { gate, status: 'stale' };
+    if (value.exitCode !== 0 || value.status !== 'passed') return { gate, status: 'failed' };
+    return { gate, status: 'passed', evidence: path.relative(repoRoot, file).replaceAll('\\', '/'), ...(value.artifactSha256 ? { artifactSha256: value.artifactSha256 } : {}) };
+  } catch {
+    return { gate, status: 'invalid' };
   }
 }
 
-function createReleaseReadinessManifest() {
-  console.log('=== Generating Release Readiness Manifest (artifacts/release-readiness.json) ===');
+function main() {
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-  const commit = getCommitSha();
-
+  const commit = sourceCommit();
+  const gates = Object.fromEntries(requiredGates.map((gate) => [gate, readGate(gate, commit)]));
+  const unsignedReady = Object.values(gates).every((gate) => gate.status === 'passed');
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     version: pkg.version,
-    releaseChannel: pkg.version.includes('-') ? 'release-candidate' : 'stable',
-    legacyVersionLine: '2.x',
-    commit,
-    timestamp: new Date().toISOString(),
-    tests: {
-      frontend: 'passed',
-      rustLib: 'passed',
-      rustAllTargets: 'passed',
-      rustAllFeatures: 'passed',
-    },
-    security: {
-      artifactManifest: 'passed',
-      cargoAudit: 'passed',
-      npmAudit: 'passed',
-      secretScan: 'passed',
-    },
-    packaging: {
-      windowsNsis: 'passed',
-      linuxAppImage: 'not-executed',
-    },
-    signing: {
-      windowsApp: 'not-executed',
-      windowsInstaller: 'not-executed',
-      tauriUpdater: 'not-executed',
-    },
-    acceptance: {
-      windowsPrivileged: 'not-executed',
-      linuxPrivileged: 'not-executed',
-    },
-    // READY FOR UNSIGNED TESTING — NSIS built and verified; Production release stays BLOCKED pending signing & VM acceptance
-    releaseDecision: 'READY FOR UNSIGNED TESTING',
+    sourceCommit: commit,
+    evidenceCommit: process.env.EVIDENCE_COMMIT || commit,
+    workflowRunId: process.env.GITHUB_RUN_ID || null,
+    artifactSha256: gates['installer-checksum'].artifactSha256 || null,
+    generatedAt: new Date().toISOString(),
+    gates,
+    releaseDecision: unsignedReady ? 'READY FOR UNSIGNED WINDOWS TESTING' : 'BLOCKED',
     productionRelease: 'BLOCKED',
-    releaseDecisionReason: 'UNSIGNED RELEASE CANDIDATE PASSED CLEAN BUILD & PACKAGING VERIFICATION — REQUIRES PRODUCTION CODE SIGNING & PRIVILEGED VM ACCEPTANCE FOR PRODUCTION RELEASE',
+    remainingHumanBlockers: [
+      'Windows Authenticode signing',
+      'Tauri updater signing',
+      'Windows 11 privileged VM acceptance',
+    ],
   };
-
-  const outDir = path.join(repoRoot, 'artifacts');
-  if (!fs.existsSync(outDir)) {
-    fs.mkdirSync(outDir, { recursive: true });
-  }
-
-  const outFile = path.join(outDir, 'release-readiness.json');
-  fs.writeFileSync(outFile, JSON.stringify(manifest, null, 2), 'utf8');
-  console.log(`✅ Generated Release Readiness Manifest at ${outFile}`);
-  console.log(`📌 Release Decision: ${manifest.releaseDecision}`);
+  fs.mkdirSync(path.join(repoRoot, 'artifacts'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, 'artifacts', 'release-readiness.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  if (!unsignedReady) process.exitCode = 1;
 }
 
-createReleaseReadinessManifest();
+main();

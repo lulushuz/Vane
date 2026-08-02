@@ -36,7 +36,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "createUpdaterArtifacts": true,
     "publisher": "Archey Inc",
     "icon": [
@@ -46,9 +46,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "binaries/*"
-    ],
+    "resources": {
+      "binaries/*": "binaries/",
+      "../presets/builtin.json": "presets/builtin.json",
+      "../presets/remote_template.json": "presets/remote_template.json",
+      "../LICENSE": "LICENSE",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    },
     "windows": {
       "nsis": {
         "displayLanguageSelector": false,

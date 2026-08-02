@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -13,21 +16,11 @@ jobs:
   release:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     environment: release
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Install Dependencies (Ubuntu only)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -74,6 +67,13 @@ jobs:
             fi
             echo "Zapret binaries validated."
           fi
+
+      - name: Require signing and privileged acceptance evidence
+        shell: bash
+        run: |
+          test -f artifacts/evidence/signing.json
+          test -f artifacts/evidence/windows-acceptance.json
+          node -e "for (const f of ['signing','windows-acceptance']) { const e=require('./artifacts/evidence/'+f+'.json'); if(e.status!=='passed'||e.commit!==process.env.GITHUB_SHA) process.exit(1) }"
 
       - name: Build and Release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
