@@ -227,4 +227,35 @@ mod tests {
         );
         assert!(plan.apply_steps.is_empty());
     }
+
+    #[test]
+    fn every_public_dns_mutation_uses_transaction_manager() {
+        let commands = include_str!("../commands.rs");
+        let app = include_str!("../lib.rs");
+        let watchdog = include_str!("../dns/watchdog.rs");
+        for source in [commands, app, watchdog] {
+            assert!(!source.contains("crate::dns::apply_dns("));
+            assert!(!source.contains("crate::dns::restore_dns_snapshot("));
+            assert!(!source.contains("crate::dns::reset_dns_to_dhcp("));
+        }
+        assert!(commands.contains("dns_transaction_manager"));
+        assert!(watchdog.contains("dns_transaction_manager"));
+    }
+
+    #[test]
+    fn engine_start_does_not_directly_change_system_dns() {
+        let manager = include_str!("../engine/manager.rs");
+        assert!(!manager.contains("apply_dns("));
+        assert!(!manager.contains("restore_dns_snapshot"));
+        assert!(!manager.contains("reset_dns_to_dhcp"));
+    }
+
+    #[test]
+    fn watchdog_change_uses_transaction_snapshot_and_rollback() {
+        let commands = include_str!("../commands.rs");
+        let watchdog = include_str!("../dns/watchdog.rs");
+        assert!(commands.contains("start_dns_forwarder_runtime"));
+        assert!(commands.contains("apply_candidate(candidate"));
+        assert!(watchdog.contains("DNS_WATCHDOG_TRANSACTION_ROLLBACK_COMPLETED"));
+    }
 }

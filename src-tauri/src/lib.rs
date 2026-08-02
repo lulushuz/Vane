@@ -183,12 +183,31 @@ async fn autostart_engine_with_last_preset(app: AppHandle) {
             );
             return;
         };
-        let result = crate::dns::apply_dns(&primary, &secondary);
-        if !result.success {
-            tracing::error!(
-                "Auto-start: Saved DNS settings could not be restored: {:?}",
-                result.error
-            );
+        let provider = match (primary.as_str(), secondary.as_str()) {
+            ("1.1.1.1", "1.0.0.1") => "cloudflare",
+            ("8.8.8.8", "8.8.4.4") => "google",
+            _ => {
+                tracing::error!(
+                    "Auto-start: Custom plaintext DNS cannot bypass DnsTransactionManager."
+                );
+                return;
+            }
+        };
+        let candidate = crate::dns::DnsConfigCandidate {
+            enabled: true,
+            protocol: "doh".into(),
+            provider: Some(provider.into()),
+            adblock: false,
+            cache_enabled: true,
+            socks5: None,
+            kill_switch: settings.kill_switch,
+        };
+        if let Err(error) = state
+            .dns_transaction_manager
+            .apply_candidate(candidate, &app, state.inner())
+            .await
+        {
+            tracing::error!("Auto-start: Saved DNS settings could not be restored: {error}");
             return;
         }
         tracing::info!("Auto-start: Saved system DNS settings were restored and verified.");
@@ -202,20 +221,20 @@ async fn autostart_engine_with_last_preset(app: AppHandle) {
             );
             if let Err(e) = state.engine_manager.start(&p, &app).await {
                 tracing::error!("Auto-start: Engine could not be started: {}", e);
-                let forwarder = state
-                    .forwarder
-                    .lock()
-                    .ok()
-                    .and_then(|mut guard| guard.take());
-                if let Some(handle) = forwarder {
-                    let previous_dns = handle.previous_dns.clone();
-                    handle.stop().await;
-                    let restored = crate::dns::restore_dns_snapshot(&previous_dns);
-                    if restored.success {
-                        let _ = crate::dns::clear_dns_restore_snapshot(&app);
-                    }
-                    tracing::warn!("Auto-start rollback: DNS forwarder was stopped and system DNS was restored.");
-                }
+                let rollback = crate::dns::DnsConfigCandidate {
+                    enabled: false,
+                    protocol: "doh".into(),
+                    provider: Some("cloudflare".into()),
+                    adblock: false,
+                    cache_enabled: false,
+                    socks5: None,
+                    kill_switch: false,
+                };
+                let _ = state
+                    .dns_transaction_manager
+                    .apply_candidate(rollback, &app, state.inner())
+                    .await;
+                tracing::warn!("Auto-start rollback completed through DnsTransactionManager.");
             }
         }
         None => {
@@ -263,7 +282,10 @@ pub fn run() {
             let inst_id = crate::dns::get_or_create_installation_id(app.handle());
             let _ = crate::dns::recover_orphan_kill_switch_rules(app.handle(), &inst_id);
             let _ = crate::platform::linux::recover_orphan_linux_filter_rules(app.handle(), &inst_id);
-            match crate::dns::recover_stale_dns_snapshot(app.handle()) {
+            let state = app.state::<AppState>();
+            match tauri::async_runtime::block_on(
+                state.dns_transaction_manager.recover_stale_snapshot(app.handle()),
+            ) {
                 Ok(true) => tracing::warn!("A previous DNS forwarder shutdown was incomplete; the saved system DNS configuration was restored and verified."),
                 Ok(false) => {}
                 Err(error) => tracing::error!("Startup DNS recovery needs attention: {error}"),
@@ -493,25 +515,23 @@ pub fn run() {
             tracing::info!("Tauri application closing (RunEvent::Exit). Stopping engine...");
             if let Some(state) = app_handle.try_state::<AppState>() {
                 let _ = tauri::async_runtime::block_on(state.engine_manager.stop(app_handle));
-                let forwarder = state
-                    .forwarder
-                    .lock()
-                    .ok()
-                    .and_then(|mut guard| guard.take());
-                if let Some(handle) = forwarder {
-                    let previous_dns = handle.previous_dns.clone();
-                    tauri::async_runtime::block_on(handle.stop());
-                    let restored = crate::dns::restore_dns_snapshot(&previous_dns);
-                    if !restored.success {
-                        tracing::error!(
-                            "Application exit could not restore the previous DNS snapshot: {:?}",
-                            restored.error
-                        );
-                    } else if let Err(error) =
-                        crate::dns::clear_dns_restore_snapshot(app_handle)
-                    {
-                        tracing::error!("Application exit restored DNS but could not clear the recovery snapshot: {error}");
-                    }
+                let candidate = crate::dns::DnsConfigCandidate {
+                    enabled: false,
+                    protocol: "doh".into(),
+                    provider: Some("cloudflare".into()),
+                    adblock: false,
+                    cache_enabled: false,
+                    socks5: None,
+                    kill_switch: false,
+                };
+                if let Err(error) =
+                    tauri::async_runtime::block_on(state.dns_transaction_manager.apply_candidate(
+                        candidate,
+                        app_handle,
+                        state.inner(),
+                    ))
+                {
+                    tracing::error!("Application exit DNS transaction rollback failed: {error}");
                 }
             }
         }

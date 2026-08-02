@@ -123,8 +123,13 @@ pub(crate) fn build_engine_launch_plan(
         EnginePlatform::Windows => input.executable.to_str().and_then(|path| {
             path.rsplit_once(['\\', '/'])
                 .map(|(parent, _)| PathBuf::from(parent))
+                .or_else(|| (!path.is_empty()).then(PathBuf::new))
         }),
-        EnginePlatform::Linux => input.executable.parent().map(Path::to_path_buf),
+        EnginePlatform::Linux => input
+            .executable
+            .parent()
+            .map(Path::to_path_buf)
+            .or_else(|| (!input.executable.as_os_str().is_empty()).then(PathBuf::new)),
     }
     .ok_or_else(|| {
         EngineError::BinaryNotFound(format!(

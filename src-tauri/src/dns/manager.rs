@@ -100,6 +100,21 @@ pub fn clear_dns_restore_snapshot(app: &AppHandle) -> Result<(), String> {
     }
 }
 
+pub fn load_dns_restore_snapshot(app: &AppHandle) -> Result<Option<Vec<NetworkAdapter>>, String> {
+    let path = dns_snapshot_path(app)?;
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("DNS recovery snapshot could not be read: {error}")),
+    };
+    let snapshot: PersistedDnsSnapshot = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("DNS recovery snapshot is corrupt: {error}"))?;
+    if snapshot.version != 1 || snapshot.adapters.is_empty() {
+        return Err("DNS recovery snapshot has an unsupported or empty format.".into());
+    }
+    Ok(Some(snapshot.adapters))
+}
+
 pub fn recover_stale_dns_snapshot(app: &AppHandle) -> Result<bool, String> {
     let path = dns_snapshot_path(app)?;
     let bytes = match std::fs::read(&path) {

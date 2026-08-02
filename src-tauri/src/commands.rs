@@ -1,14 +1,13 @@
 use crate::config::preset::Preset;
 use crate::dns::{
-    apply_dns, builtin_providers, get_active_adapters, is_using_trusted_dns, resolve_doh,
-    spawn_doh_forwarder, ApplyDnsResult, DnsProvider, DoHEndpoint, DohResult, NetworkAdapter,
-    DEFAULT_HEALTH_CHECK_TARGET, DOH_CLOUDFLARE, DOH_FORWARDER_DEFAULT_PORT, DOH_GOOGLE,
+    builtin_providers, get_active_adapters, is_using_trusted_dns, resolve_doh, ApplyDnsResult,
+    DnsProvider, DoHEndpoint, DohResult, NetworkAdapter, DEFAULT_HEALTH_CHECK_TARGET,
+    DOH_CLOUDFLARE, DOH_FORWARDER_DEFAULT_PORT, DOH_GOOGLE,
 };
 use crate::engine::{EngineError, EngineStatus};
 use crate::ipc::IpcError;
 use crate::privilege::checker::is_elevated;
 use crate::AppState;
-use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -513,129 +512,59 @@ pub(crate) async fn start_dns_forwarder_runtime(
     watchdog: bool,
     endpoint: DoHEndpoint,
 ) -> Result<ForwarderStatus, String> {
-    {
-        let guard = state
-            .forwarder
-            .lock()
-            .map_err(|_| "Forwarder lock poisoned.".to_string())?;
-        if guard.is_some() {
-            return Err("DoH Forwarder is already running.".into());
-        }
-    }
-
-    let mut handle = spawn_doh_forwarder(
-        app.clone(),
-        state.http_client.clone(),
-        DOH_FORWARDER_DEFAULT_PORT,
-        endpoint,
-    )
-    .await?;
-
-    if let Err(error) = crate::dns::save_dns_restore_snapshot(app, &handle.previous_dns) {
-        handle.stop().await;
-        return Err(format!(
-            "DNS forwarder was not activated because a safe restore point could not be saved: {error}"
-        ));
-    }
-
-    let dns_applied = apply_dns("127.0.0.1", "127.0.0.1");
-    if !dns_applied.success {
-        let previous_dns = handle.previous_dns.clone();
-        let _ = handle.stop().await;
-        let _ = crate::dns::restore_dns_snapshot(&previous_dns);
-        let _ = crate::dns::clear_dns_restore_snapshot(app);
-        return Err(format!(
-            "Sistem DNS'i 127.0.0.1 olarak ayarlanamadı: {:?}",
-            dns_applied.error
-        ));
-    }
-
-    let shutdown_clone = Arc::clone(&handle.shutdown);
-    let client_clone = state.http_client.clone();
-    let watchdog_endpoint = handle.endpoint;
-    let watchdog_settings = crate::dns::forwarder::read_dns_settings(app);
-    let watchdog_protocol = watchdog_settings.protocol;
-    let health_check_target = watchdog_settings
-        .health_check_targets
-        .first()
-        .cloned()
-        .unwrap_or_else(|| DEFAULT_HEALTH_CHECK_TARGET.into());
-    let app_clone = app.clone();
-
-    if watchdog {
-        crate::dns::spawn_dns_watchdog(
-            client_clone,
-            watchdog_endpoint,
-            watchdog_protocol,
-            health_check_target,
-            shutdown_clone,
-            app_clone,
-        );
-        handle.watchdog_enabled = true;
-        tracing::info!("DNS watchdog was enabled and its health-check task was started.");
-    } else {
-        tracing::info!("DNS watchdog was disabled; no health-check task was started.");
-    }
-
-    let status = {
-        let mut guard = state
-            .forwarder
-            .lock()
-            .map_err(|_| "Forwarder lock poisoned.".to_string())?;
-
-        if guard.is_some() {
-            tauri::async_runtime::spawn(async move {
-                handle.stop().await;
-            });
-            return Err("DoH Forwarder is already running.".into());
-        }
-
-        let port = handle.port;
-        let endpoint = handle.endpoint.url().to_string();
-        *guard = Some(handle);
-
-        forwarder_status(true, port, endpoint, watchdog, app)
+    let settings = crate::dns::forwarder::read_dns_settings(app);
+    let candidate = crate::dns::DnsConfigCandidate {
+        enabled: true,
+        protocol: settings.protocol,
+        provider: Some(match endpoint {
+            DoHEndpoint::Cloudflare => "cloudflare".into(),
+            DoHEndpoint::Google => "google".into(),
+        }),
+        adblock: settings.adblock,
+        cache_enabled: settings.cache,
+        socks5: None,
+        kill_switch: crate::engine::manager::kill_switch_enabled(),
     };
+    state
+        .dns_transaction_manager
+        .apply_candidate(candidate, app, state)
+        .await?;
 
-    tracing::info!(
-        "DNS forwarder is running and verified: protocol={}, cache={}, adblock={}, port={}",
-        status.protocol.to_uppercase(),
-        status.cache,
-        status.adblock,
-        status.port
-    );
-    Ok(status)
+    let mut guard = state
+        .forwarder
+        .lock()
+        .map_err(|_| "Forwarder lock poisoned.".to_string())?;
+    let handle = guard
+        .as_mut()
+        .ok_or_else(|| "DNS transaction completed without an owned forwarder.".to_string())?;
+    handle.watchdog_enabled = watchdog;
+    Ok(forwarder_status(
+        true,
+        handle.port,
+        handle.endpoint.url().to_string(),
+        watchdog,
+        app,
+    ))
 }
-
 #[tauri::command]
 pub async fn stop_doh_forwarder(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let _sync_guard = state.dns_sync.lock().await;
-    let handle = {
-        let mut guard = state
-            .forwarder
-            .lock()
-            .map_err(|_| "Forwarder lock poisoned.".to_string())?;
-        guard.take()
+    let candidate = crate::dns::DnsConfigCandidate {
+        enabled: false,
+        protocol: "doh".into(),
+        provider: Some("cloudflare".into()),
+        adblock: false,
+        cache_enabled: false,
+        socks5: None,
+        kill_switch: false,
     };
-
-    if let Some(h) = handle {
-        let previous_dns = h.previous_dns.clone();
-        h.stop().await;
-        let reset = crate::dns::restore_dns_snapshot(&previous_dns);
-        if !reset.success {
-            return Err(format!(
-                "Forwarder stopped but automatic DNS restore failed: {:?}",
-                reset.error
-            ));
-        }
-        crate::dns::clear_dns_restore_snapshot(&app)?;
-        tracing::info!("DNS forwarder stopped and system DNS was restored automatically.");
-        Ok(())
-    } else {
-        Err("DoH Forwarder is already stopped.".into())
-    }
+    state
+        .dns_transaction_manager
+        .apply_candidate(candidate, &app, state.inner())
+        .await?;
+    let _ = app.emit("dns_status_changed", ());
+    Ok(())
 }
-
 #[tauri::command]
 pub fn get_doh_forwarder_status(app: AppHandle, state: State<'_, AppState>) -> ForwarderStatus {
     let guard = state.forwarder.lock().unwrap_or_else(|e| e.into_inner());
@@ -844,26 +773,15 @@ pub async fn set_dns_watchdog(
         ));
     };
     let endpoint = handle.endpoint;
-    let previous_dns = handle.previous_dns.clone();
     handle.stop().await;
     let status = match start_dns_forwarder_runtime(&app, state.inner(), enabled, endpoint).await {
         Ok(status) => status,
         Err(error) => {
-            let restored = crate::dns::restore_dns_snapshot(&previous_dns);
-            if restored.success {
-                let _ = crate::dns::clear_dns_restore_snapshot(&app);
-            }
             return Err(format!(
-                "DNS watchdog change could not restart the forwarder; previous DNS restore success={}: {error}",
-                restored.success
+                "DNS watchdog transaction could not restart the forwarder: {error}"
             ));
         }
     };
-    if let Ok(mut guard) = state.forwarder.lock() {
-        if let Some(handle) = guard.as_mut() {
-            handle.previous_dns = previous_dns;
-        }
-    }
     tracing::info!("DNS watchdog runtime state was changed and verified: enabled={enabled}.");
     Ok(status)
 }

@@ -165,6 +165,11 @@ impl DnsTransactionManager {
         &self.state
     }
 
+    pub async fn recover_stale_snapshot(&self, app: &AppHandle) -> Result<bool, String> {
+        let _guard = self.lock.lock().await;
+        crate::dns::recover_stale_dns_snapshot(app)
+    }
+
     pub async fn apply_candidate(
         &self,
         candidate: DnsConfigCandidate,
@@ -248,11 +253,23 @@ impl DnsTransactionManager {
                 .map_err(|_| "Forwarder lock poisoned.".to_string())?;
             f_guard.take()
         };
+        let previous_dns_snapshot = crate::dns::load_dns_restore_snapshot(app)?.or_else(|| {
+            old_forwarder_handle
+                .as_ref()
+                .map(|handle| handle.previous_dns.clone())
+        });
         if let Some(old_h) = old_forwarder_handle {
             old_h.stop().await;
         }
 
         if !verified.enabled {
+            if let Some(snapshot) = previous_dns_snapshot.as_ref() {
+                let restored = crate::dns::restore_dns_snapshot(snapshot);
+                if !restored.success {
+                    return Err(format!("System DNS restore failed: {:?}", restored.error));
+                }
+                crate::dns::clear_dns_restore_snapshot(app)?;
+            }
             let executor = SystemFirewallExecutor;
             if let Some(prev) = &previous_applied {
                 if let Some(ownership) = &prev.kill_switch_ownership {
@@ -310,6 +327,25 @@ impl DnsTransactionManager {
                 let ready = verify_local_readiness(local_ep).await;
                 if !ready {
                     tracing::warn!("Local forwarder socket readiness failed.");
+                }
+
+                if previous_dns_snapshot.is_none() {
+                    if let Err(error) =
+                        crate::dns::save_dns_restore_snapshot(app, &handle.previous_dns)
+                    {
+                        handle.stop().await;
+                        return Err(format!(
+                            "DNS restore snapshot could not be persisted: {error}"
+                        ));
+                    }
+                }
+                let applied_dns = crate::dns::apply_dns("127.0.0.1", "127.0.0.1");
+                if !applied_dns.success {
+                    let snapshot = handle.previous_dns.clone();
+                    handle.stop().await;
+                    let _ = crate::dns::restore_dns_snapshot(&snapshot);
+                    let _ = crate::dns::clear_dns_restore_snapshot(app);
+                    return Err(format!("System DNS apply failed: {:?}", applied_dns.error));
                 }
 
                 let executor = SystemFirewallExecutor;
@@ -458,6 +494,12 @@ impl DnsTransactionManager {
 
         self.state.lock().unwrap().clear_applied();
         let _ = clear_kill_switch_metadata(app);
+        if let Some(snapshot) = crate::dns::load_dns_restore_snapshot(app)? {
+            let restored = crate::dns::restore_dns_snapshot(&snapshot);
+            if restored.success {
+                let _ = crate::dns::clear_dns_restore_snapshot(app);
+            }
+        }
 
         Err(format!(
             "DNS candidate apply failed ({reason}) AND rollback failed."
