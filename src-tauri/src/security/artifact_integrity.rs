@@ -97,6 +97,9 @@ pub(crate) enum ArtifactIntegrityError {
 impl From<PathSecurityError> for ArtifactIntegrityError {
     fn from(err: PathSecurityError) -> Self {
         match err {
+            PathSecurityError::InvalidRelativePath(p) => {
+                ArtifactIntegrityError::ArtifactOutsideResourceRoot(p)
+            }
             PathSecurityError::OutsideResourceRoot(p) => {
                 ArtifactIntegrityError::ArtifactOutsideResourceRoot(p)
             }

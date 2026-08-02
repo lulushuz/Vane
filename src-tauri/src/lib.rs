@@ -1,6 +1,4 @@
 use log::LevelFilter;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -21,6 +19,7 @@ pub mod http;
 pub mod ipc;
 pub mod logging;
 pub mod network;
+pub mod operation;
 pub mod optimizer;
 pub mod platform;
 pub mod presets;
@@ -57,6 +56,7 @@ pub struct AppState {
     pub dns_config_revision: AtomicU64,
     pub dns_transaction_manager: std::sync::Arc<crate::dns::DnsTransactionManager>,
     pub optimizer_manager: std::sync::Arc<crate::optimizer::OptimizerSessionManager>,
+    pub exclusive_operations: std::sync::Arc<crate::operation::ExclusiveOperationCoordinator>,
 }
 
 /*
@@ -68,33 +68,6 @@ fn kill_existing_winws() {
     tracing::info!(
         "Startup: Global process cleanup disabled in P07 to enforce owned process lifecycle."
     );
-}
-
-#[cfg(target_os = "windows")]
-fn cleanup_stale_windivert() {
-    tracing::info!("Startup cleanup: Checking for stale WinDivert services...");
-    let result = std::process::Command::new("sc")
-        .args(["query", "WinDivert"])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .output();
-
-    match result {
-        Ok(out) if out.status.success() => {
-            let output_str = String::from_utf8_lossy(&out.stdout);
-            // If it exists but is not running correctly, wiping it forces a clean reinstall.
-            if output_str.contains("STOPPED")
-                || output_str.contains("START_PENDING")
-                || output_str.contains("STOP_PENDING")
-            {
-                tracing::info!("Stale WinDivert service found. Disposing...");
-                let _ = std::process::Command::new("sc")
-                    .args(["delete", "WinDivert"])
-                    .creation_flags(0x08000000)
-                    .output();
-            }
-        }
-        _ => tracing::debug!("No stale WinDivert service found (normal)."),
-    }
 }
 
 /// Automatically resumes DPI bypass after an --autostart launch.
@@ -287,14 +260,9 @@ pub fn run() {
             // Clean up dangling processes from previous runs (Windows only)
             #[cfg(target_os = "windows")]
             kill_existing_winws();
-            #[cfg(target_os = "windows")]
-            cleanup_stale_windivert();
             let inst_id = crate::dns::get_or_create_installation_id(app.handle());
             let _ = crate::dns::recover_orphan_kill_switch_rules(app.handle(), &inst_id);
             let _ = crate::platform::linux::recover_orphan_linux_filter_rules(app.handle(), &inst_id);
-            if let Err(error) = crate::engine::manager::apply_kill_switch(false) {
-                tracing::error!("Startup cleanup could not remove a stale DNS kill-switch rule: {error}");
-            }
             match crate::dns::recover_stale_dns_snapshot(app.handle()) {
                 Ok(true) => tracing::warn!("A previous DNS forwarder shutdown was incomplete; the saved system DNS configuration was restored and verified."),
                 Ok(false) => {}
@@ -425,6 +393,7 @@ pub fn run() {
                 dns_config_revision: AtomicU64::new(0),
                 dns_transaction_manager: dns_tx_manager,
                 optimizer_manager,
+                exclusive_operations: std::sync::Arc::new(crate::operation::ExclusiveOperationCoordinator::default()),
             });
 
             // Auto-start: if launched via Task Scheduler / systemd, resume the last DPI preset.
@@ -507,6 +476,9 @@ pub fn run() {
             commands::run_traffic_diagnostics,
             commands::cancel_traffic_diagnostics,
             commands::export_diagnostics_bundle,
+            commands::get_recent_diagnostic_events,
+            commands::clear_diagnostic_events,
+            commands::get_diagnostic_event_stats,
             settings::settings_get,
             settings::settings_set,
             settings::settings_remove,

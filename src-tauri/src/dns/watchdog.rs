@@ -61,11 +61,9 @@ pub fn spawn_dns_watchdog(
             if fail_count >= 3 {
                 tracing::error!("CRITICAL: DNS upstream failed three real resolution checks. Reverting system DNS to DHCP!");
                 shutdown.store(true, Ordering::SeqCst);
-                if let Err(error) = crate::engine::manager::apply_kill_switch(false) {
-                    tracing::error!(
-                        "DNS watchdog could not remove the kill switch during recovery: {error}"
-                    );
-                }
+                tracing::error!(
+                    "DNS watchdog recovery requires the authoritative DnsTransactionManager"
+                );
                 let handle = app_handle.try_state::<crate::AppState>().and_then(|state| {
                     state
                         .forwarder
