@@ -11,11 +11,32 @@ use crate::dns::runtime_config::{
     verify_dns_config, DnsConfigCandidate, DnsConfigRevision, VerifiedDnsConfig,
 };
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 use tauri::AppHandle;
 use tokio::sync::Mutex;
+
+const FORWARDER_NOT_READY_ERROR: &str =
+    "DNS forwarder did not become ready; system DNS and firewall were not changed.";
+
+async fn require_forwarder_readiness<T, Stop, StopFuture>(
+    ready: bool,
+    candidate: T,
+    stop: Stop,
+) -> Result<T, String>
+where
+    Stop: FnOnce(T) -> StopFuture,
+    StopFuture: Future<Output = ()>,
+{
+    if ready {
+        Ok(candidate)
+    } else {
+        stop(candidate).await;
+        Err(FORWARDER_NOT_READY_ERROR.to_string())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DnsAppliedVerification {
@@ -325,9 +346,39 @@ impl DnsTransactionManager {
                 let local_ep = SocketAddr::from(([127, 0, 0, 1], handle.port));
 
                 let ready = verify_local_readiness(local_ep).await;
-                if !ready {
-                    tracing::warn!("Local forwarder socket readiness failed.");
-                }
+                let handle = match require_forwarder_readiness(ready, handle, |candidate| {
+                    candidate.stop()
+                })
+                .await
+                {
+                    Ok(handle) => handle,
+                    Err(readiness_error) => {
+                        tracing::error!("{readiness_error}");
+                        if previous_applied.is_some() {
+                            let rollback = self
+                                .rollback_previous(
+                                    app,
+                                    app_state,
+                                    previous_applied,
+                                    &verified,
+                                    &readiness_error,
+                                )
+                                .await;
+                            return match rollback {
+                                Ok(outcome) if outcome.rollback_succeeded => Err(format!(
+                                    "{readiness_error} Previous applied DNS configuration was restored."
+                                )),
+                                Ok(_) => Err(format!(
+                                    "{readiness_error} Previous DNS rollback was not verified."
+                                )),
+                                Err(rollback_error) => Err(format!(
+                                    "{readiness_error} Previous DNS rollback failed: {rollback_error}"
+                                )),
+                            };
+                        }
+                        return Err(readiness_error);
+                    }
+                };
 
                 if previous_dns_snapshot.is_none() {
                     if let Err(error) =
@@ -452,43 +503,51 @@ impl DnsTransactionManager {
             )
             .await
             {
-                if let Some(ownership) = &prev.kill_switch_ownership {
-                    let prev_plan = crate::dns::firewall_plan::build_kill_switch_plan(
-                        &ownership.installation_id,
-                        &ownership.instance_id,
-                        ownership.revision,
-                        &ownership.fingerprint,
-                        crate::dns::firewall_plan::FirewallPlatform::Windows,
-                        true,
+                let local_ep = SocketAddr::from(([127, 0, 0, 1], handle.port));
+                if !verify_local_readiness(local_ep).await {
+                    handle.stop().await;
+                    tracing::error!(
+                        "Previous DNS forwarder rollback did not become locally ready."
                     );
-                    let _ = execute_firewall_plan(&executor, &prev_plan);
-                    let _ = save_kill_switch_metadata(app, ownership);
+                } else {
+                    if let Some(ownership) = &prev.kill_switch_ownership {
+                        let prev_plan = crate::dns::firewall_plan::build_kill_switch_plan(
+                            &ownership.installation_id,
+                            &ownership.instance_id,
+                            ownership.revision,
+                            &ownership.fingerprint,
+                            crate::dns::firewall_plan::FirewallPlatform::Windows,
+                            true,
+                        );
+                        let _ = execute_firewall_plan(&executor, &prev_plan);
+                        let _ = save_kill_switch_metadata(app, ownership);
+                    }
+
+                    {
+                        let mut f_guard = app_state.forwarder.lock().unwrap();
+                        *f_guard = Some(handle);
+                    }
+
+                    self.state.lock().unwrap().restore_applied(prev.clone());
+
+                    return Ok(DnsTransactionOutcome {
+                        stage: DnsApplyStage::RolledBack,
+                        config_revision: failed_candidate.revision.get(),
+                        config_fingerprint: failed_candidate.fingerprint.as_str().to_string(),
+                        applied_revision: Some(prev.verified.revision.get()),
+                        applied_fingerprint: Some(prev.verified.fingerprint.as_str().to_string()),
+                        forwarder_state: DnsForwarderState::Ready,
+                        forwarder_generation: Some(gen),
+                        kill_switch_applied: prev.verified.kill_switch,
+                        kill_switch_instance: prev
+                            .kill_switch_ownership
+                            .as_ref()
+                            .map(|o| o.instance_id.clone()),
+                        rollback_performed: true,
+                        rollback_succeeded: true,
+                        superseded: false,
+                    });
                 }
-
-                {
-                    let mut f_guard = app_state.forwarder.lock().unwrap();
-                    *f_guard = Some(handle);
-                }
-
-                self.state.lock().unwrap().restore_applied(prev.clone());
-
-                return Ok(DnsTransactionOutcome {
-                    stage: DnsApplyStage::RolledBack,
-                    config_revision: failed_candidate.revision.get(),
-                    config_fingerprint: failed_candidate.fingerprint.as_str().to_string(),
-                    applied_revision: Some(prev.verified.revision.get()),
-                    applied_fingerprint: Some(prev.verified.fingerprint.as_str().to_string()),
-                    forwarder_state: DnsForwarderState::Ready,
-                    forwarder_generation: Some(gen),
-                    kill_switch_applied: prev.verified.kill_switch,
-                    kill_switch_instance: prev
-                        .kill_switch_ownership
-                        .as_ref()
-                        .map(|o| o.instance_id.clone()),
-                    rollback_performed: true,
-                    rollback_succeeded: true,
-                    superseded: false,
-                });
             }
         }
 
@@ -504,5 +563,115 @@ impl DnsTransactionManager {
         Err(format!(
             "DNS candidate apply failed ({reason}) AND rollback failed."
         ))
+    }
+}
+
+#[cfg(test)]
+mod readiness_gate_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    #[derive(Default)]
+    struct Effects {
+        dns_apply_count: usize,
+        firewall_apply_count: usize,
+        metadata_write_count: usize,
+        applied_state_committed: bool,
+        candidate_stopped: bool,
+        previous_config_preserved: bool,
+        verification: Option<DnsAppliedVerification>,
+    }
+
+    struct Candidate(Arc<StdMutex<Effects>>);
+
+    async fn run_readiness_flow(
+        ready: bool,
+        previous_applied: bool,
+    ) -> (Result<(), String>, Arc<StdMutex<Effects>>) {
+        let effects = Arc::new(StdMutex::new(Effects::default()));
+        let candidate = Candidate(effects.clone());
+        let gated = require_forwarder_readiness(ready, candidate, |candidate| async move {
+            candidate.0.lock().unwrap().candidate_stopped = true;
+        })
+        .await;
+
+        let result = match gated {
+            Ok(_candidate) => {
+                let mut effects = effects.lock().unwrap();
+                effects.dns_apply_count += 1;
+                effects.firewall_apply_count += 1;
+                effects.metadata_write_count += 1;
+                effects.applied_state_committed = true;
+                effects.verification = Some(DnsAppliedVerification::LocalReadinessPassed);
+                Ok(())
+            }
+            Err(error) => {
+                if previous_applied {
+                    effects.lock().unwrap().previous_config_preserved = true;
+                }
+                Err(error)
+            }
+        };
+
+        (result, effects)
+    }
+
+    #[tokio::test]
+    async fn readiness_failure_does_not_apply_system_dns() {
+        let (result, effects) = run_readiness_flow(false, false).await;
+        assert!(result.is_err());
+        assert_eq!(effects.lock().unwrap().dns_apply_count, 0);
+    }
+
+    #[tokio::test]
+    async fn readiness_failure_does_not_apply_firewall() {
+        let (result, effects) = run_readiness_flow(false, false).await;
+        assert!(result.is_err());
+        let effects = effects.lock().unwrap();
+        assert_eq!(effects.firewall_apply_count, 0);
+        assert_eq!(effects.metadata_write_count, 0);
+    }
+
+    #[tokio::test]
+    async fn readiness_failure_does_not_commit_applied_state() {
+        let (result, effects) = run_readiness_flow(false, false).await;
+        assert!(result.is_err());
+        let effects = effects.lock().unwrap();
+        assert!(!effects.applied_state_committed);
+        assert_ne!(
+            effects.verification,
+            Some(DnsAppliedVerification::LocalReadinessPassed)
+        );
+    }
+
+    #[tokio::test]
+    async fn readiness_success_allows_transaction_to_continue() {
+        let (result, effects) = run_readiness_flow(true, false).await;
+        assert!(result.is_ok());
+        let effects = effects.lock().unwrap();
+        assert_eq!(effects.dns_apply_count, 1);
+        assert_eq!(effects.firewall_apply_count, 1);
+        assert_eq!(effects.metadata_write_count, 1);
+        assert!(effects.applied_state_committed);
+        assert_eq!(
+            effects.verification,
+            Some(DnsAppliedVerification::LocalReadinessPassed)
+        );
+    }
+
+    #[tokio::test]
+    async fn readiness_failure_stops_candidate_forwarder() {
+        let (result, effects) = run_readiness_flow(false, false).await;
+        assert!(result.is_err());
+        assert!(effects.lock().unwrap().candidate_stopped);
+    }
+
+    #[tokio::test]
+    async fn readiness_failure_preserves_or_restores_previous_applied_config() {
+        let (result, effects) = run_readiness_flow(false, true).await;
+        assert!(result.is_err());
+        let effects = effects.lock().unwrap();
+        assert!(effects.previous_config_preserved);
+        assert!(!effects.applied_state_committed);
     }
 }
