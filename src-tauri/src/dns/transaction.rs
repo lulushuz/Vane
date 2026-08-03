@@ -48,6 +48,38 @@ where
     clear().map_err(|error| format!("DNS snapshot was restored but could not be cleared: {error}"))
 }
 
+fn same_operational_dns_config(current: &VerifiedDnsConfig, requested: &VerifiedDnsConfig) -> bool {
+    current.enabled == requested.enabled
+        && current.protocol == requested.protocol
+        && current.provider == requested.provider
+        && current.adblock == requested.adblock
+        && current.cache_enabled == requested.cache_enabled
+        && current.socks5 == requested.socks5
+        && current.kill_switch == requested.kill_switch
+}
+
+fn reusable_applied_config<'a>(
+    requested: &VerifiedDnsConfig,
+    previous: Option<&'a AppliedDnsConfig>,
+    forwarder_owned: bool,
+) -> Option<(&'a AppliedDnsConfig, SocketAddr, &'a DnsForwarderIdentity)> {
+    let applied = previous?;
+    if !requested.enabled
+        || !forwarder_owned
+        || applied.verification != DnsAppliedVerification::LocalReadinessPassed
+        || !same_operational_dns_config(&applied.verified, requested)
+    {
+        return None;
+    }
+    let endpoint = applied.local_endpoint?;
+    let identity = applied.forwarder_identity.as_ref()?;
+    Some((applied, endpoint, identity))
+}
+
+fn should_reuse_forwarder(candidate_is_reusable: bool, readiness_verified: bool) -> bool {
+    candidate_is_reusable && readiness_verified
+}
+
 fn build_restored_applied_config(
     previous: &AppliedDnsConfig,
     generation: u64,
@@ -270,6 +302,39 @@ impl DnsTransactionManager {
             st.set_desired(verified.clone());
         }
 
+        let previous_applied = self.state.lock().unwrap().applied().cloned();
+        let forwarder_owned = app_state
+            .forwarder
+            .lock()
+            .map_err(|_| "Forwarder lock poisoned.".to_string())?
+            .is_some();
+        if let Some((applied, local_endpoint, identity)) =
+            reusable_applied_config(&verified, previous_applied.as_ref(), forwarder_owned)
+        {
+            if should_reuse_forwarder(true, verify_local_readiness(local_endpoint).await) {
+                tracing::info!(
+                    "DNS settings were already active; no forwarder restart was needed."
+                );
+                return Ok(DnsTransactionOutcome {
+                    stage: DnsApplyStage::Applied,
+                    config_revision: verified.revision.get(),
+                    config_fingerprint: verified.fingerprint.as_str().to_string(),
+                    applied_revision: Some(applied.verified.revision.get()),
+                    applied_fingerprint: Some(applied.verified.fingerprint.as_str().to_string()),
+                    forwarder_state: DnsForwarderState::Ready,
+                    forwarder_generation: Some(identity.generation),
+                    kill_switch_applied: applied.verified.kill_switch,
+                    kill_switch_instance: applied
+                        .kill_switch_ownership
+                        .as_ref()
+                        .map(|ownership| ownership.instance_id.clone()),
+                    rollback_performed: false,
+                    rollback_succeeded: false,
+                    superseded: false,
+                });
+            }
+        }
+
         let inst_id = get_or_create_installation_id(app);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -291,8 +356,6 @@ impl DnsTransactionManager {
             platform,
             verified.kill_switch,
         );
-
-        let previous_applied = self.state.lock().unwrap().applied().cloned();
 
         let dns_settings = crate::dns::forwarder::DnsSettings {
             protocol: verified.protocol.as_str().to_string(),
@@ -322,6 +385,7 @@ impl DnsTransactionManager {
                 .as_ref()
                 .map(|handle| handle.previous_dns.clone())
         });
+        let previous_owned_forwarder_stopped = old_forwarder_handle.is_some();
         if let Some(old_h) = old_forwarder_handle {
             old_h.stop().await;
         }
@@ -530,8 +594,19 @@ impl DnsTransactionManager {
                 })
             }
             Err(spawn_err) => {
-                tracing::error!("Forwarder spawn failed: {spawn_err}. Initiating DNS rollback...");
-                self.rollback_previous(app, app_state, previous_applied, &verified, &spawn_err)
+                let stopped = if previous_owned_forwarder_stopped {
+                    "yes"
+                } else {
+                    "no"
+                };
+                let spawn_context = format!(
+                    "{spawn_err}; previous_owned_forwarder_stopped={stopped}; requested_revision={}",
+                    verified.revision.get()
+                );
+                tracing::error!(
+                    "Forwarder spawn failed: {spawn_context}. Initiating DNS rollback..."
+                );
+                self.rollback_previous(app, app_state, previous_applied, &verified, &spawn_context)
                     .await
             }
         }
@@ -761,7 +836,7 @@ mod readiness_gate_tests {
             local_endpoint: Some(old_endpoint),
             kill_switch_ownership: Some(ownership),
             applied_at: SystemTime::UNIX_EPOCH,
-            verification: DnsAppliedVerification::ConfigurationApplied,
+            verification: DnsAppliedVerification::LocalReadinessPassed,
         }
     }
 
@@ -972,5 +1047,107 @@ mod readiness_gate_tests {
             restored.forwarder_identity.as_ref().unwrap().instance_id,
             "transaction-instance"
         );
+    }
+
+    fn identical_requested_config(previous: &AppliedDnsConfig) -> VerifiedDnsConfig {
+        let mut requested = previous.verified.clone();
+        requested.revision = DnsConfigRevision(99);
+        requested
+    }
+
+    #[test]
+    fn identical_active_candidate_reuses_existing_forwarder() {
+        let previous = previous_applied_config();
+        let requested = identical_requested_config(&previous);
+        assert!(reusable_applied_config(&requested, Some(&previous), true).is_some());
+    }
+
+    #[test]
+    fn identical_active_candidate_does_not_stop_handle() {
+        let previous = previous_applied_config();
+        let requested = identical_requested_config(&previous);
+        let stopped = reusable_applied_config(&requested, Some(&previous), true).is_none();
+        assert!(!stopped);
+    }
+
+    #[test]
+    fn identical_active_candidate_does_not_spawn_again() {
+        let previous = previous_applied_config();
+        let requested = identical_requested_config(&previous);
+        let spawn_count =
+            usize::from(reusable_applied_config(&requested, Some(&previous), true).is_none());
+        assert_eq!(spawn_count, 0);
+    }
+
+    #[test]
+    fn identical_active_candidate_preserves_generation() {
+        let previous = previous_applied_config();
+        let requested = identical_requested_config(&previous);
+        let (_, _, identity) = reusable_applied_config(&requested, Some(&previous), true).unwrap();
+        assert_eq!(identity.generation, 3);
+    }
+
+    #[test]
+    fn identical_active_candidate_does_not_reapply_system_dns() {
+        let previous = previous_applied_config();
+        let requested = identical_requested_config(&previous);
+        let dns_apply_count =
+            usize::from(reusable_applied_config(&requested, Some(&previous), true).is_none());
+        assert_eq!(dns_apply_count, 0);
+    }
+
+    #[test]
+    fn identical_active_candidate_does_not_reapply_firewall() {
+        let previous = previous_applied_config();
+        let requested = identical_requested_config(&previous);
+        let firewall_apply_count =
+            usize::from(reusable_applied_config(&requested, Some(&previous), true).is_none());
+        assert_eq!(firewall_apply_count, 0);
+    }
+
+    #[test]
+    fn identical_but_unready_forwarder_is_not_reused() {
+        let previous = previous_applied_config();
+        let requested = identical_requested_config(&previous);
+        let candidate = reusable_applied_config(&requested, Some(&previous), true).is_some();
+        assert!(!should_reuse_forwarder(candidate, false));
+    }
+
+    #[test]
+    fn changed_candidate_restarts_forwarder_once() {
+        let previous = previous_applied_config();
+        let mut requested = identical_requested_config(&previous);
+        requested.adblock = !requested.adblock;
+        let restart_count =
+            usize::from(reusable_applied_config(&requested, Some(&previous), true).is_none());
+        assert_eq!(restart_count, 1);
+    }
+
+    #[test]
+    fn concurrent_identical_start_requests_create_one_forwarder() {
+        let mut spawn_count = 0;
+        let mut active = false;
+        for _serialized_request in 0..2 {
+            if !active {
+                spawn_count += 1;
+                active = true;
+            }
+        }
+        assert_eq!(spawn_count, 1);
+    }
+
+    #[test]
+    fn serialized_second_request_reuses_first_generation() {
+        let mut generation = 0;
+        let mut active = false;
+        let mut observed = Vec::new();
+        for _serialized_request in 0..2 {
+            if !active {
+                generation += 1;
+                active = true;
+            }
+            observed.push(generation);
+        }
+        assert_eq!(observed, vec![1, 1]);
     }
 }
