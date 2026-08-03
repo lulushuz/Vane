@@ -97,6 +97,13 @@ mod tests {
     }
 
     #[test]
+    fn generated_engine_operation_ids_are_unique() {
+        let first = EngineOperationId::generate("same-millisecond");
+        let second = EngineOperationId::generate("same-millisecond");
+        assert_ne!(first, second);
+    }
+
+    #[test]
     fn test_group_c_ownership_identity_verification() {
         let preset = builtin_presets().into_iter().next().unwrap();
         let candidate = candidate_from_preset_and_sources(&preset, "whitelist", "a.com", false);

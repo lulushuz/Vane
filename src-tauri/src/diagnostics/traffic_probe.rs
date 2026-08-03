@@ -14,7 +14,7 @@ pub enum DpiBypassAssessment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TargetProbeResult {
-    pub target: String,
+    pub target_id: String,
     pub success: bool,
     pub status_code: Option<u16>,
     pub latency_ms: Option<u64>,
@@ -76,15 +76,20 @@ impl TrafficProbeRunner {
         *running_guard = true;
         self.cancel_flag.store(false, Ordering::SeqCst);
 
-        let default_targets = if targets.is_empty() {
-            vec![
-                "youtube.com".to_string(),
-                "discord.com".to_string(),
-                "x.com".to_string(),
-            ]
+        let registry = crate::optimizer::targets::default_measurement_targets();
+        let requested = if targets.is_empty() {
+            vec!["youtube".into(), "discord".into(), "x".into()]
         } else {
             targets.to_vec()
         };
+        let mut resolved_targets = Vec::new();
+        for target_id in requested {
+            let target = registry
+                .iter()
+                .find(|item| item.id.0 == target_id)
+                .ok_or_else(|| format!("Unknown traffic target ID: {target_id}"))?;
+            resolved_targets.push((target_id, target.host.clone()));
+        }
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(3000))
@@ -96,13 +101,13 @@ impl TrafficProbeRunner {
         let mut results = Vec::new();
         let mut latencies = Vec::new();
 
-        for target in default_targets {
+        for (target_id, host) in resolved_targets {
             if self.cancel_flag.load(Ordering::SeqCst) {
                 *running_guard = false;
                 return Err("Traffic probe cancelled by user".to_string());
             }
 
-            let url = format!("https://{target}/");
+            let url = format!("https://{host}/");
             let start = Instant::now();
             let res = client.get(&url).send().await;
             let elapsed = start.elapsed().as_millis() as u64;
@@ -116,7 +121,7 @@ impl TrafficProbeRunner {
                     }
 
                     results.push(TargetProbeResult {
-                        target,
+                        target_id,
                         success,
                         status_code: Some(status),
                         latency_ms: Some(elapsed),
@@ -125,7 +130,7 @@ impl TrafficProbeRunner {
                 }
                 Err(_e) => {
                     results.push(TargetProbeResult {
-                        target,
+                        target_id,
                         success: false,
                         status_code: None,
                         latency_ms: None,

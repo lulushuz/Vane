@@ -14,6 +14,7 @@ use crate::engine::job::JobObjectGuard;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const AUTOMATIC_RESTART_ENABLED: bool = false;
 
 // Enum representing engine status.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -21,6 +22,16 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub enum EngineStatus {
     Stopped,
     Starting,
+    WaitingForReadiness {
+        pid: u32,
+    },
+    Ready {
+        pid: u32,
+        generation: u64,
+        revision: u64,
+        fingerprint: String,
+    },
+    /// Compatibility-only process-spawned state; it must not be interpreted as ready.
     Running {
         pid: u32,
     },
@@ -250,17 +261,44 @@ impl EngineManager {
         let status_clone = self.status.clone();
         let dispatcher_clone = dispatcher.clone();
 
-        let handle_res = spawn_and_run_prepared(&prepared, &app_handle, rx).await;
+        let handle_res = spawn_and_run_prepared(&prepared, generation, &app_handle, rx).await;
 
         match handle_res {
-            Ok((handle, applied)) => {
+            Ok((mut handle, applied)) => {
                 let pid = handle.pid();
+                self.set_status(EngineStatus::WaitingForReadiness { pid }, &dispatcher_clone);
+                tokio::time::sleep(crate::engine::lifecycle::ENGINE_STARTUP_GRACE_PERIOD).await;
+                let config_matches = applied.verified.revision == prepared.verified.revision
+                    && applied.verified.fingerprint == prepared.verified.fingerprint;
+                if !is_process_alive(pid) || !config_matches {
+                    let _ = handle.terminate().await;
+                    let error = EngineError::SpawnFailed(
+                        "Owned process failed readiness or exact-config verification".into(),
+                    );
+                    let _ = set_state_failed_if_starting(&state_clone, generation, error.clone());
+                    self.set_status(
+                        EngineStatus::Error {
+                            message: error.to_string(),
+                            code: Some("ENGINE_READINESS_FAILED".into()),
+                        },
+                        &dispatcher_clone,
+                    );
+                    return Err(error);
+                }
                 if !set_state_running_if_starting(&state_clone, generation, handle) {
                     tracing::info!(generation, pid, "Stale engine start result was discarded.");
                     return Err(EngineError::NotRunning);
                 }
 
-                self.set_status(EngineStatus::Running { pid }, &dispatcher_clone);
+                self.set_status(
+                    EngineStatus::Ready {
+                        pid,
+                        generation,
+                        revision: prepared.verified.revision.get(),
+                        fingerprint: prepared.verified.fingerprint.to_string(),
+                    },
+                    &dispatcher_clone,
+                );
                 tracing::info!(
                     "Engine started: preset='{}', pid={}, revision={}",
                     prepared.verified.preset.id,
@@ -358,10 +396,6 @@ impl EngineManager {
     }
 
     pub async fn stop(&self, dispatcher: &impl EngineEventDispatcher) -> Result<(), EngineError> {
-        if let Err(error) = apply_kill_switch(false) {
-            tracing::error!("Engine stop continued, but DNS kill-switch cleanup failed: {error}");
-        }
-
         let mut handle = {
             let mut state = self.state.lock().map_err(|_| {
                 tracing::error!("State lock poisoned (stop phase).");
@@ -427,6 +461,10 @@ impl EngineManager {
             .lock()
             .map(|s| s.clone())
             .unwrap_or(EngineStatus::Stopped)
+    }
+
+    pub(crate) fn current_generation(&self) -> crate::engine::owned_process::EngineGeneration {
+        crate::engine::owned_process::EngineGeneration::new(self.generation.load(Ordering::SeqCst))
     }
 
     fn set_status(&self, new_status: EngineStatus, dispatcher: &impl EngineEventDispatcher) {
@@ -526,188 +564,6 @@ fn read_bypass_config(app: &AppHandle) -> Result<BypassConfig, EngineError> {
         kill_switch: settings.kill_switch,
     };
     Ok(config)
-}
-
-pub(crate) fn apply_kill_switch(enabled: bool) -> Result<(), EngineError> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        let run_netsh = |args: &[&str]| -> Result<bool, EngineError> {
-            std::process::Command::new("netsh")
-                .args(args)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .creation_flags(CREATE_NO_WINDOW)
-                .status()
-                .map(|status| status.success())
-                .map_err(|error| {
-                    EngineError::IoError(format!("Windows Firewall command failed: {error}"))
-                })
-        };
-
-        let removed = run_netsh(&[
-            "advfirewall",
-            "firewall",
-            "delete",
-            "rule",
-            "name=VaneDNSKillSwitch",
-        ])?;
-        if !removed {
-            tracing::debug!("No existing Vane DNS kill-switch rule was removed.");
-        }
-
-        if enabled {
-            let udp_added = run_netsh(&[
-                    "advfirewall", "firewall", "add", "rule",
-                    "name=VaneDNSKillSwitch", "dir=out", "action=block",
-                    "protocol=UDP", "remoteport=53",
-                    "remoteip=0.0.0.0-127.0.0.0,127.0.0.2-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
-                ])?;
-            let tcp_added = run_netsh(&[
-                    "advfirewall", "firewall", "add", "rule",
-                    "name=VaneDNSKillSwitch", "dir=out", "action=block",
-                    "protocol=TCP", "remoteport=53",
-                    "remoteip=0.0.0.0-127.0.0.0,127.0.0.2-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
-                ])?;
-            if !udp_added || !tcp_added {
-                let _ = run_netsh(&[
-                    "advfirewall",
-                    "firewall",
-                    "delete",
-                    "rule",
-                    "name=VaneDNSKillSwitch",
-                ]);
-                return Err(EngineError::AuthorizationFailed(
-                    "DNS kill switch could not be applied to Windows Firewall.".to_string(),
-                ));
-            }
-            tracing::info!(
-                "DNS kill switch verified: TCP and UDP port 53 block rules were applied."
-            );
-        } else {
-            tracing::info!("DNS kill switch cleanup completed.");
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let _ = std::process::Command::new("iptables")
-            .args([
-                "-D",
-                "OUTPUT",
-                "!",
-                "-d",
-                "127.0.0.1",
-                "-p",
-                "udp",
-                "--dport",
-                "53",
-                "-j",
-                "DROP",
-            ])
-            .status();
-        let _ = std::process::Command::new("iptables")
-            .args([
-                "-D",
-                "OUTPUT",
-                "!",
-                "-d",
-                "127.0.0.1",
-                "-p",
-                "tcp",
-                "--dport",
-                "53",
-                "-j",
-                "DROP",
-            ])
-            .status();
-        let _ = std::process::Command::new("ip6tables")
-            .args([
-                "-D", "OUTPUT", "!", "-d", "::1", "-p", "udp", "--dport", "53", "-j", "DROP",
-            ])
-            .status();
-        let _ = std::process::Command::new("ip6tables")
-            .args([
-                "-D", "OUTPUT", "!", "-d", "::1", "-p", "tcp", "--dport", "53", "-j", "DROP",
-            ])
-            .status();
-
-        if enabled {
-            tracing::info!("DNS Kill Switch aktif ediliyor (iptables)...");
-            let udp_status = std::process::Command::new("iptables")
-                .args([
-                    "-A",
-                    "OUTPUT",
-                    "!",
-                    "-d",
-                    "127.0.0.1",
-                    "-p",
-                    "udp",
-                    "--dport",
-                    "53",
-                    "-j",
-                    "DROP",
-                ])
-                .status()?;
-            let tcp_status = std::process::Command::new("iptables")
-                .args([
-                    "-A",
-                    "OUTPUT",
-                    "!",
-                    "-d",
-                    "127.0.0.1",
-                    "-p",
-                    "tcp",
-                    "--dport",
-                    "53",
-                    "-j",
-                    "DROP",
-                ])
-                .status()?;
-            let udp6_status = std::process::Command::new("ip6tables")
-                .args([
-                    "-A", "OUTPUT", "!", "-d", "::1", "-p", "udp", "--dport", "53", "-j", "DROP",
-                ])
-                .status()?;
-            let tcp6_status = std::process::Command::new("ip6tables")
-                .args([
-                    "-A", "OUTPUT", "!", "-d", "::1", "-p", "tcp", "--dport", "53", "-j", "DROP",
-                ])
-                .status()?;
-            if !udp_status.success()
-                || !tcp_status.success()
-                || !udp6_status.success()
-                || !tcp6_status.success()
-            {
-                let _ = apply_kill_switch(false);
-                return Err(EngineError::AuthorizationFailed(
-                    "DNS kill switch could not verify IPv4 and IPv6 iptables rules.".to_string(),
-                ));
-            }
-            tracing::info!("DNS kill switch verified: IPv4/IPv6 TCP and UDP port 53 rules are active while loopback remains allowed.");
-        }
-    }
-
-    Ok(())
-}
-
-struct KillSwitchRollback {
-    active: bool,
-}
-
-impl KillSwitchRollback {
-    fn disarm(&mut self) {
-        self.active = false;
-    }
-}
-
-impl Drop for KillSwitchRollback {
-    fn drop(&mut self) {
-        if self.active {
-            tracing::warn!("Engine startup failed; rolling back the DNS kill switch.");
-            let _ = apply_kill_switch(false);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -822,6 +678,7 @@ mod bypass_config_tests {
 
 async fn spawn_and_run_prepared(
     prepared: &crate::engine::runtime_config::PreparedRuntimeConfig,
+    _generation: u64,
     app: &AppHandle,
     _cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<
@@ -842,7 +699,6 @@ async fn spawn_and_run_prepared(
 
     let prepared_args = prepared.launch_plan.final_arguments.clone();
     let kill_switch = prepared.verified.bypass.kill_switch;
-
     tracing::info!(
         "Prepared runtime config spawning: revision={}, fingerprint={}",
         prepared.verified.revision.get(),
@@ -861,15 +717,97 @@ async fn spawn_and_run_prepared(
         }
     }
 
-    apply_kill_switch(kill_switch)?;
-    let mut kill_switch_rollback = KillSwitchRollback {
-        active: kill_switch,
-    };
-
     #[cfg(target_os = "linux")]
     let mut cancel_rx = _cancel_rx;
 
     #[cfg(target_os = "linux")]
+    {
+        let installation_id = crate::dns::get_or_create_installation_id(app);
+        let instance_id = format!(
+            "engine-{}-{}",
+            std::process::id(),
+            prepared.verified.fingerprint.prefix(8)
+        );
+        let intent = crate::platform::linux::LinuxFilterIntent::from_specs(
+            prepared
+                .launch_plan
+                .traffic_filter
+                .effective_linux_tcp_spec
+                .as_deref(),
+            prepared
+                .launch_plan
+                .traffic_filter
+                .effective_linux_udp_spec
+                .as_deref(),
+            crate::platform::linux::LinuxHostlistMode::from(prepared.verified.bypass.mode),
+        );
+        let filter_guard = crate::platform::linux::LinuxFilterGuard::apply(
+            app,
+            intent,
+            &installation_id,
+            &instance_id,
+            _generation,
+            prepared.verified.revision.get(),
+            &prepared.verified.fingerprint.to_string(),
+        )
+        .map_err(|error| EngineError::AuthorizationFailed(error.to_string()))?;
+        if !filter_guard.verify_owned() {
+            return Err(EngineError::AuthorizationFailed(
+                "Linux filter ownership verification failed".into(),
+            ));
+        }
+        let mut args = prepared_args
+            .iter()
+            .filter(|arg| !arg.starts_with("--qnum="))
+            .cloned()
+            .collect::<Vec<_>>();
+        args.insert(0, format!("--qnum={}", filter_guard.queue_number()));
+        let mut command = tokio::process::Command::new(&winws_path);
+        command
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command
+            .spawn()
+            .map_err(|error| EngineError::SpawnFailed(error.to_string()))?;
+        let pid = child
+            .id()
+            .ok_or_else(|| EngineError::SpawnFailed("Linux engine PID unavailable".into()))?;
+        tokio::select! {
+            _ = tokio::time::sleep(crate::engine::lifecycle::ENGINE_STARTUP_GRACE_PERIOD) => {}
+            _ = &mut cancel_rx => {
+                let _ = child.start_kill();
+                return Err(EngineError::NotRunning);
+            }
+        }
+        if child
+            .try_wait()
+            .map_err(|error| EngineError::IoError(error.to_string()))?
+            .is_some()
+        {
+            return Err(EngineError::SpawnFailed(
+                "Linux engine exited before readiness".into(),
+            ));
+        }
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| EngineError::IoError("stdout pipe unavailable".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| EngineError::IoError("stderr pipe unavailable".into()))?;
+        crate::engine::logger::spawn_log_reader(stdout, app.clone(), None);
+        crate::engine::logger::spawn_log_reader(stderr, app.clone(), Some("ERROR: "));
+        let handle = ProcessHandle::new(child, pid, None, Some(filter_guard));
+        let applied = crate::engine::runtime_config::AppliedRuntimeConfig::process_started(
+            prepared.verified.clone(),
+            pid,
+        );
+        Ok((handle, applied))
+    }
+
+    #[cfg(all(target_os = "linux", any()))]
     {
         let mut escaped_args = Vec::new();
         for arg in &prepared_args {
@@ -880,30 +818,7 @@ async fn spawn_and_run_prepared(
         let binary_path_escaped = winws_path.to_string_lossy().replace('\'', "'\\''");
         let binary_path_str = format!("'{}'", binary_path_escaped);
 
-        let script = format!(
-            "clean_up() {{ \
-                 if [ -n \"$ENGINE_PID\" ]; then kill \"$ENGINE_PID\" 2>/dev/null; fi; \
-                 if command -v nft >/dev/null 2>&1; then \
-                     nft delete table ip vane_mangle 2>/dev/null; \
-                 else \
-                     iptables -t mangle -D OUTPUT -p tcp -m multiport --dports 80,443 -j NFQUEUE --queue-num 200 2>/dev/null; \
-                 fi; \
-             }}; \
-             trap clean_up EXIT INT TERM HUP; \
-             if command -v nft >/dev/null 2>&1; then \
-                 nft delete table ip vane_mangle 2>/dev/null; \
-                 nft add table ip vane_mangle || exit 1; \
-                 nft add chain ip vane_mangle output '{{ type filter hook output priority mangle; policy accept; }}' || exit 1; \
-                 nft add rule ip vane_mangle output tcp dport '{{ 80, 443 }}' queue num 200 || exit 1; \
-             else \
-                 iptables -t mangle -D OUTPUT -p tcp -m multiport --dports 80,443 -j NFQUEUE --queue-num 200 2>/dev/null; \
-                 iptables -t mangle -I OUTPUT -p tcp -m multiport --dports 80,443 -j NFQUEUE --queue-num 200 || exit 1; \
-             fi; \
-             {} {} & ENGINE_PID=$!; \
-             echo \"READY:$ENGINE_PID\"; \
-             cat > /dev/null",
-            binary_path_str, args_str
-        );
+        let script = format!("{} {}", binary_path_str, args_str);
 
         let can_run_directly = {
             let uid_output = std::process::Command::new("id").arg("-u").output();
@@ -992,7 +907,6 @@ async fn spawn_and_run_prepared(
         crate::engine::logger::spawn_log_reader(stderr, app.clone(), Some("HATA: "));
 
         let handle = ProcessHandle::new(child, pid, None);
-        kill_switch_rollback.disarm();
         let applied = crate::engine::runtime_config::AppliedRuntimeConfig::process_started(
             prepared.verified.clone(),
             pid,
@@ -1051,7 +965,6 @@ async fn spawn_and_run_prepared(
         crate::engine::logger::spawn_log_reader(stderr, app.clone(), Some("HATA: "));
 
         let handle = ProcessHandle::new(child, pid, job_guard);
-        kill_switch_rollback.disarm();
         let applied = crate::engine::runtime_config::AppliedRuntimeConfig::process_started(
             prepared.verified.clone(),
             pid,
@@ -1081,6 +994,24 @@ fn watch_process(
 
             if !is_process_alive(pid) {
                 tracing::warn!("Engine process (PID {}) died unexpectedly.", pid);
+
+                if !AUTOMATIC_RESTART_ENABLED {
+                    let error = EngineError::IoError(
+                        "Owned engine process exited unexpectedly; explicit restart required".into(),
+                    );
+                    if let Ok(mut guard) = state.lock() {
+                        if matches!(&*guard, EngineState::Running { handle } if handle.pid() == pid) {
+                            *guard = EngineState::Failed(error);
+                        }
+                    }
+                    set_status_error(
+                        &status,
+                        &app,
+                        "Engine process exited unexpectedly. Automatic restart is disabled.".into(),
+                        Some("ENGINE_CRASH_OBSERVED".into()),
+                    );
+                    break;
+                }
 
                 let generation = generation_counter.fetch_add(1, Ordering::SeqCst) + 1;
                 let (initial_cancel, initial_rx) = tokio::sync::oneshot::channel::<()>();
@@ -1136,7 +1067,7 @@ fn watch_process(
                     })();
 
                     let spawn_res = match prepared_res {
-                        Ok(prep) => spawn_and_run_prepared(&prep, &app, rx).await,
+                        Ok(prep) => spawn_and_run_prepared(&prep, generation, &app, rx).await,
                         Err(e) => Err(e),
                     };
 

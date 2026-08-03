@@ -32,7 +32,7 @@ export function SafetyProxyView() {
   const [localProxy, setLocalProxy] = useState(proxySocks5);
   const [showToast, setShowToast] = useState(false);
 
-  const isRunning = status.variant === 'running';
+  const isRunning = status.variant === 'ready';
 
   useEffect(() => {
     setLocalKillSwitch(killSwitch);

@@ -24,7 +24,7 @@ export function HomeView() {
     setLanguage,
   } = useEngineStore();
 
-  const isRunning = status.variant === 'running';
+  const isRunning = status.variant === 'ready';
   const t = translations[language];
   const activePreset = presets.find((p) => p.id === activePresetId);
   const presetLabel = activePreset?.label ?? activePresetId ?? 'Default';

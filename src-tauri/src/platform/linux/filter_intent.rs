@@ -6,21 +6,49 @@ pub struct PortRange {
     pub end: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinuxHostlistMode {
+    All,
+    Whitelist,
+    Blacklist,
+}
+
+impl LinuxHostlistMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Whitelist => "whitelist",
+            Self::Blacklist => "blacklist",
+        }
+    }
+}
+
+impl From<crate::engine::runtime_config::RuntimeBypassMode> for LinuxHostlistMode {
+    fn from(mode: crate::engine::runtime_config::RuntimeBypassMode) -> Self {
+        match mode {
+            crate::engine::runtime_config::RuntimeBypassMode::All => Self::All,
+            crate::engine::runtime_config::RuntimeBypassMode::Whitelist => Self::Whitelist,
+            crate::engine::runtime_config::RuntimeBypassMode::Blacklist => Self::Blacklist,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinuxFilterIntent {
     pub tcp_ports: Vec<PortRange>,
     pub udp_ports: Vec<PortRange>,
     pub requires_quic: bool,
-    pub hostlist_mode: String,
+    pub hostlist_mode: LinuxHostlistMode,
 }
 
 impl LinuxFilterIntent {
     pub fn from_specs(
         declared_tcp: Option<&str>,
         declared_udp: Option<&str>,
-        hostlist_mode: &str,
+        hostlist_mode: LinuxHostlistMode,
     ) -> Self {
-        let tcp_ports = parse_port_spec(declared_tcp.unwrap_or("80,443"));
+        let tcp_ports = parse_port_spec(declared_tcp.unwrap_or(""));
         let udp_ports = parse_port_spec(declared_udp.unwrap_or(""));
 
         let requires_quic = udp_ports.iter().any(|r| r.start <= 443 && 443 <= r.end);
@@ -29,7 +57,7 @@ impl LinuxFilterIntent {
             tcp_ports,
             udp_ports,
             requires_quic,
-            hostlist_mode: hostlist_mode.to_string(),
+            hostlist_mode,
         }
     }
 }

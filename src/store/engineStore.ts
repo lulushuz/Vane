@@ -606,7 +606,7 @@ export const useEngineStore = create<EngineStore>()(
           if (token !== lifecycleToken) return;
           set({ status: result });
 
-          if (result.variant === 'running') {
+          if (result.variant === 'ready') {
             get().appendLog(get().language === 'tr' ? `[ENGINE] DPI bypass etkin ve çalışıyor (işlem ${result.pid}).` : `[ENGINE] DPI bypass is active and running (process ${result.pid}).`, 'info');
           } else if (result.variant === 'error') {
             get().appendLog(get().language === 'tr' ? `[ERROR] DPI motoru hatası: ${result.message}` : `[ERROR] DPI engine error: ${result.message}`, 'error');

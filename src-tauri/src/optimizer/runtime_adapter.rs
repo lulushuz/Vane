@@ -1,5 +1,4 @@
 use crate::engine::manager::{EngineManager, EngineStatus};
-use crate::engine::owned_process::EngineGeneration;
 use crate::engine::runtime_config::{AppliedRuntimeConfig, PreparedRuntimeConfig};
 use crate::optimizer::session::{
     OptimizerError, OptimizerSessionId, OriginalEngineState, RestoreOutcome,
@@ -33,6 +32,7 @@ pub(crate) trait OptimizerRuntime: Send + Sync {
 pub(crate) struct ProductionOptimizerRuntime {
     app: AppHandle,
     engine_manager: EngineManager,
+    active_session: std::sync::Mutex<Option<OptimizerSessionId>>,
 }
 
 impl ProductionOptimizerRuntime {
@@ -40,7 +40,20 @@ impl ProductionOptimizerRuntime {
         Self {
             app,
             engine_manager,
+            active_session: std::sync::Mutex::new(None),
         }
+    }
+
+    fn require_session(&self, session_id: &OptimizerSessionId) -> Result<(), OptimizerError> {
+        let guard = self.active_session.lock().map_err(|_| {
+            OptimizerError::CandidateStartFailed("Optimizer session lock poisoned".into())
+        })?;
+        if guard.as_ref() != Some(session_id) {
+            return Err(OptimizerError::CandidateStartFailed(
+                "Optimizer session ownership mismatch".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -55,7 +68,7 @@ impl OptimizerRuntime for ProductionOptimizerRuntime {
         let desired = runtime_guard.desired().cloned();
 
         match status {
-            EngineStatus::Running { .. } => {
+            EngineStatus::Ready { .. } => {
                 let applied = runtime_guard.applied().cloned().ok_or_else(|| {
                     OptimizerError::OriginalStateCaptureFailed(
                         "Running engine missing applied runtime config.".into(),
@@ -93,8 +106,19 @@ impl OptimizerRuntime for ProductionOptimizerRuntime {
 
     async fn stop_original_for_session(
         &self,
-        _session_id: &OptimizerSessionId,
+        session_id: &OptimizerSessionId,
     ) -> Result<(), OptimizerError> {
+        {
+            let mut guard = self.active_session.lock().map_err(|_| {
+                OptimizerError::OriginalStopFailed("Optimizer session lock poisoned".into())
+            })?;
+            if guard.is_some() && guard.as_ref() != Some(session_id) {
+                return Err(OptimizerError::OriginalStopFailed(
+                    "Another optimizer session owns the runtime".into(),
+                ));
+            }
+            *guard = Some(session_id.clone());
+        }
         self.engine_manager
             .stop(&self.app)
             .await
@@ -103,16 +127,19 @@ impl OptimizerRuntime for ProductionOptimizerRuntime {
 
     async fn start_candidate(
         &self,
-        _session_id: &OptimizerSessionId,
+        session_id: &OptimizerSessionId,
         candidate: PreparedRuntimeConfig,
     ) -> Result<AppliedRuntimeConfig, OptimizerError> {
+        self.require_session(session_id)?;
         self.engine_manager
             .start_prepared_config(candidate, &self.app)
             .await
             .map_err(|e| OptimizerError::CandidateStartFailed(e.to_string()))
     }
 
-    async fn stop_candidate(&self, _session_id: &OptimizerSessionId) -> Result<(), OptimizerError> {
+    async fn stop_candidate(&self, session_id: &OptimizerSessionId) -> Result<(), OptimizerError> {
+        self.require_session(session_id)
+            .map_err(|error| OptimizerError::CandidateCleanupFailed(error.to_string()))?;
         self.engine_manager
             .stop(&self.app)
             .await
@@ -121,10 +148,12 @@ impl OptimizerRuntime for ProductionOptimizerRuntime {
 
     async fn restore_original(
         &self,
-        _session_id: &OptimizerSessionId,
+        session_id: &OptimizerSessionId,
         original: OriginalEngineState,
     ) -> Result<RestoreOutcome, OptimizerError> {
-        match original {
+        self.require_session(session_id)
+            .map_err(|error| OptimizerError::RestoreFailed(error.to_string()))?;
+        let result = match original {
             OriginalEngineState::Stopped { .. } | OriginalEngineState::Failed { .. } => {
                 let _ = self.engine_manager.stop(&self.app).await;
                 Ok(RestoreOutcome::RestoredStopped)
@@ -149,7 +178,7 @@ impl OptimizerRuntime for ProductionOptimizerRuntime {
                             config_revision: restored_applied.verified.revision.get(),
                             config_fingerprint: restored_applied.verified.fingerprint.to_string(),
                             new_pid: restored_applied.process_id,
-                            generation: EngineGeneration::new(1),
+                            generation: self.engine_manager.current_generation(),
                         })
                     }
                     Err(e) => Ok(RestoreOutcome::Failed {
@@ -157,6 +186,12 @@ impl OptimizerRuntime for ProductionOptimizerRuntime {
                     }),
                 }
             }
+        };
+        if !matches!(result, Ok(RestoreOutcome::Failed { .. })) {
+            if let Ok(mut guard) = self.active_session.lock() {
+                *guard = None;
+            }
         }
+        result
     }
 }

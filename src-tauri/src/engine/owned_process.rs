@@ -4,6 +4,9 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+static ENGINE_OPERATION_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
 use crate::engine::runtime_config::{ConfigFingerprint, ConfigRevision};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -37,7 +40,6 @@ pub(crate) struct EngineOperationId(pub String);
 
 impl EngineOperationId {
     pub(crate) fn generate(prefix: &str) -> Self {
-        let seq = std::sync::atomic::AtomicU64::new(1);
         let id = format!(
             "{}-{}-{}",
             prefix,
@@ -45,7 +47,7 @@ impl EngineOperationId {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0),
-            seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ENGINE_OPERATION_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
         Self(id)
     }

@@ -85,7 +85,7 @@ class MockIpcController {
     }));
 
     this.handlers.set('start_engine_with_dns_guard', () => ({
-      variant: 'running',
+      variant: 'ready', generation: 1, revision: 1, fingerprint: 'fixture',
       pid: 1234,
     }));
 

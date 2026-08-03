@@ -61,46 +61,35 @@ pub fn spawn_dns_watchdog(
             if fail_count >= 3 {
                 tracing::error!("CRITICAL: DNS upstream failed three real resolution checks. Reverting system DNS to DHCP!");
                 shutdown.store(true, Ordering::SeqCst);
-                if let Err(error) = crate::engine::manager::apply_kill_switch(false) {
-                    tracing::error!(
-                        "DNS watchdog could not remove the kill switch during recovery: {error}"
-                    );
-                }
-                let handle = app_handle.try_state::<crate::AppState>().and_then(|state| {
-                    state
-                        .forwarder
-                        .lock()
-                        .ok()
-                        .and_then(|mut guard| guard.take())
-                });
-                let previous_dns = handle.as_ref().map(|handle| handle.previous_dns.clone());
-                if let Some(handle) = handle {
-                    handle.stop().await;
-                }
-                let res = previous_dns
-                    .as_deref()
-                    .map(crate::dns::restore_dns_snapshot)
-                    .unwrap_or_else(crate::dns::reset_dns_to_dhcp);
-                if res.success {
-                    if let Err(error) = crate::dns::clear_dns_restore_snapshot(&app_handle) {
-                        tracing::error!("DNS watchdog recovered connectivity but could not clear the recovery snapshot: {error}");
-                    }
-                    tracing::info!(
-                        "System DNS was restored successfully after the upstream failure."
-                    );
+                tracing::error!(
+                    "DNS watchdog recovery requires the authoritative DnsTransactionManager"
+                );
+                let candidate = crate::dns::DnsConfigCandidate {
+                    enabled: false,
+                    protocol: "doh".into(),
+                    provider: Some("cloudflare".into()),
+                    adblock: false,
+                    cache_enabled: false,
+                    socks5: None,
+                    kill_switch: false,
+                };
+                let recovered = match app_handle.try_state::<crate::AppState>() {
+                    Some(state) => state
+                        .dns_transaction_manager
+                        .apply_candidate(candidate, &app_handle, state.inner())
+                        .await
+                        .is_ok(),
+                    None => false,
+                };
+                if recovered {
                     let _ = app_handle.emit("dns_status_changed", ());
                     let _ = app_handle.emit(
                         "dns_auto_applied",
-                        "DNS_WATCHDOG_PREVIOUS_CONFIGURATION_RESTORED",
+                        "DNS_WATCHDOG_TRANSACTION_ROLLBACK_COMPLETED",
                     );
                 } else {
-                    tracing::error!(
-                        "Failed to restore system DNS after the upstream failure: {:?}",
-                        res.error
-                    );
+                    tracing::error!("DnsTransactionManager could not roll back watchdog failure.");
                 }
-
-                // Exit watchdog since we reverted
                 break;
             }
         }

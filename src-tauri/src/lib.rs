@@ -1,6 +1,4 @@
 use log::LevelFilter;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -21,6 +19,7 @@ pub mod http;
 pub mod ipc;
 pub mod logging;
 pub mod network;
+pub mod operation;
 pub mod optimizer;
 pub mod platform;
 pub mod presets;
@@ -57,6 +56,25 @@ pub struct AppState {
     pub dns_config_revision: AtomicU64,
     pub dns_transaction_manager: std::sync::Arc<crate::dns::DnsTransactionManager>,
     pub optimizer_manager: std::sync::Arc<crate::optimizer::OptimizerSessionManager>,
+    pub exclusive_operations: std::sync::Arc<crate::operation::ExclusiveOperationCoordinator>,
+}
+
+fn build_app_state(loader: ConfigLoader, http_client: reqwest::Client) -> AppState {
+    AppState {
+        engine_manager: EngineManager::new(),
+        config_loader: Mutex::new(loader),
+        http_client,
+        forwarder: Mutex::new(None),
+        bypass_sync: tokio::sync::Mutex::new(()),
+        bypass_config_revision: AtomicU64::new(0),
+        dns_sync: tokio::sync::Mutex::new(()),
+        dns_config_revision: AtomicU64::new(0),
+        dns_transaction_manager: std::sync::Arc::new(crate::dns::DnsTransactionManager::new()),
+        optimizer_manager: std::sync::Arc::new(crate::optimizer::OptimizerSessionManager::new()),
+        exclusive_operations: std::sync::Arc::new(
+            crate::operation::ExclusiveOperationCoordinator::default(),
+        ),
+    }
 }
 
 /*
@@ -68,33 +86,6 @@ fn kill_existing_winws() {
     tracing::info!(
         "Startup: Global process cleanup disabled in P07 to enforce owned process lifecycle."
     );
-}
-
-#[cfg(target_os = "windows")]
-fn cleanup_stale_windivert() {
-    tracing::info!("Startup cleanup: Checking for stale WinDivert services...");
-    let result = std::process::Command::new("sc")
-        .args(["query", "WinDivert"])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .output();
-
-    match result {
-        Ok(out) if out.status.success() => {
-            let output_str = String::from_utf8_lossy(&out.stdout);
-            // If it exists but is not running correctly, wiping it forces a clean reinstall.
-            if output_str.contains("STOPPED")
-                || output_str.contains("START_PENDING")
-                || output_str.contains("STOP_PENDING")
-            {
-                tracing::info!("Stale WinDivert service found. Disposing...");
-                let _ = std::process::Command::new("sc")
-                    .args(["delete", "WinDivert"])
-                    .creation_flags(0x08000000)
-                    .output();
-            }
-        }
-        _ => tracing::debug!("No stale WinDivert service found (normal)."),
-    }
 }
 
 /// Automatically resumes DPI bypass after an --autostart launch.
@@ -210,12 +201,31 @@ async fn autostart_engine_with_last_preset(app: AppHandle) {
             );
             return;
         };
-        let result = crate::dns::apply_dns(&primary, &secondary);
-        if !result.success {
-            tracing::error!(
-                "Auto-start: Saved DNS settings could not be restored: {:?}",
-                result.error
-            );
+        let provider = match (primary.as_str(), secondary.as_str()) {
+            ("1.1.1.1", "1.0.0.1") => "cloudflare",
+            ("8.8.8.8", "8.8.4.4") => "google",
+            _ => {
+                tracing::error!(
+                    "Auto-start: Custom plaintext DNS cannot bypass DnsTransactionManager."
+                );
+                return;
+            }
+        };
+        let candidate = crate::dns::DnsConfigCandidate {
+            enabled: true,
+            protocol: "doh".into(),
+            provider: Some(provider.into()),
+            adblock: false,
+            cache_enabled: true,
+            socks5: None,
+            kill_switch: settings.kill_switch,
+        };
+        if let Err(error) = state
+            .dns_transaction_manager
+            .apply_candidate(candidate, &app, state.inner())
+            .await
+        {
+            tracing::error!("Auto-start: Saved DNS settings could not be restored: {error}");
             return;
         }
         tracing::info!("Auto-start: Saved system DNS settings were restored and verified.");
@@ -229,20 +239,20 @@ async fn autostart_engine_with_last_preset(app: AppHandle) {
             );
             if let Err(e) = state.engine_manager.start(&p, &app).await {
                 tracing::error!("Auto-start: Engine could not be started: {}", e);
-                let forwarder = state
-                    .forwarder
-                    .lock()
-                    .ok()
-                    .and_then(|mut guard| guard.take());
-                if let Some(handle) = forwarder {
-                    let previous_dns = handle.previous_dns.clone();
-                    handle.stop().await;
-                    let restored = crate::dns::restore_dns_snapshot(&previous_dns);
-                    if restored.success {
-                        let _ = crate::dns::clear_dns_restore_snapshot(&app);
-                    }
-                    tracing::warn!("Auto-start rollback: DNS forwarder was stopped and system DNS was restored.");
-                }
+                let rollback = crate::dns::DnsConfigCandidate {
+                    enabled: false,
+                    protocol: "doh".into(),
+                    provider: Some("cloudflare".into()),
+                    adblock: false,
+                    cache_enabled: false,
+                    socks5: None,
+                    kill_switch: false,
+                };
+                let _ = state
+                    .dns_transaction_manager
+                    .apply_candidate(rollback, &app, state.inner())
+                    .await;
+                tracing::warn!("Auto-start rollback completed through DnsTransactionManager.");
             }
         }
         None => {
@@ -287,15 +297,56 @@ pub fn run() {
             // Clean up dangling processes from previous runs (Windows only)
             #[cfg(target_os = "windows")]
             kill_existing_winws();
-            #[cfg(target_os = "windows")]
-            cleanup_stale_windivert();
-            let inst_id = crate::dns::get_or_create_installation_id(app.handle());
-            let _ = crate::dns::recover_orphan_kill_switch_rules(app.handle(), &inst_id);
-            let _ = crate::platform::linux::recover_orphan_linux_filter_rules(app.handle(), &inst_id);
-            if let Err(error) = crate::engine::manager::apply_kill_switch(false) {
-                tracing::error!("Startup cleanup could not remove a stale DNS kill-switch rule: {error}");
+
+            // Phase 1: Load local and cached remote presets before AppState registration.
+            let mut loader = ConfigLoader::new();
+            if let Ok(app_data) = app.path().app_data_dir() {
+                let presets_path = app_data.join("presets");
+                let _ = std::fs::create_dir_all(&presets_path);
+                loader.load_custom_presets_from(&presets_path);
+                if let Some(cached) = crate::presets::load_cached_presets(&app_data) {
+                    loader.load_remote_presets(cached.presets);
+                }
             }
-            match crate::dns::recover_stale_dns_snapshot(app.handle()) {
+
+            let http_client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(8))
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .pool_max_idle_per_host(2)
+                .build()
+                .unwrap_or_else(|e| {
+                    // TLS initialization can fail on restricted Windows installations.
+                    tracing::warn!("HTTP Client TLS initialization failed, using fallback: {}", e);
+                    reqwest::Client::new()
+                });
+            let fetch_client = http_client.clone();
+
+            if !app.manage(build_app_state(loader, http_client)) {
+                return Err(std::io::Error::other(
+                    "AppState was already managed before setup initialization",
+                )
+                .into());
+            }
+
+            let inst_id = crate::dns::get_or_create_installation_id(app.handle());
+            match crate::dns::recover_orphan_kill_switch_rules(app.handle(), &inst_id) {
+                Ok(true) => tracing::warn!("Orphan DNS Kill Switch rules were removed and metadata was cleared."),
+                Ok(false) => {}
+                Err(error) => tracing::error!("Startup DNS Kill Switch recovery needs attention; metadata was preserved: {error}"),
+            }
+            match crate::platform::linux::recover_orphan_linux_filter_rules(app.handle(), &inst_id) {
+                Ok(crate::platform::linux::LinuxFilterRecoveryOutcome::NoMetadata) => {}
+                Ok(crate::platform::linux::LinuxFilterRecoveryOutcome::Recovered) => tracing::warn!(
+                    "A previous Linux firewall shutdown was incomplete; owned rules were removed and metadata was cleared."
+                ),
+                Err(error) => tracing::error!(
+                    "Startup Linux firewall recovery needs attention; metadata was preserved: {error}"
+                ),
+            }
+            let state = app.state::<AppState>();
+            match tauri::async_runtime::block_on(
+                state.dns_transaction_manager.recover_stale_snapshot(app.handle()),
+            ) {
                 Ok(true) => tracing::warn!("A previous DNS forwarder shutdown was incomplete; the saved system DNS configuration was restored and verified."),
                 Ok(false) => {}
                 Err(error) => tracing::error!("Startup DNS recovery needs attention: {error}"),
@@ -317,35 +368,9 @@ pub fn run() {
                 tracing::info!("Network change detected. Frontend UI will be updated.");
             });
 
-            let mut loader = ConfigLoader::new();
-            if let Ok(app_data) = app.path().app_data_dir() {
-                let presets_path = app_data.join("presets");
-                let _ = std::fs::create_dir_all(&presets_path);
-                loader.load_custom_presets_from(&presets_path);
-
-                // ─── Feature 3: Cache-First Remote Presets ─────────────────
-                // Phase 1: Load from disk immediately (synchronous, zero network I/O).
-                if let Some(cached) = crate::presets::load_cached_presets(&app_data) {
-                    loader.load_remote_presets(cached.presets);
-                }
-            }
-
-            let http_client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(8))
-                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .pool_max_idle_per_host(2)
-                .build()
-                .unwrap_or_else(|e| {
-                    // TLS init may fail on FIPS-mode Windows or missing root certs.
-                    // Fall back to a plain client — functionality degrades gracefully.
-                    tracing::warn!("HTTP Client TLS initialization failed, using fallback: {}", e);
-                    reqwest::Client::new()
-                });
-
             // Phase 2: Fetch remote presets in background (non-blocking).
             // If offline, the cached presets loaded above remain active.
             if let Ok(app_data) = app.path().app_data_dir() {
-                let fetch_client = http_client.clone();
                 let fetch_app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     use crate::presets::{fetch_remote_presets, RemoteFetchOutcome};
@@ -409,23 +434,6 @@ pub fn run() {
 
             // System Tray setup
             crate::tray::setup_tray(app)?;
-
-            let dns_tx_manager = std::sync::Arc::new(crate::dns::DnsTransactionManager::new());
-            let optimizer_manager = std::sync::Arc::new(crate::optimizer::OptimizerSessionManager::new());
-
-            // Global singleton HTTP client for pooled request reusing
-            app.manage(AppState {
-                engine_manager: EngineManager::new(),
-                config_loader: Mutex::new(loader),
-                http_client,
-                forwarder: Mutex::new(None),
-                bypass_sync: tokio::sync::Mutex::new(()),
-                bypass_config_revision: AtomicU64::new(0),
-                dns_sync: tokio::sync::Mutex::new(()),
-                dns_config_revision: AtomicU64::new(0),
-                dns_transaction_manager: dns_tx_manager,
-                optimizer_manager,
-            });
 
             // Auto-start: if launched via Task Scheduler / systemd, resume the last DPI preset.
             if is_autostart {
@@ -507,6 +515,9 @@ pub fn run() {
             commands::run_traffic_diagnostics,
             commands::cancel_traffic_diagnostics,
             commands::export_diagnostics_bundle,
+            commands::get_recent_diagnostic_events,
+            commands::clear_diagnostic_events,
+            commands::get_diagnostic_event_stats,
             settings::settings_get,
             settings::settings_set,
             settings::settings_remove,
@@ -521,27 +532,42 @@ pub fn run() {
             tracing::info!("Tauri application closing (RunEvent::Exit). Stopping engine...");
             if let Some(state) = app_handle.try_state::<AppState>() {
                 let _ = tauri::async_runtime::block_on(state.engine_manager.stop(app_handle));
-                let forwarder = state
-                    .forwarder
-                    .lock()
-                    .ok()
-                    .and_then(|mut guard| guard.take());
-                if let Some(handle) = forwarder {
-                    let previous_dns = handle.previous_dns.clone();
-                    tauri::async_runtime::block_on(handle.stop());
-                    let restored = crate::dns::restore_dns_snapshot(&previous_dns);
-                    if !restored.success {
-                        tracing::error!(
-                            "Application exit could not restore the previous DNS snapshot: {:?}",
-                            restored.error
-                        );
-                    } else if let Err(error) =
-                        crate::dns::clear_dns_restore_snapshot(app_handle)
-                    {
-                        tracing::error!("Application exit restored DNS but could not clear the recovery snapshot: {error}");
-                    }
+                let candidate = crate::dns::DnsConfigCandidate {
+                    enabled: false,
+                    protocol: "doh".into(),
+                    provider: Some("cloudflare".into()),
+                    adblock: false,
+                    cache_enabled: false,
+                    socks5: None,
+                    kill_switch: false,
+                };
+                if let Err(error) =
+                    tauri::async_runtime::block_on(state.dns_transaction_manager.apply_candidate(
+                        candidate,
+                        app_handle,
+                        state.inner(),
+                    ))
+                {
+                    tracing::error!("Application exit DNS transaction rollback failed: {error}");
                 }
             }
         }
     });
+}
+
+#[cfg(test)]
+mod startup_state_tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn startup_recovery_runs_only_after_app_state_is_managed() {
+        let state = build_app_state(ConfigLoader::new(), reqwest::Client::new());
+
+        assert_eq!(state.dns_config_revision.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            std::sync::Arc::strong_count(&state.dns_transaction_manager),
+            1
+        );
+    }
 }

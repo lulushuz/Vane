@@ -4,7 +4,8 @@ This harness collects the administrator-level evidence that repository unit test
 
 - the packaged Vane and `winws` process command line;
 - WinDivert driver state;
-- the exact `VaneDNSKillSwitch` rules and port filters;
+- current `Vane-DNS-*` and legacy `VaneDNSKillSwitch` owned rules, including rule identity,
+  direction, action, protocol, ports, and remote-address filters;
 - IPv4/IPv6 DNS server state for every adapter;
 - TCP/UDP port 53 listeners;
 - persistence metadata without exporting domains, proxy endpoints, usernames, or the computer name.
@@ -63,4 +64,7 @@ The tool records observations, not a false pass. A reviewer must compare snapsho
 optional packet trace, and confirm the operator outcomes before closing manual release gates.
 
 The Windows CI job parses the collector and runs `Test-VaneAcceptanceHarness.ps1` against positive
-and negative redaction/Pattern evaluation fixtures. It never performs privileged network changes.
+and negative redaction/Pattern evaluation fixtures. Firewall discovery tests cover current and
+legacy owned names, unrelated-rule rejection, de-duplication, and deterministic ordering. The
+wildcard is deliberately limited to the `Vane-DNS-*` prefix. The harness never performs privileged
+network changes.

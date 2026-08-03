@@ -1,6 +1,7 @@
-# verify-installation.ps1 — Verifies Vane installation files and registry entries
-$installDir = "C:\Program Files\Vane"
-if (-not (Test-Path "$installDir\vane-dpi.exe")) {
-    throw "Vane main executable missing at $installDir\vane-dpi.exe"
-}
-Write-Host "Vane executable presence verified."
+$ErrorActionPreference='Stop';$count=0;$root='C:\Program Files\Vane'
+$exe=Get-ChildItem $root -Filter 'Vane.exe' -Recurse | Select-Object -First 1
+if(-not $exe){throw 'Vane executable missing'};$count++
+foreach($name in @('winws-x86_64-pc-windows-msvc.exe','WinDivert64.sys','WinDivert.dll','cygwin1.dll')){if(-not(Get-ChildItem $root -Filter $name -Recurse)){throw "Missing $name"};$count++}
+$process=Start-Process $exe.FullName -PassThru; Start-Sleep -Seconds 2
+if($process.HasExited){throw 'Application failed to remain running'};$count++;Stop-Process -Id $process.Id -Force
+[ordered]@{name='verify-installation';status='PASSED';assertionCount=$count}|ConvertTo-Json -Compress

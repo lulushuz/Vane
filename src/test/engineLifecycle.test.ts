@@ -85,16 +85,16 @@ describe('Test Group E — Engine Launch Sequence Characterization', () => {
   });
 
 
-  it('E-07: updates store status and log when engine returns running variant with PID', async () => {
+  it('E-07: updates store status and log only when engine returns verified ready state', async () => {
     mockIpc.registerHandler('start_engine_with_dns_guard', () => ({
-      variant: 'running',
+      variant: 'ready', generation: 1, revision: 1, fingerprint: 'fixture',
       pid: 5678,
     }));
 
     await useEngineStore.getState().startEngine('default');
 
     const state = useEngineStore.getState();
-    expect(state.status).toEqual({ variant: 'running', pid: 5678 });
+    expect(state.status).toEqual({ variant: 'ready', pid: 5678, generation: 1, revision: 1, fingerprint: 'fixture' });
     expect(state.logs.some((l) => l.content.includes('5678'))).toBe(true);
   });
 
@@ -139,7 +139,7 @@ describe('Test Group H — Engine Stop and Lifecycle UI Characterization', () =>
   });
 
   it('H-01: sets stopped status and logs warning on successful engine stop', async () => {
-    useEngineStore.setState({ status: { variant: 'running', pid: 1234 } });
+    useEngineStore.setState({ status: { variant: 'ready', pid: 1234, generation: 1, revision: 1, fingerprint: 'fixture' } });
 
     await useEngineStore.getState().stopEngine();
 
@@ -177,17 +177,17 @@ describe('Test Group H — Engine Stop and Lifecycle UI Characterization', () =>
     expect(useEngineStore.getState().status).toEqual({ variant: 'starting' });
   });
 
-  it('H-06: documents current pid based running state representation (R-17)', async () => {
+  it('H-06: distinguishes verified ready state from process-only running state', async () => {
     mockIpc.registerHandler('start_engine_with_dns_guard', () => ({
-      variant: 'running',
+      variant: 'ready', generation: 1, revision: 1, fingerprint: 'fixture',
       pid: 9999,
     }));
 
     await useEngineStore.getState().startEngine('default');
 
     const status = useEngineStore.getState().status;
-    expect(status.variant).toBe('running');
-    if (status.variant === 'running') {
+    expect(status.variant).toBe('ready');
+    if (status.variant === 'ready') {
       expect(status.pid).toBe(9999);
     }
   });

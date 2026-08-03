@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn l02_linux_includes_qnum_200_as_first_argument() {
+    fn l02_linux_defers_dynamic_queue_assignment_to_owned_runtime() {
         let preset = builtin_presets().into_iter().next().unwrap();
         let input = make_test_input(
             &preset,
@@ -227,7 +227,18 @@ mod tests {
         );
 
         let plan = build_engine_launch_plan(input).unwrap();
-        assert_eq!(plan.final_arguments.first().unwrap(), "--qnum=200");
+        assert!(!plan
+            .final_arguments
+            .iter()
+            .any(|arg| arg.starts_with("--qnum=")));
+        assert_eq!(
+            match plan.platform_launch {
+                crate::engine::launch_plan::PlatformLaunchPlan::Linux { queue_number, .. } =>
+                    queue_number,
+                _ => unreachable!(),
+            },
+            0
+        );
     }
 
     #[test]

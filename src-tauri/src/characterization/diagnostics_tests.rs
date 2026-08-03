@@ -91,11 +91,16 @@ mod tests {
     #[tokio::test]
     async fn group_f01_traffic_probe_returns_inconclusive_assessment() {
         let runner = TrafficProbeRunner::new();
-        let res = runner.run_probes(&["example.com".into()]).await;
+        let res = runner.run_probes(&["youtube".into()]).await;
 
         assert!(res.is_ok());
         let report = res.unwrap();
         assert_eq!(report.assessment, DpiBypassAssessment::Inconclusive);
+        assert_eq!(report.targets[0].target_id, "youtube");
+        assert!(runner
+            .run_probes(&["https://example.com".into()])
+            .await
+            .is_err());
     }
 
     #[test]

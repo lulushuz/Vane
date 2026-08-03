@@ -5,6 +5,9 @@
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::io;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -21,6 +24,134 @@ use hickory_resolver::proto::serialize::binary::{BinDecodable, BinEncodable};
 use hickory_resolver::TokioResolver;
 
 pub const DOH_FORWARDER_DEFAULT_PORT: u16 = 53;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ForwarderBindRetryPolicy {
+    retry_delays: [std::time::Duration; 3],
+}
+
+impl Default for ForwarderBindRetryPolicy {
+    fn default() -> Self {
+        Self {
+            retry_delays: [
+                std::time::Duration::from_millis(50),
+                std::time::Duration::from_millis(150),
+                std::time::Duration::from_millis(300),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForwarderBindProtocol {
+    Udp,
+    Tcp,
+}
+
+impl std::fmt::Display for ForwarderBindProtocol {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Udp => "udp",
+            Self::Tcp => "tcp",
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ForwarderBindAttemptError {
+    protocol: ForwarderBindProtocol,
+    source: io::Error,
+}
+
+#[derive(Debug)]
+pub struct ForwarderBindError {
+    protocol: ForwarderBindProtocol,
+    address: SocketAddr,
+    attempts: usize,
+    kind: io::ErrorKind,
+    raw_os_error: Option<i32>,
+}
+
+impl std::fmt::Display for ForwarderBindError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "DNS forwarder {} bind failed: address={}, attempts={}, kind={:?}, raw_os_error={}",
+            self.protocol,
+            self.address,
+            self.attempts,
+            self.kind,
+            self.raw_os_error
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        )
+    }
+}
+
+impl std::error::Error for ForwarderBindError {}
+
+struct BoundForwarderSockets {
+    udp: UdpSocket,
+    tcp: TcpListener,
+}
+
+fn retryable_address_in_use(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::AddrInUse || error.raw_os_error() == Some(10048)
+}
+
+async fn bind_forwarder_sockets_with_retry_by<T, Bind, BindFuture>(
+    address: SocketAddr,
+    retry_policy: ForwarderBindRetryPolicy,
+    mut bind: Bind,
+) -> Result<T, ForwarderBindError>
+where
+    Bind: FnMut(SocketAddr) -> BindFuture,
+    BindFuture: Future<Output = Result<T, ForwarderBindAttemptError>>,
+{
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match bind(address).await {
+            Ok(sockets) => return Ok(sockets),
+            Err(failure) => {
+                if !retryable_address_in_use(&failure.source)
+                    || attempts > retry_policy.retry_delays.len()
+                {
+                    return Err(ForwarderBindError {
+                        protocol: failure.protocol,
+                        address,
+                        attempts,
+                        kind: failure.source.kind(),
+                        raw_os_error: failure.source.raw_os_error(),
+                    });
+                }
+                tokio::time::sleep(retry_policy.retry_delays[attempts - 1]).await;
+            }
+        }
+    }
+}
+
+async fn bind_forwarder_sockets_with_retry(
+    address: SocketAddr,
+    retry_policy: ForwarderBindRetryPolicy,
+) -> Result<BoundForwarderSockets, ForwarderBindError> {
+    bind_forwarder_sockets_with_retry_by(address, retry_policy, |address| async move {
+        let udp = UdpSocket::bind(address)
+            .await
+            .map_err(|source| ForwarderBindAttemptError {
+                protocol: ForwarderBindProtocol::Udp,
+                source,
+            })?;
+        let tcp = TcpListener::bind(address)
+            .await
+            .map_err(|source| ForwarderBindAttemptError {
+                protocol: ForwarderBindProtocol::Tcp,
+                source,
+            })?;
+        Ok(BoundForwarderSockets { udp, tcp })
+    })
+    .await
+}
 
 // Endpoint options for the DoH/DoT upstream resolver.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -483,13 +614,14 @@ pub async fn spawn_doh_forwarder(
     port: u16,
     endpoint: DoHEndpoint,
 ) -> Result<ForwarderHandle, String> {
-    let addr = format!("127.0.0.1:{}", port);
-    let socket = UdpSocket::bind(&addr)
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    let BoundForwarderSockets {
+        udp: socket,
+        tcp: tcp_listener,
+    } = bind_forwarder_sockets_with_retry(address, ForwarderBindRetryPolicy::default())
         .await
-        .map_err(|e| format!("DNS Forwarder port {} bağlanamadı: {}", port, e))?;
-    let tcp_listener = TcpListener::bind(&addr)
-        .await
-        .map_err(|e| format!("DNS Forwarder TCP port {} bağlanamadı: {}", port, e))?;
+        .map_err(|error| error.to_string())?;
+    let addr = address.to_string();
 
     let previous_dns = crate::dns::get_active_adapters();
     let mut fallback_dns = previous_dns
@@ -913,4 +1045,214 @@ async fn proxy_dns_query(
         return Some(bytes::Bytes::from(response_bytes));
     }
     None
+}
+
+#[cfg(test)]
+mod bind_retry_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn immediate_retry_policy() -> ForwarderBindRetryPolicy {
+        ForwarderBindRetryPolicy {
+            retry_delays: [
+                std::time::Duration::ZERO,
+                std::time::Duration::ZERO,
+                std::time::Duration::ZERO,
+            ],
+        }
+    }
+
+    fn failure(protocol: ForwarderBindProtocol, error: io::Error) -> ForwarderBindAttemptError {
+        ForwarderBindAttemptError {
+            protocol,
+            source: error,
+        }
+    }
+
+    #[tokio::test]
+    async fn udp_addr_in_use_then_success_retries() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let result = bind_forwarder_sockets_with_retry_by(
+            SocketAddr::from(([127, 0, 0, 1], 5300)),
+            immediate_retry_policy(),
+            move |_| {
+                let observed = Arc::clone(&observed);
+                async move {
+                    if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                        Err(failure(
+                            ForwarderBindProtocol::Udp,
+                            io::Error::new(io::ErrorKind::AddrInUse, "busy"),
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn windows_10048_then_success_retries() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let result = bind_forwarder_sockets_with_retry_by(
+            SocketAddr::from(([127, 0, 0, 1], 5300)),
+            immediate_retry_policy(),
+            move |_| {
+                let observed = Arc::clone(&observed);
+                async move {
+                    if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                        Err(failure(
+                            ForwarderBindProtocol::Udp,
+                            io::Error::from_raw_os_error(10048),
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn tcp_addr_in_use_drops_udp_before_retry() {
+        struct UdpAttempt(Arc<AtomicUsize>);
+        impl Drop for UdpAttempt {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let drops = Arc::new(AtomicUsize::new(0));
+        let observed_attempts = Arc::clone(&attempts);
+        let observed_drops = Arc::clone(&drops);
+        let result = bind_forwarder_sockets_with_retry_by(
+            SocketAddr::from(([127, 0, 0, 1], 5300)),
+            immediate_retry_policy(),
+            move |_| {
+                let attempts = Arc::clone(&observed_attempts);
+                let drops = Arc::clone(&observed_drops);
+                async move {
+                    let udp = UdpAttempt(drops);
+                    if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                        drop(udp);
+                        Err(failure(
+                            ForwarderBindProtocol::Tcp,
+                            io::Error::new(io::ErrorKind::AddrInUse, "busy"),
+                        ))
+                    } else {
+                        Ok(udp)
+                    }
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        drop(result);
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn permanent_addr_in_use_exhausts_bounded_attempts() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let error = bind_forwarder_sockets_with_retry_by::<(), _, _>(
+            SocketAddr::from(([127, 0, 0, 1], 5300)),
+            immediate_retry_policy(),
+            move |_| {
+                let observed = Arc::clone(&observed);
+                async move {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Err(failure(
+                        ForwarderBindProtocol::Udp,
+                        io::Error::new(io::ErrorKind::AddrInUse, "busy"),
+                    ))
+                }
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(attempts.load(Ordering::SeqCst), 4);
+        assert_eq!(error.attempts, 4);
+    }
+
+    #[tokio::test]
+    async fn permission_denied_is_not_retried() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let error = bind_forwarder_sockets_with_retry_by::<(), _, _>(
+            SocketAddr::from(([127, 0, 0, 1], 5300)),
+            immediate_retry_policy(),
+            move |_| {
+                let observed = Arc::clone(&observed);
+                async move {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Err(failure(
+                        ForwarderBindProtocol::Udp,
+                        io::Error::new(io::ErrorKind::PermissionDenied, "denied"),
+                    ))
+                }
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(error.kind, io::ErrorKind::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn failed_bind_leaves_no_socket_task() {
+        let live_resources = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&live_resources);
+        let _ = bind_forwarder_sockets_with_retry_by::<(), _, _>(
+            SocketAddr::from(([127, 0, 0, 1], 5300)),
+            immediate_retry_policy(),
+            move |_| {
+                let observed = Arc::clone(&observed);
+                async move {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    observed.fetch_sub(1, Ordering::SeqCst);
+                    Err(failure(
+                        ForwarderBindProtocol::Tcp,
+                        io::Error::new(io::ErrorKind::PermissionDenied, "denied"),
+                    ))
+                }
+            },
+        )
+        .await;
+        assert_eq!(live_resources.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn successful_pair_is_returned_only_after_udp_and_tcp_bind() {
+        let udp_bound = Arc::new(AtomicBool::new(false));
+        let tcp_bound = Arc::new(AtomicBool::new(false));
+        let observed_udp = Arc::clone(&udp_bound);
+        let observed_tcp = Arc::clone(&tcp_bound);
+        let pair = bind_forwarder_sockets_with_retry_by(
+            SocketAddr::from(([127, 0, 0, 1], 5300)),
+            immediate_retry_policy(),
+            move |_| {
+                let udp = Arc::clone(&observed_udp);
+                let tcp = Arc::clone(&observed_tcp);
+                async move {
+                    udp.store(true, Ordering::SeqCst);
+                    tcp.store(true, Ordering::SeqCst);
+                    Ok((udp.load(Ordering::SeqCst), tcp.load(Ordering::SeqCst)))
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(pair, (true, true));
+    }
 }

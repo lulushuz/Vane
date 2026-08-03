@@ -91,7 +91,7 @@ export interface SystemHealthSnapshot {
 }
 
 export interface TargetProbeResult {
-  target: string;
+  targetId: string;
   success: boolean;
   statusCode?: number;
   latencyMs?: number;

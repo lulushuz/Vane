@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager};
 
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RuntimeSettings {
     pub active_preset_id: String,
@@ -50,6 +50,11 @@ static SETTINGS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static WINDOW_SNAPSHOTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 pub(crate) const SETTINGS_KEY: &str = "vane-settings";
 const MAX_SETTINGS_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SettingsStoreSnapshot {
+    store: Map<String, Value>,
+}
 
 fn validate_ipc_key(key: &str) -> Result<(), String> {
     if key == SETTINGS_KEY {
@@ -182,6 +187,71 @@ pub(crate) fn atomic_write(
     file.sync_all().map_err(|e| e.to_string())?;
     drop(file);
     replace_file(&temp, primary)
+}
+
+fn validate_store_snapshot(snapshot: &SettingsStoreSnapshot) -> Result<(), String> {
+    if let Some(value) = snapshot.store.get(SETTINGS_KEY) {
+        let payload = value.as_str().ok_or_else(|| {
+            "Snapshot vane-settings value is not a serialized JSON string.".to_string()
+        })?;
+        validate_ipc_payload(payload)
+            .map_err(|error| format!("Snapshot vane-settings payload is invalid: {error}"))?;
+    }
+    Ok(())
+}
+
+fn snapshot_store_at_paths(primary: &Path, backup: &Path) -> Result<SettingsStoreSnapshot, String> {
+    let store = if primary.exists() || backup.exists() {
+        load_with_recovery(primary, backup)?
+    } else {
+        Map::new()
+    };
+    let snapshot = SettingsStoreSnapshot { store };
+    validate_store_snapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
+fn restore_store_snapshot_at_paths(
+    primary: &Path,
+    backup: &Path,
+    snapshot: &SettingsStoreSnapshot,
+) -> Result<(), String> {
+    validate_store_snapshot(snapshot)?;
+    let bytes = serde_json::to_vec_pretty(&snapshot.store).map_err(|e| e.to_string())?;
+
+    atomic_replace_bytes(primary, &bytes)
+        .map_err(|error| format!("Settings primary restore failed: {error}"))?;
+    atomic_replace_bytes(backup, &bytes)
+        .map_err(|error| format!("Settings backup restore failed: {error}"))?;
+
+    let restored_primary = parse_store(primary)
+        .map_err(|error| format!("Restored settings primary readback failed: {error}"))?;
+    let restored_backup = parse_store(backup)
+        .map_err(|error| format!("Restored settings backup readback failed: {error}"))?;
+    if restored_primary != snapshot.store || restored_backup != snapshot.store {
+        return Err("Restored settings readback does not match the pre-mutation snapshot.".into());
+    }
+    WINDOW_SNAPSHOTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| "Window settings snapshot lock is poisoned".to_string())?
+        .clear();
+    Ok(())
+}
+
+pub(crate) fn snapshot_store(app: &AppHandle) -> Result<SettingsStoreSnapshot, String> {
+    let _guard = lock()?;
+    let (primary, backup) = paths(app)?;
+    snapshot_store_at_paths(&primary, &backup)
+}
+
+pub(crate) fn restore_store_snapshot(
+    app: &AppHandle,
+    snapshot: &SettingsStoreSnapshot,
+) -> Result<(), String> {
+    let _guard = lock()?;
+    let (primary, backup) = paths(app)?;
+    restore_store_snapshot_at_paths(&primary, &backup, snapshot)
 }
 
 pub fn atomic_replace_bytes(target: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -360,8 +430,10 @@ pub fn settings_remove(app: AppHandle, key: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        atomic_write, load_with_recovery, merge_zustand_payload, parse_store, validate_ipc_key,
-        validate_ipc_payload, RuntimeSettings, SETTINGS_KEY,
+        atomic_write, load_with_recovery, merge_zustand_payload, parse_store,
+        restore_store_snapshot_at_paths, snapshot_store_at_paths, validate_ipc_key,
+        validate_ipc_payload, RuntimeSettings, SettingsStoreSnapshot, SETTINGS_KEY,
+        WINDOW_SNAPSHOTS,
     };
     use serde_json::{json, Map, Value};
     use std::path::{Path, PathBuf};
@@ -391,6 +463,34 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn store_with_payload(payload: Value) -> Map<String, Value> {
+        let mut store = Map::new();
+        store.insert(
+            SETTINGS_KEY.to_string(),
+            Value::String(serde_json::to_string(&payload).expect("payload must serialize")),
+        );
+        store
+    }
+
+    fn write_store(path: &Path, store: &Map<String, Value>) {
+        std::fs::write(path, serde_json::to_vec_pretty(store).unwrap()).unwrap();
+    }
+
+    fn rollback_fixture(
+        previous: Map<String, Value>,
+        candidate: Map<String, Value>,
+    ) -> (TestDirectory, PathBuf, PathBuf, SettingsStoreSnapshot) {
+        let directory = TestDirectory::new();
+        let primary = directory.path().join("settings.json");
+        let backup = directory.path().join("settings.json.bak");
+        write_store(&primary, &previous);
+        write_store(&backup, &previous);
+        let snapshot = snapshot_store_at_paths(&primary, &backup).unwrap();
+        write_store(&primary, &candidate);
+        write_store(&backup, &candidate);
+        (directory, primary, backup, snapshot)
     }
 
     #[test]
@@ -492,5 +592,129 @@ mod tests {
         assert!(!settings.watchdog);
         assert!(settings.dns_forwarder_enabled);
         assert_eq!(settings.proxy_socks5, "127.0.0.1:1080");
+    }
+
+    #[test]
+    fn pattern_rollback_restores_canonical_vane_settings_key() {
+        let previous = store_with_payload(json!({"state": {"bypassMode": "all"}, "version": 1}));
+        let candidate =
+            store_with_payload(json!({"state": {"bypassMode": "whitelist"}, "version": 1}));
+        let (_directory, primary, backup, snapshot) = rollback_fixture(previous, candidate);
+
+        restore_store_snapshot_at_paths(&primary, &backup, &snapshot).unwrap();
+        let restored = parse_store(&primary).unwrap();
+        assert!(restored.contains_key(SETTINGS_KEY));
+        assert!(!restored.contains_key("state"));
+    }
+
+    #[test]
+    fn pattern_rollback_restores_previous_runtime_settings() {
+        let previous_runtime = RuntimeSettings {
+            bypass_mode: "whitelist".into(),
+            ..Default::default()
+        };
+        let previous = store_with_payload(json!({"state": previous_runtime, "version": 3}));
+        let candidate =
+            store_with_payload(json!({"state": RuntimeSettings::default(), "version": 3}));
+        let (_directory, primary, backup, snapshot) = rollback_fixture(previous, candidate);
+
+        restore_store_snapshot_at_paths(&primary, &backup, &snapshot).unwrap();
+        let raw = parse_store(&primary).unwrap()[SETTINGS_KEY]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let envelope: Value = serde_json::from_str(&raw).unwrap();
+        let restored: RuntimeSettings = serde_json::from_value(envelope["state"].clone()).unwrap();
+        assert_eq!(restored, previous_runtime);
+    }
+
+    #[test]
+    fn pattern_rollback_preserves_zustand_envelope_version() {
+        let previous =
+            store_with_payload(json!({"state": {"bypassMode": "whitelist"}, "version": 7}));
+        let candidate = store_with_payload(json!({"state": {"bypassMode": "all"}, "version": 8}));
+        let (_directory, primary, backup, snapshot) = rollback_fixture(previous, candidate);
+        restore_store_snapshot_at_paths(&primary, &backup, &snapshot).unwrap();
+        let raw = parse_store(&primary).unwrap()[SETTINGS_KEY]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(serde_json::from_str::<Value>(&raw).unwrap()["version"], 7);
+    }
+
+    #[test]
+    fn pattern_rollback_preserves_unknown_fields() {
+        let previous = store_with_payload(json!({
+            "state": {"bypassMode": "whitelist", "futureSetting": {"enabled": true}},
+            "version": 7,
+            "futureEnvelopeField": "keep-me"
+        }));
+        let candidate = store_with_payload(json!({"state": {"bypassMode": "all"}, "version": 8}));
+        let (_directory, primary, backup, snapshot) = rollback_fixture(previous, candidate);
+        restore_store_snapshot_at_paths(&primary, &backup, &snapshot).unwrap();
+        let raw = parse_store(&primary).unwrap()[SETTINGS_KEY]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let restored: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(restored["state"]["futureSetting"]["enabled"], true);
+        assert_eq!(restored["futureEnvelopeField"], "keep-me");
+    }
+
+    #[test]
+    fn pattern_rollback_restores_primary_and_backup_to_previous_state() {
+        let previous =
+            store_with_payload(json!({"state": {"marker": "previous-good"}, "version": 1}));
+        let candidate =
+            store_with_payload(json!({"state": {"marker": "failed-candidate"}, "version": 2}));
+        let (_directory, primary, backup, snapshot) = rollback_fixture(previous.clone(), candidate);
+        restore_store_snapshot_at_paths(&primary, &backup, &snapshot).unwrap();
+        assert_eq!(parse_store(&primary).unwrap(), previous);
+        assert_eq!(parse_store(&backup).unwrap(), previous);
+    }
+
+    #[test]
+    fn pattern_rollback_invalidates_window_snapshots() {
+        WINDOW_SNAPSHOTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .unwrap()
+            .insert("failed-candidate-window".into(), "candidate".into());
+        let previous = store_with_payload(json!({"state": {"marker": "previous"}, "version": 1}));
+        let candidate = store_with_payload(json!({"state": {"marker": "candidate"}, "version": 2}));
+        let (_directory, primary, backup, snapshot) = rollback_fixture(previous, candidate);
+        restore_store_snapshot_at_paths(&primary, &backup, &snapshot).unwrap();
+        assert!(WINDOW_SNAPSHOTS.get().unwrap().lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pattern_rollback_handles_missing_previous_settings() {
+        let previous = Map::new();
+        let candidate = store_with_payload(json!({"state": {"marker": "candidate"}, "version": 1}));
+        let (_directory, primary, backup, snapshot) = rollback_fixture(previous, candidate);
+        restore_store_snapshot_at_paths(&primary, &backup, &snapshot).unwrap();
+        assert!(!parse_store(&primary).unwrap().contains_key(SETTINGS_KEY));
+        assert!(!parse_store(&backup).unwrap().contains_key(SETTINGS_KEY));
+    }
+
+    #[test]
+    fn pattern_rollback_failure_is_not_reported_as_success() {
+        let previous = store_with_payload(json!({"state": {"marker": "previous"}, "version": 1}));
+        let candidate = store_with_payload(json!({"state": {"marker": "candidate"}, "version": 2}));
+        let (_directory, primary, backup, snapshot) = rollback_fixture(previous, candidate);
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        let rollback_succeeded =
+            restore_store_snapshot_at_paths(&primary, &backup, &snapshot).is_ok();
+        assert!(!rollback_succeeded);
+    }
+
+    #[test]
+    fn successful_pattern_transaction_does_not_restore_snapshot() {
+        let previous = store_with_payload(json!({"state": {"marker": "previous"}, "version": 1}));
+        let candidate = store_with_payload(json!({"state": {"marker": "candidate"}, "version": 2}));
+        let (_directory, primary, _backup, _snapshot) =
+            rollback_fixture(previous, candidate.clone());
+        assert_eq!(parse_store(&primary).unwrap(), candidate);
     }
 }

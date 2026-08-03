@@ -22,8 +22,8 @@ pub use kill_switch::{
 };
 pub use manager::{
     apply_dns, builtin_providers, clear_dns_restore_snapshot, get_active_adapters,
-    is_using_trusted_dns, recover_stale_dns_snapshot, reset_dns_to_dhcp, restore_dns_snapshot,
-    save_dns_restore_snapshot, ApplyDnsResult, DnsProvider, NetworkAdapter,
+    is_using_trusted_dns, load_dns_restore_snapshot, recover_stale_dns_snapshot, reset_dns_to_dhcp,
+    restore_dns_snapshot, save_dns_restore_snapshot, ApplyDnsResult, DnsProvider, NetworkAdapter,
 };
 pub use runtime_config::{
     verify_dns_config, DnsConfigCandidate, DnsConfigFingerprint, DnsConfigRevision, DnsProtocol,

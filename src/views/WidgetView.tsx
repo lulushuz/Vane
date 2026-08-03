@@ -19,12 +19,12 @@ export function WidgetView() {
   } = useEngineStore();
 
   const [isActionLoading, setIsActionLoading] = useState(false);
-  const isRunning = status.variant === 'running';
-  const isStarting = status.variant === 'starting';
+  const isRunning = status.variant === 'ready';
+  const isStarting = status.variant === 'starting' || status.variant === 'waitingForReadiness';
   const isError = status.variant === 'error';
 
   const [authError, setAuthError] = useState<string | null>(null);
-  const [integrityError, setIntegrityError] = useState<string | null>(null);
+  const [integrityError, setIntegrityError] = useState<string | null>('Artifact integrity verification is pending.');
   const [version, setVersion] = useState<string>('');
 
   useEffect(() => {
@@ -41,7 +41,7 @@ export function WidgetView() {
         }
       })
       .catch(() => {
-        /* Fail-closed or ignore if API unavailable */
+        setIntegrityError('Artifact integrity verification is unavailable. Engine start remains disabled; retry by reopening the widget.');
       });
   }, []);
 

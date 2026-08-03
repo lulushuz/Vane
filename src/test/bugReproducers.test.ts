@@ -65,14 +65,14 @@ describe('Bug Reproducer Tests (P01 Behavior Freezing)', () => {
 
   it('BR-05: documents PID-only running status without active traffic health check (Target: P14, Risk: R-17)', async () => {
     mockIpc.registerHandler('start_engine_with_dns_guard', () => ({
-      variant: 'running',
+      variant: 'ready', generation: 1, revision: 1, fingerprint: 'fixture',
       pid: 4321,
     }));
 
     await useEngineStore.getState().startEngine('default');
 
     const status = useEngineStore.getState().status;
-    expect(status).toEqual({ variant: 'running', pid: 4321 });
+    expect(status).toEqual({ variant: 'ready', pid: 4321, generation: 1, revision: 1, fingerprint: 'fixture' });
     // Healthy connectivity state is not verified separately in current UI state model
   });
 
@@ -101,7 +101,7 @@ describe('Bug Reproducer Tests (P01 Behavior Freezing)', () => {
     expect(useEngineStore.getState().status).toEqual({ variant: 'stopped' });
 
     // Resolve slow start afterwards
-    resolveStart!({ variant: 'running', pid: 7777 });
+    resolveStart!({ variant: 'ready', pid: 7777, generation: 1, revision: 1, fingerprint: 'fixture' });
     await startPromise;
 
     // Late start completion MUST NOT override status to running when stop was requested

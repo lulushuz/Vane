@@ -16,7 +16,7 @@ export function SafetyCard() {
   } = useEngineStore();
 
   const t = translations[language];
-  const isRunning = status.variant === 'running';
+  const isRunning = status.variant === 'ready';
 
   const [initialKillSwitch] = useState(killSwitch);
 

@@ -50,7 +50,7 @@ mod tests {
         let intent = crate::platform::linux::LinuxFilterIntent::from_specs(
             Some("8080-8090"),
             Some("50000-65535"),
-            "all",
+            crate::platform::linux::LinuxHostlistMode::All,
         );
         assert_eq!(intent.tcp_ports[0].start, 8080);
         assert_eq!(intent.udp_ports[0].start, 50000);
@@ -66,8 +66,11 @@ mod tests {
     #[test]
     fn rbr_05_linux_hardcoded_tcp_filter() {
         let caps = crate::platform::linux::probe_linux_capabilities().unwrap();
-        let intent =
-            crate::platform::linux::LinuxFilterIntent::from_specs(Some("443"), Some("443"), "all");
+        let intent = crate::platform::linux::LinuxFilterIntent::from_specs(
+            Some("443"),
+            Some("443"),
+            crate::platform::linux::LinuxHostlistMode::All,
+        );
         let ownership = crate::platform::linux::LinuxRuleOwnership::new(
             "inst-1",
             "instance-1",

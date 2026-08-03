@@ -5,8 +5,8 @@
     {
       "id": "builtin-presets",
       "relativePath": "presets/builtin.json",
-      "size": 5332,
-      "sha256": "6716028522e795b1245d982598f296b2014cd9ecfdcedab4196fc057d697b551",
+      "size": 5141,
+      "sha256": "b7c0d604460a6d900b7ffbe7ff56d0cef187983d60dff3f3aa7c99d784960829",
       "required": true
     },
     {

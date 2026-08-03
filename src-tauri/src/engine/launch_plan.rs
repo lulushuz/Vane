@@ -119,16 +119,24 @@ pub(crate) fn build_engine_launch_plan(
         EnginePlatform::Windows => EngineBinaryKind::Winws,
         EnginePlatform::Linux => EngineBinaryKind::Nfqws,
     };
-    let working_directory = input
-        .executable
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| {
-            EngineError::BinaryNotFound(format!(
-                "Binary path'in parent klasörü alınamadı: {:?}",
-                input.executable
-            ))
-        })?;
+    let working_directory = match input.platform {
+        EnginePlatform::Windows => input.executable.to_str().and_then(|path| {
+            path.rsplit_once(['\\', '/'])
+                .map(|(parent, _)| PathBuf::from(parent))
+                .or_else(|| (!path.is_empty()).then(PathBuf::new))
+        }),
+        EnginePlatform::Linux => input
+            .executable
+            .parent()
+            .map(Path::to_path_buf)
+            .or_else(|| (!input.executable.as_os_str().is_empty()).then(PathBuf::new)),
+    }
+    .ok_or_else(|| {
+        EngineError::BinaryNotFound(format!(
+            "Binary path'in parent klasörü alınamadı: {:?}",
+            input.executable
+        ))
+    })?;
 
     let binary_plan = EngineBinaryPlan {
         executable: input.executable.clone(),
@@ -154,7 +162,6 @@ pub(crate) fn build_engine_launch_plan(
             prepared_args.extend(input.preset.args.iter().cloned());
         }
         EnginePlatform::Linux => {
-            prepared_args.push("--qnum=200".to_string());
             for arg in &input.preset.args {
                 if arg.starts_with("--wf-")
                     || arg.starts_with("--windivert")
@@ -266,7 +273,7 @@ pub(crate) fn build_engine_launch_plan(
         },
         EnginePlatform::Linux => PlatformLaunchPlan::Linux {
             arguments: final_args.clone(),
-            queue_number: 200,
+            queue_number: 0,
             current_firewall_behavior: LinuxFirewallBehavior {
                 tcp_ports: parsed_tcp_ports,
                 udp_ports: parsed_udp_ports,

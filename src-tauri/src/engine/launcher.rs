@@ -128,7 +128,10 @@ impl PlatformEngineLauncher for RealEngineLauncher {
                 crate::engine::logger::spawn_log_reader(err, app.clone(), Some("HATA: "));
             }
 
-            let child_handle = OwnedChildHandle::Linux { child, pid };
+            let child_handle = OwnedChildHandle::Linux {
+                child: Box::new(child),
+                pid,
+            };
             Ok(OwnedEngineProcess::new(identity, child_handle))
         }
 

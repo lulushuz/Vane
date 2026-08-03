@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { Check, RefreshCw, ShieldCheck, X } from 'lucide-react';
@@ -6,21 +6,11 @@ import { useEngineStore } from '../store/engineStore';
 import { translations } from '../utils/translations';
 import styles from './DnsView.module.css';
 import { CustomSelect } from '../components/CustomSelect/CustomSelect';
-
-interface ApplyDnsResult {
-  success: boolean;
-  error: string | null;
-}
-
-interface ForwarderStatus {
-  active: boolean;
-  port: number;
-  endpoint: string;
-  protocol: 'doh' | 'dot';
-  adblock: boolean;
-  cache: boolean;
-  watchdogEnabled: boolean;
-}
+import {
+  applyProviderAndRefresh,
+  DnsTransactionGate,
+  type DnsForwarderStatus as ForwarderStatus,
+} from './dnsForwarderFlow';
 
 const CloudflareIcon = ({ size = 24 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="#F38020">
@@ -108,6 +98,8 @@ export function DnsView() {
 
   const [forwarder, setForwarder] = useState<ForwarderStatus | null>(null);
   const [isForwarderLoading, setIsForwarderLoading] = useState(false);
+  const [isProviderLoading, setIsProviderLoading] = useState(false);
+  const transactionGate = useRef(new DnsTransactionGate());
   const [customPrimaryDraft, setCustomPrimaryDraft] = useState(customPrimary);
   const [customSecondaryDraft, setCustomSecondaryDraft] = useState(customSecondary);
   const [customEditorOpen, setCustomEditorOpen] = useState(selectedId === 'custom');
@@ -135,7 +127,7 @@ export function DnsView() {
   }, [syncWithSystem]);
 
   const toggleForwarder = async () => {
-    if (isForwarderLoading) return;
+    if (!transactionGate.current.tryEnter()) return;
     setIsForwarderLoading(true);
     try {
       if (forwarder?.active) {
@@ -158,11 +150,14 @@ export function DnsView() {
       appendLog(language === 'tr' ? `[ERROR] DNS yönlendiricisi işlemi başarısız: ${e}` : `[ERROR] DNS forwarder operation failed: ${e}`, 'error');
     } finally {
       setIsForwarderLoading(false);
+      transactionGate.current.leave();
     }
   };
 
   // Apply the selected DNS to the backend.
   const saveToBackend = async (id: string, primary?: string, secondary?: string): Promise<boolean> => {
+    if (!transactionGate.current.tryEnter()) return false;
+    setIsProviderLoading(true);
     try {
       const targetProvider = providers.find(p => p.id === id);
       const p = (primary ?? targetProvider?.primary)?.trim();
@@ -170,17 +165,22 @@ export function DnsView() {
 
       if (!p) return false;
 
-      const res = await invoke<ApplyDnsResult>('apply_dns_settings', {
+      const flow = await applyProviderAndRefresh(invoke, {
         primary: p,
-        secondary: s,
+        secondary: s ?? p,
       });
+      setForwarder(flow.status);
+      setDnsForwarderEnabled(flow.status.active);
 
-      if (!res.success) {
-        console.error('DNS apply failed:', res.error);
+      if (flow.error) throw flow.error;
+      const res = flow.result;
+
+      if (!res?.success) {
+        console.error('DNS apply failed:', res?.error);
         // Re-sync on failure to restore correct UI state.
         setDnsSynced(false);
         await syncWithSystem();
-        appendLog(language === 'tr' ? `[ERROR] Sistem DNS ayarı uygulanamadı: ${res.error}` : `[ERROR] System DNS setting could not be applied: ${res.error}`, 'error');
+        appendLog(language === 'tr' ? `[ERROR] Sistem DNS ayarı uygulanamadı: ${res?.error}` : `[ERROR] System DNS setting could not be applied: ${res?.error}`, 'error');
         return false;
       } else {
         if (id === 'custom') setDnsCustom(p, s ?? p);
@@ -194,6 +194,9 @@ export function DnsView() {
       console.error('Invoke error:', err);
       appendLog(language === 'tr' ? `[ERROR] Sistem DNS ayarı doğrulanamadı: ${err}` : `[ERROR] System DNS setting could not be verified: ${err}`, 'error');
       return false;
+    } finally {
+      setIsProviderLoading(false);
+      transactionGate.current.leave();
     }
   };
 
@@ -250,9 +253,9 @@ export function DnsView() {
         <button 
           className={`${styles.fwToggle} ${forwarder?.active ? styles.fwActive : ""}`} 
           onClick={toggleForwarder}
-          disabled={isForwarderLoading}
+          disabled={isForwarderLoading || isProviderLoading}
         >
-          {isForwarderLoading ? "..." : forwarder?.active ? t.stopForwarder : t.startForwarder}
+          {isForwarderLoading || isProviderLoading ? "..." : forwarder?.active ? t.stopForwarder : t.startForwarder}
         </button>
       </div>
 
@@ -319,6 +322,7 @@ export function DnsView() {
             key={p.id}
             className={`${styles.card} ${selectedId === p.id ? styles.selected : ''}`}
             onClick={() => handleSelect(p.id)}
+            disabled={isForwarderLoading || isProviderLoading}
           >
             {selectedId === p.id && (
               <motion.div layoutId="activeCheck" className={styles.badge}>
@@ -334,6 +338,7 @@ export function DnsView() {
         <button
           className={`${styles.card} ${selectedId === 'custom' || customEditorOpen ? styles.selected : ''}`}
           onClick={() => handleSelect('custom')}
+          disabled={isForwarderLoading || isProviderLoading}
         >
           {selectedId === 'custom' && (
             <div className={styles.badge}><Check size={12} strokeWidth={3} /></div>
@@ -380,6 +385,7 @@ export function DnsView() {
                 onClick={async () => {
                   if (await saveToBackend('google')) setCustomEditorOpen(false);
                 }}
+                disabled={isForwarderLoading || isProviderLoading}
               >
                 <X size={14} /> {t.cancel}
               </button>
@@ -390,7 +396,7 @@ export function DnsView() {
                     setCustomEditorOpen(false);
                   }
                 }}
-                disabled={!customPrimaryDraft}
+                disabled={!customPrimaryDraft || isForwarderLoading || isProviderLoading}
               >
                 <Check size={14} /> {t.save}
               </button>

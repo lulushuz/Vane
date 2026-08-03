@@ -1,71 +1,36 @@
-# Windows 11 Privileged Acceptance Suite for Vane DPI
-# Requires Administrator Privileges on a Controlled Disposable VM.
-
-param(
-    [switch]$ExecuteOnVM,
-    [string]$OutputPath = "artifacts/acceptance/windows-acceptance-results.json"
-)
-
-$ErrorActionPreference = "Stop"
-
-function Confirm-Admin {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+param([switch]$ExecuteOnVM, [string]$OutputPath = "artifacts/acceptance/windows-acceptance-results.json")
+$ErrorActionPreference = 'Stop'
+function Test-Administrator {
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+  $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
-
-$results = @{
-    timestamp = (Get-Date -Format "o")
-    platform = "windows-x64"
-    executedOnVm = [bool]$ExecuteOnVM
-    overall = "NOT EXECUTED"
-    tests = @(
-        @{ name = "install"; status = "NOT EXECUTED"; details = "VM execution flag not set" },
-        @{ name = "verify-installation"; status = "NOT EXECUTED"; details = "VM execution flag not set" },
-        @{ name = "verify-artifacts"; status = "NOT EXECUTED"; details = "VM execution flag not set" },
-        @{ name = "test-engine-lifecycle"; status = "NOT EXECUTED"; details = "VM execution flag not set" },
-        @{ name = "test-dns-kill-switch"; status = "NOT EXECUTED"; details = "VM execution flag not set" },
-        @{ name = "test-optimizer"; status = "NOT EXECUTED"; details = "VM execution flag not set" },
-        @{ name = "test-diagnostics"; status = "NOT EXECUTED"; details = "VM execution flag not set" },
-        @{ name = "test-tamper-protection"; status = "NOT EXECUTED"; details = "VM execution flag not set" },
-        @{ name = "test-uninstall"; status = "NOT EXECUTED"; details = "VM execution flag not set" }
-    )
-}
-
-if (-not (Confirm-Admin)) {
-    Write-Warning "Administrator privileges required. Script must run elevated."
-}
-
-if ($ExecuteOnVM) {
-    Write-Host "Running Windows Acceptance Suite on VM..." -ForegroundColor Cyan
-    # VM Execution logic executes sub-scripts in order
-    $scriptDir = $PSScriptRoot
-    $allPassed = $true
-
-    foreach ($test in $results.tests) {
-        $scriptPath = Join-Path $scriptDir "$($test.name).ps1"
-        if (Test-Path $scriptPath) {
-            try {
-                Write-Host "Executing $($test.name)..." -ForegroundColor Yellow
-                & $scriptPath
-                $test.status = "PASSED"
-                $test.details = "Test passed cleanly"
-            } catch {
-                $test.status = "FAILED"
-                $test.details = $_.Exception.Message
-                $allPassed = $false
-            }
-        }
-    }
-    $results.overall = if ($allPassed) { "PASSED" } else { "FAILED" }
+$names = @('install','verify-installation','verify-artifacts','test-engine-lifecycle','test-dns-kill-switch','test-optimizer','test-diagnostics','test-tamper-protection','test-uninstall')
+$result = [ordered]@{ schemaVersion=1; timestamp=(Get-Date).ToUniversalTime().ToString('o'); platform='windows-x64'; executedOnVm=[bool]$ExecuteOnVM; overall='NOT EXECUTED'; assertionCount=0; tests=@() }
+if (-not $ExecuteOnVM) {
+  $result.tests = @($names | ForEach-Object { [ordered]@{name=$_;status='NOT EXECUTED';assertionCount=0} })
 } else {
-    Write-Host "Skipping VM execution (Dry run). Test status set to NOT EXECUTED." -ForegroundColor Yellow
+  if (-not (Test-Administrator)) { throw 'Windows acceptance requires an elevated Administrator session.' }
+  $allPassed = $true
+  foreach ($name in $names) {
+    $script = Join-Path $PSScriptRoot "$name.ps1"
+    if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
+      $result.tests += [ordered]@{name=$name;status='FAILED';assertionCount=0;error='Missing acceptance script'}; $allPassed=$false; continue
+    }
+    try {
+      $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script 2>&1
+      $exitCode = $LASTEXITCODE
+      if ($exitCode -ne 0) { throw "Subscript exit code $exitCode: $raw" }
+      $parsed = $raw | Select-Object -Last 1 | ConvertFrom-Json
+      if ($parsed.status -ne 'PASSED' -or [int]$parsed.assertionCount -le 0) { throw 'Subscript returned no verified assertions.' }
+      $result.assertionCount += [int]$parsed.assertionCount
+      $result.tests += $parsed
+    } catch {
+      $allPassed=$false; $result.tests += [ordered]@{name=$name;status='FAILED';assertionCount=0;error=$_.Exception.Message}
+    }
+  }
+  $result.overall = if ($allPassed -and $result.assertionCount -gt 0) {'PASSED'} else {'FAILED'}
 }
-
-$outputDir = Split-Path $OutputPath -Parent
-if (-not (Test-Path $outputDir)) {
-    New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-}
-
-$results | ConvertTo-Json -Depth 5 | Set-Content -Path $OutputPath -Encoding UTF8
-Write-Host "Acceptance results written to $OutputPath" -ForegroundColor Green
+$parent = Split-Path -Parent $OutputPath; if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+$result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $OutputPath -Encoding utf8
+if ($ExecuteOnVM -and $result.overall -ne 'PASSED') { exit 1 }

@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   powershell:
     runs-on: windows-latest
@@ -61,16 +65,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.93.0
-          components: clippy
+          components: clippy,rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
-      - name: Rust unit and property tests
+      - name: Rust formatting
         working-directory: src-tauri
-        run: cargo test --lib
+        run: cargo fmt --check
+      - name: Rust library tests
+        working-directory: src-tauri
+        run: cargo test --lib --locked
+      - name: Rust all-target tests
+        working-directory: src-tauri
+        run: cargo test --workspace --all-targets --locked
+      - name: Rust all-feature all-target tests
+        working-directory: src-tauri
+        run: cargo test --workspace --all-features --all-targets --locked
       - name: Clippy
         working-directory: src-tauri
-        run: cargo clippy --lib -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   rustsec:
     runs-on: ubuntu-latest
