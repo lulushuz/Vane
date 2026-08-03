@@ -12,6 +12,34 @@ pub struct LinuxFilterGuard {
     committed: bool,
 }
 
+fn compensate_metadata_failure(
+    executor: &dyn LinuxFirewallExecutor,
+    plan: &LinuxFilterPlan,
+    metadata_error: String,
+) -> LinuxPlatformError {
+    match executor.remove(plan) {
+        Ok(()) => LinuxPlatformError::MetadataFailure(metadata_error),
+        Err(cleanup_error) => LinuxPlatformError::PartialApplyRollbackFailed(format!(
+            "metadata_failure=({metadata_error}); firewall_cleanup_failure=({cleanup_error})"
+        )),
+    }
+}
+
+fn remove_committed(
+    executor: &dyn LinuxFirewallExecutor,
+    plan: &LinuxFilterPlan,
+    committed: &mut bool,
+    clear_metadata: impl FnOnce() -> Result<(), String>,
+) -> Result<(), LinuxPlatformError> {
+    if !*committed {
+        return Ok(());
+    }
+    executor.remove(plan)?;
+    clear_metadata().map_err(LinuxPlatformError::MetadataFailure)?;
+    *committed = false;
+    Ok(())
+}
+
 impl LinuxFilterGuard {
     pub fn apply(
         app: &AppHandle,
@@ -22,7 +50,8 @@ impl LinuxFilterGuard {
         revision: u64,
         fingerprint: &str,
     ) -> Result<Self, LinuxPlatformError> {
-        let executor: Arc<dyn LinuxFirewallExecutor> = Arc::new(SystemLinuxFirewallExecutor);
+        let executor: Arc<dyn LinuxFirewallExecutor> =
+            Arc::new(SystemLinuxFirewallExecutor::default());
         let capabilities = executor.probe()?;
         if !capabilities.has_required_privileges {
             return Err(LinuxPlatformError::InsufficientPrivileges);
@@ -54,8 +83,7 @@ impl LinuxFilterGuard {
         if let Err(error) =
             crate::platform::linux::save_linux_filter_metadata(app, &plan.ownership, backend)
         {
-            let _ = executor.remove(&plan);
-            return Err(LinuxPlatformError::MetadataFailure(error));
+            return Err(compensate_metadata_failure(executor.as_ref(), &plan, error));
         }
         Ok(Self {
             app: app.clone(),
@@ -74,20 +102,22 @@ impl LinuxFilterGuard {
     }
 
     pub fn remove(&mut self) -> Result<(), LinuxPlatformError> {
-        if !self.committed {
-            return Ok(());
-        }
-        self.executor.remove(&self.plan)?;
-        crate::platform::linux::clear_linux_filter_metadata(&self.app)
-            .map_err(LinuxPlatformError::MetadataFailure)?;
-        self.committed = false;
-        Ok(())
+        remove_committed(
+            self.executor.as_ref(),
+            &self.plan,
+            &mut self.committed,
+            || crate::platform::linux::clear_linux_filter_metadata(&self.app),
+        )
     }
 }
 
 impl Drop for LinuxFilterGuard {
     fn drop(&mut self) {
-        let _ = self.remove();
+        if let Err(error) = self.remove() {
+            tracing::error!(
+                "Linux filter guard cleanup failed; owned metadata was preserved: {error}"
+            );
+        }
     }
 }
 
@@ -128,7 +158,53 @@ fn queue_in_use(_queue: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::deterministic_queue;
+    use super::{compensate_metadata_failure, deterministic_queue, remove_committed};
+    use crate::platform::linux::{
+        build_linux_filter_plan, LinuxFilterIntent, LinuxFirewallExecutor, LinuxHostlistMode,
+        LinuxPlatformCapabilities, LinuxPlatformError, LinuxRuleOwnership,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct RemoveFailingExecutor;
+
+    impl LinuxFirewallExecutor for RemoveFailingExecutor {
+        fn probe(&self) -> Result<LinuxPlatformCapabilities, LinuxPlatformError> {
+            unreachable!()
+        }
+        fn apply(
+            &self,
+            _plan: &crate::platform::linux::LinuxFilterPlan,
+        ) -> Result<Vec<crate::platform::linux::LinuxFirewallStep>, LinuxPlatformError> {
+            unreachable!()
+        }
+        fn remove(
+            &self,
+            _plan: &crate::platform::linux::LinuxFilterPlan,
+        ) -> Result<(), LinuxPlatformError> {
+            Err(LinuxPlatformError::RuleRemovalFailed(
+                "cleanup denied".into(),
+            ))
+        }
+    }
+
+    fn plan() -> crate::platform::linux::LinuxFilterPlan {
+        let capabilities = LinuxPlatformCapabilities {
+            nftables_available: true,
+            nft_atomic_batch: true,
+            iptables_available: true,
+            ip6tables_available: false,
+            nfqueue_available: true,
+            comment_match_available: true,
+            ipv6_available: false,
+            effective_uid: 0,
+            has_required_privileges: true,
+        };
+        build_linux_filter_plan(
+            LinuxRuleOwnership::new("installation", "instance", 1, 1, "fingerprint", 4242),
+            &LinuxFilterIntent::from_specs(Some("443"), None, LinuxHostlistMode::All),
+            &capabilities,
+        )
+    }
 
     #[test]
     fn queue_is_deterministic_non_global_and_generation_scoped() {
@@ -143,5 +219,30 @@ mod tests {
             deterministic_queue("installation-a", "instance-a", 8)
         );
         assert!((1024..=61023).contains(&first));
+    }
+
+    #[test]
+    fn guard_remove_failure_preserves_metadata_and_committed_state() {
+        let clear_count = AtomicUsize::new(0);
+        let mut committed = true;
+        let result = remove_committed(&RemoveFailingExecutor, &plan(), &mut committed, || {
+            clear_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(clear_count.load(Ordering::SeqCst), 0);
+        assert!(committed);
+    }
+
+    #[test]
+    fn metadata_persistence_failure_and_cleanup_failure_are_both_reported() {
+        let error = compensate_metadata_failure(
+            &RemoveFailingExecutor,
+            &plan(),
+            "metadata disk full".into(),
+        );
+        assert!(
+            matches!(error, LinuxPlatformError::PartialApplyRollbackFailed(message) if message.contains("metadata disk full") && message.contains("cleanup denied"))
+        );
     }
 }

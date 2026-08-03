@@ -330,7 +330,15 @@ pub fn run() {
 
             let inst_id = crate::dns::get_or_create_installation_id(app.handle());
             let _ = crate::dns::recover_orphan_kill_switch_rules(app.handle(), &inst_id);
-            let _ = crate::platform::linux::recover_orphan_linux_filter_rules(app.handle(), &inst_id);
+            match crate::platform::linux::recover_orphan_linux_filter_rules(app.handle(), &inst_id) {
+                Ok(crate::platform::linux::LinuxFilterRecoveryOutcome::NoMetadata) => {}
+                Ok(crate::platform::linux::LinuxFilterRecoveryOutcome::Recovered) => tracing::warn!(
+                    "A previous Linux firewall shutdown was incomplete; owned rules were removed and metadata was cleared."
+                ),
+                Err(error) => tracing::error!(
+                    "Startup Linux firewall recovery needs attention; metadata was preserved: {error}"
+                ),
+            }
             let state = app.state::<AppState>();
             match tauri::async_runtime::block_on(
                 state.dns_transaction_manager.recover_stale_snapshot(app.handle()),
