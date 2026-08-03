@@ -329,7 +329,11 @@ pub fn run() {
             }
 
             let inst_id = crate::dns::get_or_create_installation_id(app.handle());
-            let _ = crate::dns::recover_orphan_kill_switch_rules(app.handle(), &inst_id);
+            match crate::dns::recover_orphan_kill_switch_rules(app.handle(), &inst_id) {
+                Ok(true) => tracing::warn!("Orphan DNS Kill Switch rules were removed and metadata was cleared."),
+                Ok(false) => {}
+                Err(error) => tracing::error!("Startup DNS Kill Switch recovery needs attention; metadata was preserved: {error}"),
+            }
             match crate::platform::linux::recover_orphan_linux_filter_rules(app.handle(), &inst_id) {
                 Ok(crate::platform::linux::LinuxFilterRecoveryOutcome::NoMetadata) => {}
                 Ok(crate::platform::linux::LinuxFilterRecoveryOutcome::Recovered) => tracing::warn!(

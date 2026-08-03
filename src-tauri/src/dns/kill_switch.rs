@@ -1,5 +1,6 @@
 use crate::dns::firewall_plan::{
-    FirewallExecutor, FirewallRuleSpec, FirewallStep, KillSwitchOwnership, SystemFirewallExecutor,
+    rebuild_owned_kill_switch_plan, remove_kill_switch_plan, FirewallPlatform, KillSwitchOwnership,
+    SystemFirewallExecutor,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ const KILL_SWITCH_METADATA_FILE: &str = "dns-kill-switch.json";
 #[serde(rename_all = "camelCase")]
 pub struct PersistedKillSwitchMetadata {
     pub schema_version: u8,
+    pub platform: FirewallPlatform,
     pub installation_id: String,
     pub instance_id: String,
     pub dns_revision: u64,
@@ -37,7 +39,8 @@ pub fn save_kill_switch_metadata(
         .as_secs();
 
     let payload = PersistedKillSwitchMetadata {
-        schema_version: 1,
+        schema_version: 2,
+        platform: ownership.platform,
         installation_id: ownership.installation_id.clone(),
         instance_id: ownership.instance_id.clone(),
         dns_revision: ownership.revision.get(),
@@ -84,59 +87,44 @@ pub fn get_or_create_installation_id(app: &AppHandle) -> String {
     new_id
 }
 
-pub fn recover_orphan_kill_switch_rules(app: &AppHandle, active_installation_id: &str) -> bool {
-    let executor = SystemFirewallExecutor;
-    let mut recovered_any = false;
-
-    // 1. Recover from dns-kill-switch.json
-    if let Ok(path) = metadata_file_path(app) {
-        if path.exists() {
-            if let Ok(bytes) = std::fs::read(&path) {
-                if let Ok(metadata) = serde_json::from_slice::<PersistedKillSwitchMetadata>(&bytes)
-                {
-                    if metadata.installation_id == active_installation_id {
-                        tracing::info!(
-                            "Found orphan Kill Switch rules from previous instance: {:?}",
-                            metadata.rule_names
-                        );
-                        for rule_name in &metadata.rule_names {
-                            let step = FirewallStep::RemoveRule(FirewallRuleSpec {
-                                name: rule_name.clone(),
-                                direction: "out".into(),
-                                action: "block".into(),
-                                protocol: "UDP".into(),
-                                port: 53,
-                                remote_ip: None,
-                                comment: None,
-                            });
-                            let _ = executor.execute(&step);
-                        }
-                        recovered_any = true;
-                    } else {
-                        tracing::warn!(
-                            "Kill Switch metadata belongs to foreign installation ID; skipping cleanup."
-                        );
-                    }
-                }
-            }
-            let _ = clear_kill_switch_metadata(app);
-        }
+pub fn recover_orphan_kill_switch_rules(
+    app: &AppHandle,
+    active_installation_id: &str,
+) -> Result<bool, String> {
+    let path = metadata_file_path(app)?;
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("KillSwitch metadata could not be read: {error}")),
+    };
+    let metadata: PersistedKillSwitchMetadata =
+        serde_json::from_slice(&bytes).map_err(|error| {
+            format!("KillSwitch metadata is malformed or has an unsupported schema: {error}")
+        })?;
+    if metadata.schema_version != 2 {
+        return Err(format!(
+            "Unsupported KillSwitch metadata schema {}; platform cannot be safely inferred.",
+            metadata.schema_version
+        ));
     }
-
-    // 2. Safe Legacy Rule Migration (remove pre-P10 rules if present)
-    let legacy_rules = vec!["Vane-KillSwitch-UDP", "Vane-KillSwitch-TCP"];
-    for rule in legacy_rules {
-        let step = FirewallStep::RemoveRule(FirewallRuleSpec {
-            name: rule.to_string(),
-            direction: "out".into(),
-            action: "block".into(),
-            protocol: "UDP".into(),
-            port: 53,
-            remote_ip: None,
-            comment: None,
-        });
-        let _ = executor.execute(&step);
+    if metadata.installation_id != active_installation_id {
+        return Err(
+            "KillSwitch metadata belongs to a foreign installation; cleanup was not attempted."
+                .into(),
+        );
     }
-
-    recovered_any
+    let ownership = KillSwitchOwnership {
+        installation_id: metadata.installation_id,
+        instance_id: metadata.instance_id,
+        revision: crate::dns::runtime_config::DnsConfigRevision(metadata.dns_revision),
+        fingerprint: crate::dns::runtime_config::DnsConfigFingerprint(metadata.dns_fingerprint),
+        platform: metadata.platform,
+        rule_ids: metadata.rule_names,
+    };
+    let plan = rebuild_owned_kill_switch_plan(&ownership);
+    let executor = SystemFirewallExecutor::new(ownership.platform);
+    remove_kill_switch_plan(&executor, &plan)
+        .map_err(|error| format!("Orphan KillSwitch cleanup failed: {error}"))?;
+    clear_kill_switch_metadata(app)?;
+    Ok(true)
 }

@@ -1,5 +1,6 @@
 use crate::dns::firewall_plan::{
-    execute_firewall_plan, remove_kill_switch_plan, SystemFirewallExecutor,
+    apply_plan_with_metadata, disable_plan_verified, execute_firewall_plan,
+    rebuild_owned_kill_switch_plan, SystemFirewallExecutor,
 };
 use crate::dns::forwarder_lifecycle::{
     verify_local_readiness, DnsForwarderIdentity, DnsForwarderState,
@@ -36,6 +37,15 @@ where
         stop(candidate).await;
         Err(FORWARDER_NOT_READY_ERROR.to_string())
     }
+}
+
+fn restore_snapshot_verified<Restore, Clear>(restore: Restore, clear: Clear) -> Result<(), String>
+where
+    Restore: FnOnce() -> Result<(), String>,
+    Clear: FnOnce() -> Result<(), String>,
+{
+    restore()?;
+    clear().map_err(|error| format!("DNS snapshot was restored but could not be cleared: {error}"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,22 +301,27 @@ impl DnsTransactionManager {
                 }
                 crate::dns::clear_dns_restore_snapshot(app)?;
             }
-            let executor = SystemFirewallExecutor;
             if let Some(prev) = &previous_applied {
                 if let Some(ownership) = &prev.kill_switch_ownership {
-                    let prev_plan = crate::dns::firewall_plan::build_kill_switch_plan(
-                        &ownership.installation_id,
-                        &ownership.instance_id,
-                        ownership.revision,
-                        &ownership.fingerprint,
-                        crate::dns::firewall_plan::FirewallPlatform::Windows,
-                        true,
-                    );
-                    let _ = remove_kill_switch_plan(&executor, &prev_plan);
+                    let prev_plan = rebuild_owned_kill_switch_plan(ownership);
+                    let executor = SystemFirewallExecutor::new(ownership.platform);
+                    disable_plan_verified(
+                        &executor,
+                        &prev_plan,
+                        || clear_kill_switch_metadata(app),
+                        || self.state.lock().unwrap().clear_applied(),
+                    )
+                    .map_err(|error| format!(
+                        "DNS was restored and the forwarder was stopped, but Kill Switch disable failed; metadata and applied state were preserved: {error}"
+                    ))?;
+                } else {
+                    clear_kill_switch_metadata(app)?;
+                    self.state.lock().unwrap().clear_applied();
                 }
+            } else {
+                clear_kill_switch_metadata(app)?;
+                self.state.lock().unwrap().clear_applied();
             }
-            let _ = clear_kill_switch_metadata(app);
-            self.state.lock().unwrap().clear_applied();
 
             return Ok(DnsTransactionOutcome {
                 stage: DnsApplyStage::Disabled,
@@ -394,13 +409,31 @@ impl DnsTransactionManager {
                 if !applied_dns.success {
                     let snapshot = handle.previous_dns.clone();
                     handle.stop().await;
-                    let _ = crate::dns::restore_dns_snapshot(&snapshot);
-                    let _ = crate::dns::clear_dns_restore_snapshot(app);
+                    restore_snapshot_verified(
+                        || {
+                            let restored = crate::dns::restore_dns_snapshot(&snapshot);
+                            restored.success.then_some(()).ok_or_else(|| {
+                                format!("snapshot restore failed: {:?}", restored.error)
+                            })
+                        },
+                        || crate::dns::clear_dns_restore_snapshot(app),
+                    )
+                    .map_err(|error| format!(
+                        "System DNS apply failed ({:?}); {error}; snapshot was preserved when restore failed.",
+                        applied_dns.error
+                    ))?;
                     return Err(format!("System DNS apply failed: {:?}", applied_dns.error));
                 }
 
-                let executor = SystemFirewallExecutor;
-                if let Err(fw_err) = execute_firewall_plan(&executor, &firewall_plan) {
+                let executor = SystemFirewallExecutor::new(firewall_plan.platform);
+                let firewall_result = if verified.kill_switch {
+                    apply_plan_with_metadata(&executor, &firewall_plan, |ownership| {
+                        save_kill_switch_metadata(app, ownership)
+                    })
+                } else {
+                    execute_firewall_plan(&executor, &firewall_plan)
+                };
+                if let Err(fw_err) = firewall_result {
                     tracing::error!(
                         "Firewall plan execution failed: {fw_err}. Initiating DNS rollback..."
                     );
@@ -415,10 +448,6 @@ impl DnsTransactionManager {
                             &fw_err.to_string(),
                         )
                         .await;
-                }
-
-                if verified.kill_switch {
-                    let _ = save_kill_switch_metadata(app, &firewall_plan.ownership);
                 }
 
                 let forwarder_identity = DnsForwarderIdentity {
@@ -483,7 +512,7 @@ impl DnsTransactionManager {
         failed_candidate: &VerifiedDnsConfig,
         reason: &str,
     ) -> Result<DnsTransactionOutcome, String> {
-        let executor = SystemFirewallExecutor;
+        let mut rollback_failure_detail = "previous forwarder could not be restored".to_string();
 
         if let Some(prev) = previous_applied {
             let doh_endpoint = match prev.verified.provider {
@@ -510,17 +539,40 @@ impl DnsTransactionManager {
                         "Previous DNS forwarder rollback did not become locally ready."
                     );
                 } else {
+                    if prev.verified.kill_switch && prev.kill_switch_ownership.is_none() {
+                        handle.stop().await;
+                        return Err(format!(
+                            "DNS candidate apply failed ({reason}) AND rollback failed: previous Kill Switch ownership/platform metadata is missing."
+                        ));
+                    }
                     if let Some(ownership) = &prev.kill_switch_ownership {
-                        let prev_plan = crate::dns::firewall_plan::build_kill_switch_plan(
-                            &ownership.installation_id,
-                            &ownership.instance_id,
-                            ownership.revision,
-                            &ownership.fingerprint,
-                            crate::dns::firewall_plan::FirewallPlatform::Windows,
-                            true,
-                        );
-                        let _ = execute_firewall_plan(&executor, &prev_plan);
-                        let _ = save_kill_switch_metadata(app, ownership);
+                        let prev_plan = rebuild_owned_kill_switch_plan(ownership);
+                        let executor = SystemFirewallExecutor::new(ownership.platform);
+                        if let Err(error) =
+                            apply_plan_with_metadata(&executor, &prev_plan, |restored_ownership| {
+                                save_kill_switch_metadata(app, restored_ownership)
+                            })
+                        {
+                            rollback_failure_detail = format!(
+                                "previous Kill Switch firewall/metadata restore failed: {error}"
+                            );
+                            handle.stop().await;
+                            self.state.lock().unwrap().clear_applied();
+                            if let Some(snapshot) = crate::dns::load_dns_restore_snapshot(app)? {
+                                restore_snapshot_verified(
+                                    || {
+                                        let restored = crate::dns::restore_dns_snapshot(&snapshot);
+                                        restored.success.then_some(()).ok_or_else(|| format!("snapshot restore failed: {:?}", restored.error))
+                                    },
+                                    || crate::dns::clear_dns_restore_snapshot(app),
+                                ).map_err(|error| format!(
+                                    "DNS candidate apply failed ({reason}); {rollback_failure_detail}; {error}"
+                                ))?;
+                            }
+                            return Err(format!(
+                                "DNS candidate apply failed ({reason}) AND rollback failed: {rollback_failure_detail}"
+                            ));
+                        }
                     }
 
                     {
@@ -552,16 +604,24 @@ impl DnsTransactionManager {
         }
 
         self.state.lock().unwrap().clear_applied();
-        let _ = clear_kill_switch_metadata(app);
         if let Some(snapshot) = crate::dns::load_dns_restore_snapshot(app)? {
-            let restored = crate::dns::restore_dns_snapshot(&snapshot);
-            if restored.success {
-                let _ = crate::dns::clear_dns_restore_snapshot(app);
-            }
+            restore_snapshot_verified(
+                || {
+                    let restored = crate::dns::restore_dns_snapshot(&snapshot);
+                    restored
+                        .success
+                        .then_some(())
+                        .ok_or_else(|| format!("snapshot restore failed: {:?}", restored.error))
+                },
+                || crate::dns::clear_dns_restore_snapshot(app),
+            )
+            .map_err(|error| {
+                format!("DNS candidate apply failed ({reason}); {rollback_failure_detail}; {error}")
+            })?;
         }
 
         Err(format!(
-            "DNS candidate apply failed ({reason}) AND rollback failed."
+            "DNS candidate apply failed ({reason}) AND rollback failed: {rollback_failure_detail}."
         ))
     }
 }
@@ -673,5 +733,25 @@ mod readiness_gate_tests {
         let effects = effects.lock().unwrap();
         assert!(effects.previous_config_preserved);
         assert!(!effects.applied_state_committed);
+    }
+
+    #[test]
+    fn snapshot_restore_failure_preserves_snapshot() {
+        let clear_called = StdMutex::new(false);
+        let result = restore_snapshot_verified(
+            || Err("restore failed".into()),
+            || {
+                *clear_called.lock().unwrap() = true;
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!*clear_called.lock().unwrap());
+    }
+
+    #[test]
+    fn snapshot_clear_failure_is_reported() {
+        let result = restore_snapshot_verified(|| Ok(()), || Err("clear denied".into()));
+        assert!(matches!(result, Err(error) if error.contains("clear denied")));
     }
 }
