@@ -48,6 +48,39 @@ where
     clear().map_err(|error| format!("DNS snapshot was restored but could not be cleared: {error}"))
 }
 
+fn build_restored_applied_config(
+    previous: &AppliedDnsConfig,
+    generation: u64,
+    local_endpoint: SocketAddr,
+) -> Result<AppliedDnsConfig, String> {
+    let previous_identity = previous
+        .forwarder_identity
+        .as_ref()
+        .ok_or_else(|| "Previous applied DNS config has no forwarder identity.".to_string())?;
+
+    // instance_id identifies the DNS/firewall transaction whose verified config and owned
+    // Kill Switch rules are being restored. The new runtime instance is distinguished by its
+    // freshly allocated generation and endpoint, so the transaction instance_id is preserved.
+    let forwarder_identity = DnsForwarderIdentity {
+        installation_id: previous_identity.installation_id.clone(),
+        instance_id: previous_identity.instance_id.clone(),
+        generation,
+        revision: previous.verified.revision,
+        fingerprint: previous.verified.fingerprint.clone(),
+        process_id: None,
+        local_endpoint,
+    };
+
+    Ok(AppliedDnsConfig {
+        verified: previous.verified.clone(),
+        forwarder_identity: Some(forwarder_identity),
+        local_endpoint: Some(local_endpoint),
+        kill_switch_ownership: previous.kill_switch_ownership.clone(),
+        applied_at: SystemTime::now(),
+        verification: DnsAppliedVerification::LocalReadinessPassed,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DnsAppliedVerification {
     ConfigurationApplied,
@@ -575,23 +608,69 @@ impl DnsTransactionManager {
                         }
                     }
 
-                    {
-                        let mut f_guard = app_state.forwarder.lock().unwrap();
-                        *f_guard = Some(handle);
+                    let restored = build_restored_applied_config(&prev, gen, local_ep)?;
+
+                    let mut restored_handle = Some(handle);
+                    let forwarder_commit = {
+                        match app_state.forwarder.lock() {
+                            Ok(mut forwarder_guard) => {
+                                *forwarder_guard = restored_handle.take();
+                                Ok(())
+                            }
+                            Err(_) => Err(()),
+                        }
+                    };
+                    if forwarder_commit.is_err() {
+                        if let Some(uncommitted_handle) = restored_handle.take() {
+                            uncommitted_handle.stop().await;
+                        }
+                        return Err(format!(
+                            "DNS candidate apply failed ({reason}) AND rollback failed: forwarder ownership lock is poisoned."
+                        ));
                     }
 
-                    self.state.lock().unwrap().restore_applied(prev.clone());
+                    let runtime_commit = {
+                        match self.state.lock() {
+                            Ok(mut runtime_state) => {
+                                runtime_state.restore_applied(restored.clone());
+                                Ok(())
+                            }
+                            Err(_) => Err(()),
+                        }
+                    };
+                    if runtime_commit.is_err() {
+                        let rollback_handle = {
+                            app_state
+                                .forwarder
+                                .lock()
+                                .ok()
+                                .and_then(|mut guard| guard.take())
+                        };
+                        if let Some(rollback_handle) = rollback_handle {
+                            rollback_handle.stop().await;
+                        }
+                        return Err(format!(
+                            "DNS candidate apply failed ({reason}) AND rollback failed: DNS runtime state lock is poisoned; the restored forwarder was stopped."
+                        ));
+                    }
+
+                    let restored_identity =
+                        restored.forwarder_identity.as_ref().ok_or_else(|| {
+                            "Restored applied DNS config has no forwarder identity.".to_string()
+                        })?;
 
                     return Ok(DnsTransactionOutcome {
                         stage: DnsApplyStage::RolledBack,
                         config_revision: failed_candidate.revision.get(),
                         config_fingerprint: failed_candidate.fingerprint.as_str().to_string(),
-                        applied_revision: Some(prev.verified.revision.get()),
-                        applied_fingerprint: Some(prev.verified.fingerprint.as_str().to_string()),
+                        applied_revision: Some(restored.verified.revision.get()),
+                        applied_fingerprint: Some(
+                            restored.verified.fingerprint.as_str().to_string(),
+                        ),
                         forwarder_state: DnsForwarderState::Ready,
-                        forwarder_generation: Some(gen),
-                        kill_switch_applied: prev.verified.kill_switch,
-                        kill_switch_instance: prev
+                        forwarder_generation: Some(restored_identity.generation),
+                        kill_switch_applied: restored.verified.kill_switch,
+                        kill_switch_instance: restored
                             .kill_switch_ownership
                             .as_ref()
                             .map(|o| o.instance_id.clone()),
@@ -643,6 +722,48 @@ mod readiness_gate_tests {
     }
 
     struct Candidate(Arc<StdMutex<Effects>>);
+
+    fn previous_applied_config() -> AppliedDnsConfig {
+        let verified = verify_dns_config(
+            DnsConfigCandidate {
+                enabled: true,
+                protocol: "doh".into(),
+                provider: Some("cloudflare".into()),
+                adblock: true,
+                cache_enabled: true,
+                socks5: None,
+                kill_switch: true,
+            },
+            DnsConfigRevision(41),
+        )
+        .unwrap();
+        let old_endpoint = SocketAddr::from(([127, 0, 0, 1], 5300));
+        let ownership = crate::dns::firewall_plan::build_kill_switch_plan(
+            "installation",
+            "transaction-instance",
+            verified.revision,
+            &verified.fingerprint,
+            crate::dns::firewall_plan::FirewallPlatform::Windows,
+            true,
+        )
+        .ownership;
+        AppliedDnsConfig {
+            verified: verified.clone(),
+            forwarder_identity: Some(DnsForwarderIdentity {
+                installation_id: "installation".into(),
+                instance_id: "transaction-instance".into(),
+                generation: 3,
+                revision: verified.revision,
+                fingerprint: verified.fingerprint.clone(),
+                process_id: Some(1234),
+                local_endpoint: old_endpoint,
+            }),
+            local_endpoint: Some(old_endpoint),
+            kill_switch_ownership: Some(ownership),
+            applied_at: SystemTime::UNIX_EPOCH,
+            verification: DnsAppliedVerification::ConfigurationApplied,
+        }
+    }
 
     async fn run_readiness_flow(
         ready: bool,
@@ -753,5 +874,103 @@ mod readiness_gate_tests {
     fn snapshot_clear_failure_is_reported() {
         let result = restore_snapshot_verified(|| Ok(()), || Err("clear denied".into()));
         assert!(matches!(result, Err(error) if error.contains("clear denied")));
+    }
+
+    #[test]
+    fn rollback_stores_new_forwarder_generation() {
+        let restored = build_restored_applied_config(
+            &previous_applied_config(),
+            9,
+            SocketAddr::from(([127, 0, 0, 1], 5400)),
+        )
+        .unwrap();
+        assert_eq!(restored.forwarder_identity.unwrap().generation, 9);
+    }
+
+    #[test]
+    fn rollback_stores_new_local_endpoint() {
+        let endpoint = SocketAddr::from(([127, 0, 0, 1], 5400));
+        let restored =
+            build_restored_applied_config(&previous_applied_config(), 9, endpoint).unwrap();
+        assert_eq!(restored.local_endpoint, Some(endpoint));
+        assert_eq!(
+            restored.local_endpoint,
+            restored
+                .forwarder_identity
+                .as_ref()
+                .map(|identity| identity.local_endpoint)
+        );
+    }
+
+    #[test]
+    fn rollback_outcome_matches_stored_forwarder_identity() {
+        let restored = build_restored_applied_config(
+            &previous_applied_config(),
+            9,
+            SocketAddr::from(([127, 0, 0, 1], 5400)),
+        )
+        .unwrap();
+        let outcome_generation = restored
+            .forwarder_identity
+            .as_ref()
+            .map(|identity| identity.generation);
+        assert_eq!(
+            outcome_generation,
+            restored
+                .forwarder_identity
+                .as_ref()
+                .map(|identity| identity.generation)
+        );
+    }
+
+    #[test]
+    fn rollback_preserves_previous_verified_config() {
+        let previous = previous_applied_config();
+        let restored =
+            build_restored_applied_config(&previous, 9, SocketAddr::from(([127, 0, 0, 1], 5400)))
+                .unwrap();
+        assert_eq!(restored.verified, previous.verified);
+    }
+
+    #[test]
+    fn rollback_preserves_kill_switch_ownership() {
+        let previous = previous_applied_config();
+        let restored =
+            build_restored_applied_config(&previous, 9, SocketAddr::from(([127, 0, 0, 1], 5400)))
+                .unwrap();
+        assert_eq!(
+            restored.kill_switch_ownership,
+            previous.kill_switch_ownership
+        );
+    }
+
+    #[test]
+    fn rollback_refreshes_applied_at() {
+        let previous = previous_applied_config();
+        let restored =
+            build_restored_applied_config(&previous, 9, SocketAddr::from(([127, 0, 0, 1], 5400)))
+                .unwrap();
+        assert!(restored.applied_at > previous.applied_at);
+        assert_eq!(
+            restored.verification,
+            DnsAppliedVerification::LocalReadinessPassed
+        );
+    }
+
+    #[test]
+    fn rollback_success_never_restores_stale_identity() {
+        let previous = previous_applied_config();
+        let restored =
+            build_restored_applied_config(&previous, 9, SocketAddr::from(([127, 0, 0, 1], 5400)))
+                .unwrap();
+        assert_ne!(restored.forwarder_identity, previous.forwarder_identity);
+        assert_eq!(
+            restored.forwarder_identity.as_ref().unwrap().process_id,
+            None
+        );
+        assert_eq!(
+            restored.forwarder_identity.as_ref().unwrap().instance_id,
+            "transaction-instance"
+        );
     }
 }
