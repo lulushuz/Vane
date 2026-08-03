@@ -1079,7 +1079,10 @@ pub async fn sync_bypass_config(
         });
     }
 
-    let previous_persisted = crate::settings::read_runtime_settings(&app).ok().flatten();
+    let previous_settings_snapshot = crate::settings::snapshot_store(&app)
+        .map_err(|error| IpcError::runtime(OPERATION, "SETTINGS_SNAPSHOT_FAILED", error))?;
+    let previous_runtime_settings = crate::settings::read_runtime_settings(&app)
+        .map_err(|error| IpcError::runtime(OPERATION, "SETTINGS_SNAPSHOT_FAILED", error))?;
     let previous_applied = state.engine_manager.applied_config();
 
     state
@@ -1238,13 +1241,37 @@ pub async fn sync_bypass_config(
                 "Candidate engine start failed: {candidate_err}. Initiating transactional rollback to previous configuration..."
             );
 
-            if let Some(prev) = previous_persisted {
-                let mut settings_map = serde_json::Map::new();
-                settings_map.insert("state".into(), serde_json::to_value(&prev).unwrap());
-                let _ = crate::settings::atomic_replace_bytes(
-                    &app_data_dir.join("settings.json"),
-                    serde_json::to_string(&settings_map).unwrap().as_bytes(),
-                );
+            crate::settings::restore_store_snapshot(&app, &previous_settings_snapshot).map_err(
+                |restore_error| {
+                    IpcError::runtime(
+                        OPERATION,
+                        "PATTERN_SETTINGS_ROLLBACK_FAILED",
+                        format!(
+                            "Candidate start failed ({candidate_err}) AND canonical settings rollback failed: {restore_error}"
+                        ),
+                    )
+                },
+            )?;
+
+            let restored_runtime_settings = crate::settings::read_runtime_settings(&app).map_err(
+                |readback_error| {
+                    IpcError::runtime(
+                        OPERATION,
+                        "PATTERN_SETTINGS_ROLLBACK_FAILED",
+                        format!(
+                            "Candidate start failed ({candidate_err}) AND restored settings readback failed: {readback_error}"
+                        ),
+                    )
+                },
+            )?;
+            if restored_runtime_settings != previous_runtime_settings {
+                return Err(IpcError::runtime(
+                    OPERATION,
+                    "PATTERN_SETTINGS_ROLLBACK_FAILED",
+                    format!(
+                        "Candidate start failed ({candidate_err}) AND restored runtime settings do not match the pre-mutation snapshot."
+                    ),
+                ));
             }
 
             if let Some(prev_applied) = previous_applied {
