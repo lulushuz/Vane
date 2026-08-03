@@ -258,39 +258,51 @@ fn command_for(
     platform: FirewallPlatform,
     step: &FirewallStep,
 ) -> Result<FirewallCommandSpec, FirewallExecutionError> {
-    let (operation, spec) = match step {
-        FirewallStep::AddRule(spec) => ("add", spec),
-        FirewallStep::RemoveRule(spec) => ("remove", spec),
+    let spec = match step {
+        FirewallStep::AddRule(spec) | FirewallStep::RemoveRule(spec) => spec,
     };
     validate_spec(spec)?;
-    match platform {
-        FirewallPlatform::Windows => {
+    match (platform, step) {
+        (FirewallPlatform::Windows, FirewallStep::AddRule(_)) => {
             let mut args = vec![
                 "advfirewall".into(),
                 "firewall".into(),
-                operation.into(),
+                "add".into(),
                 "rule".into(),
                 format!("name={}", spec.name),
             ];
-            if operation == "add" {
-                args.extend([
-                    format!("dir={}", spec.direction),
-                    format!("action={}", spec.action),
-                    format!("protocol={}", spec.protocol),
-                    format!("remoteport={}", spec.port),
-                ]);
-                if let Some(ip) = &spec.remote_ip {
-                    args.push(format!("remoteip={ip}"));
-                }
+            args.extend([
+                format!("dir={}", spec.direction),
+                format!("action={}", spec.action),
+                format!("protocol={}", spec.protocol),
+                format!("remoteport={}", spec.port),
+            ]);
+            if let Some(ip) = &spec.remote_ip {
+                args.push(format!("remoteip={ip}"));
             }
             Ok(FirewallCommandSpec {
                 program: "netsh".into(),
                 args,
             })
         }
-        FirewallPlatform::Linux => {
+        (FirewallPlatform::Windows, FirewallStep::RemoveRule(_)) => Ok(FirewallCommandSpec {
+            program: "netsh".into(),
+            args: vec![
+                "advfirewall".into(),
+                "firewall".into(),
+                "delete".into(),
+                "rule".into(),
+                format!("name={}", spec.name),
+            ],
+        }),
+        (FirewallPlatform::Linux, linux_step) => {
             let mut args = vec![
-                if operation == "add" { "-A" } else { "-D" }.into(),
+                if matches!(linux_step, FirewallStep::AddRule(_)) {
+                    "-A"
+                } else {
+                    "-D"
+                }
+                .into(),
                 "OUTPUT".into(),
                 "-p".into(),
                 spec.protocol.clone(),
@@ -558,6 +570,61 @@ mod tests {
                 .platform,
             FirewallPlatform::Linux
         );
+    }
+    #[test]
+    fn windows_add_uses_netsh_add_rule() {
+        let command = command_for(
+            FirewallPlatform::Windows,
+            &plan(FirewallPlatform::Windows).apply_steps[0],
+        )
+        .unwrap();
+        assert_eq!(command.program, "netsh");
+        assert_eq!(
+            &command.args[..4],
+            ["advfirewall", "firewall", "add", "rule"]
+        );
+    }
+    #[test]
+    fn windows_remove_uses_netsh_delete_rule() {
+        let command = command_for(
+            FirewallPlatform::Windows,
+            &plan(FirewallPlatform::Windows).remove_steps[0],
+        )
+        .unwrap();
+        assert_eq!(command.program, "netsh");
+        assert_eq!(
+            &command.args[..4],
+            ["advfirewall", "firewall", "delete", "rule"]
+        );
+    }
+    #[test]
+    fn windows_remove_never_uses_remove_verb() {
+        let command = command_for(
+            FirewallPlatform::Windows,
+            &plan(FirewallPlatform::Windows).remove_steps[0],
+        )
+        .unwrap();
+        assert!(!command.args.iter().any(|argument| argument == "remove"));
+    }
+    #[test]
+    fn linux_add_uses_iptables_append() {
+        let command = command_for(
+            FirewallPlatform::Linux,
+            &plan(FirewallPlatform::Linux).apply_steps[0],
+        )
+        .unwrap();
+        assert_eq!(command.program, "iptables");
+        assert_eq!(&command.args[..2], ["-A", "OUTPUT"]);
+    }
+    #[test]
+    fn linux_remove_uses_iptables_delete() {
+        let command = command_for(
+            FirewallPlatform::Linux,
+            &plan(FirewallPlatform::Linux).remove_steps[0],
+        )
+        .unwrap();
+        assert_eq!(command.program, "iptables");
+        assert_eq!(&command.args[..2], ["-D", "OUTPUT"]);
     }
     #[test]
     fn windows_remove_non_zero_exit_is_error() {
