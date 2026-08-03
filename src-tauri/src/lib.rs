@@ -59,6 +59,24 @@ pub struct AppState {
     pub exclusive_operations: std::sync::Arc<crate::operation::ExclusiveOperationCoordinator>,
 }
 
+fn build_app_state(loader: ConfigLoader, http_client: reqwest::Client) -> AppState {
+    AppState {
+        engine_manager: EngineManager::new(),
+        config_loader: Mutex::new(loader),
+        http_client,
+        forwarder: Mutex::new(None),
+        bypass_sync: tokio::sync::Mutex::new(()),
+        bypass_config_revision: AtomicU64::new(0),
+        dns_sync: tokio::sync::Mutex::new(()),
+        dns_config_revision: AtomicU64::new(0),
+        dns_transaction_manager: std::sync::Arc::new(crate::dns::DnsTransactionManager::new()),
+        optimizer_manager: std::sync::Arc::new(crate::optimizer::OptimizerSessionManager::new()),
+        exclusive_operations: std::sync::Arc::new(
+            crate::operation::ExclusiveOperationCoordinator::default(),
+        ),
+    }
+}
+
 /*
    Cleans up dangling winws instances from previous sessions during initialization.
    Prevents zombie processes if the app previously crashed or was forcefully closed.
@@ -279,6 +297,37 @@ pub fn run() {
             // Clean up dangling processes from previous runs (Windows only)
             #[cfg(target_os = "windows")]
             kill_existing_winws();
+
+            // Phase 1: Load local and cached remote presets before AppState registration.
+            let mut loader = ConfigLoader::new();
+            if let Ok(app_data) = app.path().app_data_dir() {
+                let presets_path = app_data.join("presets");
+                let _ = std::fs::create_dir_all(&presets_path);
+                loader.load_custom_presets_from(&presets_path);
+                if let Some(cached) = crate::presets::load_cached_presets(&app_data) {
+                    loader.load_remote_presets(cached.presets);
+                }
+            }
+
+            let http_client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(8))
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .pool_max_idle_per_host(2)
+                .build()
+                .unwrap_or_else(|e| {
+                    // TLS initialization can fail on restricted Windows installations.
+                    tracing::warn!("HTTP Client TLS initialization failed, using fallback: {}", e);
+                    reqwest::Client::new()
+                });
+            let fetch_client = http_client.clone();
+
+            if !app.manage(build_app_state(loader, http_client)) {
+                return Err(std::io::Error::other(
+                    "AppState was already managed before setup initialization",
+                )
+                .into());
+            }
+
             let inst_id = crate::dns::get_or_create_installation_id(app.handle());
             let _ = crate::dns::recover_orphan_kill_switch_rules(app.handle(), &inst_id);
             let _ = crate::platform::linux::recover_orphan_linux_filter_rules(app.handle(), &inst_id);
@@ -307,35 +356,9 @@ pub fn run() {
                 tracing::info!("Network change detected. Frontend UI will be updated.");
             });
 
-            let mut loader = ConfigLoader::new();
-            if let Ok(app_data) = app.path().app_data_dir() {
-                let presets_path = app_data.join("presets");
-                let _ = std::fs::create_dir_all(&presets_path);
-                loader.load_custom_presets_from(&presets_path);
-
-                // ─── Feature 3: Cache-First Remote Presets ─────────────────
-                // Phase 1: Load from disk immediately (synchronous, zero network I/O).
-                if let Some(cached) = crate::presets::load_cached_presets(&app_data) {
-                    loader.load_remote_presets(cached.presets);
-                }
-            }
-
-            let http_client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(8))
-                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .pool_max_idle_per_host(2)
-                .build()
-                .unwrap_or_else(|e| {
-                    // TLS init may fail on FIPS-mode Windows or missing root certs.
-                    // Fall back to a plain client — functionality degrades gracefully.
-                    tracing::warn!("HTTP Client TLS initialization failed, using fallback: {}", e);
-                    reqwest::Client::new()
-                });
-
             // Phase 2: Fetch remote presets in background (non-blocking).
             // If offline, the cached presets loaded above remain active.
             if let Ok(app_data) = app.path().app_data_dir() {
-                let fetch_client = http_client.clone();
                 let fetch_app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     use crate::presets::{fetch_remote_presets, RemoteFetchOutcome};
@@ -399,24 +422,6 @@ pub fn run() {
 
             // System Tray setup
             crate::tray::setup_tray(app)?;
-
-            let dns_tx_manager = std::sync::Arc::new(crate::dns::DnsTransactionManager::new());
-            let optimizer_manager = std::sync::Arc::new(crate::optimizer::OptimizerSessionManager::new());
-
-            // Global singleton HTTP client for pooled request reusing
-            app.manage(AppState {
-                engine_manager: EngineManager::new(),
-                config_loader: Mutex::new(loader),
-                http_client,
-                forwarder: Mutex::new(None),
-                bypass_sync: tokio::sync::Mutex::new(()),
-                bypass_config_revision: AtomicU64::new(0),
-                dns_sync: tokio::sync::Mutex::new(()),
-                dns_config_revision: AtomicU64::new(0),
-                dns_transaction_manager: dns_tx_manager,
-                optimizer_manager,
-                exclusive_operations: std::sync::Arc::new(crate::operation::ExclusiveOperationCoordinator::default()),
-            });
 
             // Auto-start: if launched via Task Scheduler / systemd, resume the last DPI preset.
             if is_autostart {
@@ -536,4 +541,21 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod startup_state_tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn startup_recovery_runs_only_after_app_state_is_managed() {
+        let state = build_app_state(ConfigLoader::new(), reqwest::Client::new());
+
+        assert_eq!(state.dns_config_revision.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            std::sync::Arc::strong_count(&state.dns_transaction_manager),
+            1
+        );
+    }
 }
