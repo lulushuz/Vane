@@ -133,9 +133,46 @@ function Get-WinDivertDrivers {
     })
 }
 
+function Select-VaneFirewallRules {
+    param([AllowEmptyCollection()][object[]]$Rules = @())
+
+    $seen = @{}
+    $owned = foreach ($rule in @($Rules)) {
+        $name = [string](Get-ObjectProperty $rule 'Name' '')
+        $displayName = [string](Get-ObjectProperty $rule 'DisplayName' '')
+        $instanceId = [string](Get-ObjectProperty $rule 'InstanceID' '')
+        $isOwned =
+            $name -like 'Vane-DNS-*' -or
+            $displayName -like 'Vane-DNS-*' -or
+            $name -eq 'VaneDNSKillSwitch' -or
+            $displayName -eq 'VaneDNSKillSwitch'
+        if (-not $isOwned) {
+            continue
+        }
+
+        $identity = if (-not [string]::IsNullOrWhiteSpace($instanceId)) {
+            "instance:$instanceId"
+        }
+        else {
+            "name:$name`0display:$displayName"
+        }
+        if ($seen.ContainsKey($identity)) {
+            continue
+        }
+        $seen[$identity] = $true
+        $rule
+    }
+
+    return @($owned | Sort-Object `
+        @{ Expression = { [string](Get-ObjectProperty $_ 'Name' '') } }, `
+        @{ Expression = { [string](Get-ObjectProperty $_ 'DisplayName' '') } }, `
+        @{ Expression = { [string](Get-ObjectProperty $_ 'InstanceID' '') } })
+}
+
 function Get-VaneFirewallRules {
     $rules = Invoke-EvidenceQuery 'Vane firewall inventory' {
-        Get-NetFirewallRule -DisplayName 'VaneDNSKillSwitch' -ErrorAction SilentlyContinue
+        $allRules = Get-NetFirewallRule -ErrorAction SilentlyContinue
+        Select-VaneFirewallRules $allRules
     }
 
     return @($rules | ForEach-Object {
@@ -147,12 +184,15 @@ function Get-VaneFirewallRules {
             $rule | Get-NetFirewallAddressFilter
         })
         [ordered]@{
+            name = $rule.Name
             displayName = $rule.DisplayName
+            instanceId = $rule.InstanceID
             enabled = [string]$rule.Enabled
             direction = [string]$rule.Direction
             action = [string]$rule.Action
             profile = [string]$rule.Profile
             protocol = @($ports | ForEach-Object { [string]$_.Protocol })
+            localPort = @($ports | ForEach-Object { [string]$_.LocalPort })
             remotePort = @($ports | ForEach-Object { [string]$_.RemotePort })
             remoteAddress = @($addresses | ForEach-Object { @($_.RemoteAddress) })
         }
