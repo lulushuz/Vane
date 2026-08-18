@@ -221,7 +221,7 @@ pub fn builtin_providers() -> Vec<DnsProvider> {
 /// properties are stable across Windows display languages, unlike netsh text.
 #[cfg(target_os = "windows")]
 pub fn get_active_adapters() -> Vec<NetworkAdapter> {
-    let script = r#"@(Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { $i=$_; $d=@((Get-DnsClientServerAddress -InterfaceIndex $i.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses); $dhcp=(Get-NetIPInterface -InterfaceIndex $i.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).Dhcp -eq 'Enabled'; [pscustomobject]@{name=$i.Name;dns=$d;dhcp=$dhcp} }) | ConvertTo-Json -Compress"#;
+    let script = r#"$routed = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty InterfaceIndex); @(Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and ($routed -contains $_.ifIndex -or ($routed.Count -eq 0 -and $_.InterfaceDescription -notmatch 'VirtualBox|VMware|Hyper-V|Loopback|Npcap|TAP|Wintun')) } | ForEach-Object { $i = $_; $d = @((Get-DnsClientServerAddress -InterfaceIndex $i.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses); $dhcp = (Get-NetIPInterface -InterfaceIndex $i.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).Dhcp -eq 'Enabled'; [pscustomobject]@{ name = $i.Name; dns = $d; dhcp = $dhcp } }) | ConvertTo-Json -Compress"#;
     let output = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .creation_flags(CREATE_NO_WINDOW)
