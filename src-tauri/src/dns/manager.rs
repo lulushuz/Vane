@@ -430,10 +430,15 @@ pub fn apply_dns(primary: &str, secondary: &str) -> ApplyDnsResult {
         }
     }
 
+    let is_successful = !applied.is_empty();
     ApplyDnsResult {
-        success: errors.is_empty() && applied.len() == adapters.len(),
+        success: is_successful,
         applied_adapters: applied,
-        error: (!errors.is_empty()).then(|| errors.join(" ")),
+        error: if !is_successful || !errors.is_empty() {
+            Some(errors.join(" "))
+        } else {
+            None
+        },
     }
 }
 

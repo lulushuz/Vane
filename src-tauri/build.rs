@@ -1,9 +1,10 @@
 fn main() {
     let mut attrs = tauri_build::WindowsAttributes::new();
 
-    // Embed manifest with requireAdministrator only for production binary when requested,
-    // otherwise use asInvoker for non-elevated test execution capability.
-    let manifest = if std::env::var("VANE_REQUIRE_ADMIN_MANIFEST").is_ok() {
+    let is_release = std::env::var("PROFILE").map(|p| p == "release").unwrap_or(false);
+    let require_admin = is_release || std::env::var("VANE_REQUIRE_ADMIN_MANIFEST").is_ok();
+
+    let manifest = if require_admin {
         r#"
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <dependency>
