@@ -3,7 +3,7 @@ use crate::dns::firewall_plan::{
     rebuild_owned_kill_switch_plan, SystemFirewallExecutor,
 };
 use crate::dns::forwarder_lifecycle::{
-    verify_local_readiness, DnsForwarderIdentity, DnsForwarderState,
+    verify_forwarder_udp_and_tcp_readiness, DnsForwarderIdentity, DnsForwarderState,
 };
 use crate::dns::kill_switch::{
     clear_kill_switch_metadata, get_or_create_installation_id, save_kill_switch_metadata,
@@ -21,6 +21,29 @@ use tokio::sync::Mutex;
 
 const FORWARDER_NOT_READY_ERROR: &str =
     "DNS forwarder did not become ready; system DNS and firewall were not changed.";
+
+async fn functional_forwarder_ready(endpoint: SocketAddr) -> bool {
+    match verify_forwarder_udp_and_tcp_readiness(
+        endpoint,
+        crate::dns::DEFAULT_HEALTH_CHECK_TARGET,
+        std::time::Duration::from_secs(6),
+    )
+    .await
+    {
+        Ok([udp, tcp]) => {
+            tracing::info!(
+                udp_latency_ms = udp.elapsed.as_millis(),
+                tcp_latency_ms = tcp.elapsed.as_millis(),
+                "DNS forwarder UDP and TCP functional readiness passed."
+            );
+            true
+        }
+        Err(error) => {
+            tracing::error!("{error}");
+            false
+        }
+    }
+}
 
 async fn require_forwarder_readiness<T, Stop, StopFuture>(
     ready: bool,
@@ -311,7 +334,7 @@ impl DnsTransactionManager {
         if let Some((applied, local_endpoint, identity)) =
             reusable_applied_config(&verified, previous_applied.as_ref(), forwarder_owned)
         {
-            if should_reuse_forwarder(true, verify_local_readiness(local_endpoint).await) {
+            if should_reuse_forwarder(true, functional_forwarder_ready(local_endpoint).await) {
                 tracing::info!(
                     "DNS settings were already active; no forwarder restart was needed."
                 );
@@ -457,7 +480,7 @@ impl DnsTransactionManager {
             Ok(handle) => {
                 let local_ep = SocketAddr::from(([127, 0, 0, 1], handle.port));
 
-                let ready = verify_local_readiness(local_ep).await;
+                let ready = functional_forwarder_ready(local_ep).await;
                 let handle = match require_forwarder_readiness(ready, handle, |candidate| {
                     candidate.stop()
                 })
@@ -641,7 +664,7 @@ impl DnsTransactionManager {
             .await
             {
                 let local_ep = SocketAddr::from(([127, 0, 0, 1], handle.port));
-                if !verify_local_readiness(local_ep).await {
+                if !functional_forwarder_ready(local_ep).await {
                     handle.stop().await;
                     tracing::error!(
                         "Previous DNS forwarder rollback did not become locally ready."
@@ -873,14 +896,14 @@ mod readiness_gate_tests {
     }
 
     #[tokio::test]
-    async fn readiness_failure_does_not_apply_system_dns() {
+    async fn functional_readiness_failure_does_not_apply_system_dns() {
         let (result, effects) = run_readiness_flow(false, false).await;
         assert!(result.is_err());
         assert_eq!(effects.lock().unwrap().dns_apply_count, 0);
     }
 
     #[tokio::test]
-    async fn readiness_failure_does_not_apply_firewall() {
+    async fn functional_readiness_failure_does_not_apply_firewall() {
         let (result, effects) = run_readiness_flow(false, false).await;
         assert!(result.is_err());
         let effects = effects.lock().unwrap();
@@ -889,7 +912,14 @@ mod readiness_gate_tests {
     }
 
     #[tokio::test]
-    async fn readiness_failure_does_not_commit_applied_state() {
+    async fn functional_readiness_failure_does_not_write_metadata() {
+        let (result, effects) = run_readiness_flow(false, false).await;
+        assert!(result.is_err());
+        assert_eq!(effects.lock().unwrap().metadata_write_count, 0);
+    }
+
+    #[tokio::test]
+    async fn functional_readiness_failure_does_not_commit_applied_state() {
         let (result, effects) = run_readiness_flow(false, false).await;
         assert!(result.is_err());
         let effects = effects.lock().unwrap();
@@ -901,7 +931,7 @@ mod readiness_gate_tests {
     }
 
     #[tokio::test]
-    async fn readiness_success_allows_transaction_to_continue() {
+    async fn functional_readiness_success_allows_dns_apply() {
         let (result, effects) = run_readiness_flow(true, false).await;
         assert!(result.is_ok());
         let effects = effects.lock().unwrap();
@@ -916,7 +946,7 @@ mod readiness_gate_tests {
     }
 
     #[tokio::test]
-    async fn readiness_failure_stops_candidate_forwarder() {
+    async fn functional_readiness_failure_stops_forwarder() {
         let (result, effects) = run_readiness_flow(false, false).await;
         assert!(result.is_err());
         assert!(effects.lock().unwrap().candidate_stopped);

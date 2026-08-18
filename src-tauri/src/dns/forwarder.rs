@@ -161,11 +161,28 @@ pub enum DoHEndpoint {
 }
 
 impl DoHEndpoint {
+    pub fn hostname(&self) -> &'static str {
+        match self {
+            Self::Cloudflare => "cloudflare-dns.com",
+            Self::Google => "dns.google",
+        }
+    }
+
     pub fn url(&self) -> &'static str {
         match self {
             Self::Cloudflare => "https://cloudflare-dns.com/dns-query",
             Self::Google => "https://dns.google/dns-query",
         }
+    }
+
+    pub fn bootstrap_socket_addrs(&self) -> Vec<SocketAddr> {
+        match self {
+            Self::Cloudflare => ["1.1.1.1:443", "1.0.0.1:443"],
+            Self::Google => ["8.8.8.8:443", "8.8.4.4:443"],
+        }
+        .into_iter()
+        .map(|address| address.parse().expect("static bootstrap address is valid"))
+        .collect()
     }
 }
 
@@ -610,7 +627,7 @@ impl ForwarderHandle {
 
 pub async fn spawn_doh_forwarder(
     app: AppHandle,
-    client: reqwest::Client,
+    _shared_client: reqwest::Client,
     port: u16,
     endpoint: DoHEndpoint,
 ) -> Result<ForwarderHandle, String> {
@@ -621,6 +638,7 @@ pub async fn spawn_doh_forwarder(
     } = bind_forwarder_sockets_with_retry(address, ForwarderBindRetryPolicy::default())
         .await
         .map_err(|error| error.to_string())?;
+    let client = DohUpstreamClient::direct(endpoint)?;
     let addr = address.to_string();
 
     let previous_dns = crate::dns::get_active_adapters();
@@ -659,19 +677,11 @@ pub async fn spawn_doh_forwarder(
         let tcp_fallback = fallback_dns.clone();
         let tcp_shutdown = Arc::clone(&shutdown_clone);
         tokio::join!(
-            run_forwarder_loop(
-                app_clone,
-                socket,
-                client,
-                endpoint,
-                fallback_dns,
-                shutdown_clone
-            ),
+            run_forwarder_loop(app_clone, socket, client, fallback_dns, shutdown_clone),
             run_tcp_forwarder_loop(
                 tcp_app,
                 tcp_listener,
                 tcp_client,
-                endpoint,
                 tcp_fallback,
                 tcp_shutdown
             ),
@@ -691,8 +701,7 @@ pub async fn spawn_doh_forwarder(
 async fn run_tcp_forwarder_loop(
     app: AppHandle,
     listener: TcpListener,
-    client: reqwest::Client,
-    endpoint: DoHEndpoint,
+    client: DohUpstreamClient,
     fallback_dns: String,
     shutdown: Arc<AtomicBool>,
 ) {
@@ -726,16 +735,29 @@ async fn run_tcp_forwarder_loop(
                 if stream.read_exact(&mut query).await.is_err() {
                     break;
                 }
-                let Some(response) = proxy_dns_query(
+                let parsed = match Message::from_bytes(&query) {
+                    Ok(parsed) => parsed,
+                    Err(error) => {
+                        tracing::warn!("Invalid DNS TCP query: {error}");
+                        break;
+                    }
+                };
+                let response = match proxy_dns_query(
                     app.clone(),
                     &client,
-                    endpoint,
                     &fallback_dns,
                     bytes::Bytes::from(query),
                 )
                 .await
-                else {
-                    break;
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        tracing::warn!(query_id = parsed.metadata.id, error_category = %error, "DNS TCP upstream failed; returning SERVFAIL.");
+                        match build_servfail_response(&parsed) {
+                            Ok(response) => response,
+                            Err(_) => break,
+                        }
+                    }
                 };
                 if response.len() > u16::MAX as usize
                     || stream.write_u16(response.len() as u16).await.is_err()
@@ -789,8 +811,7 @@ pub(crate) async fn probe_dot_upstream(endpoint: DoHEndpoint, domain: &str) -> b
 async fn run_forwarder_loop(
     app: AppHandle,
     socket: Arc<UdpSocket>,
-    client: reqwest::Client,
-    endpoint: DoHEndpoint,
+    client: DohUpstreamClient,
     fallback_dns: String,
     shutdown: Arc<AtomicBool>,
 ) {
@@ -835,18 +856,32 @@ async fn run_forwarder_loop(
 
         tokio::spawn(async move {
             let _permit = permit;
-            if let Some(response) = proxy_dns_query(
+            let parsed = match Message::from_bytes(&query_bytes) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    tracing::warn!("Invalid DNS UDP query: {error}");
+                    return;
+                }
+            };
+            let response = match proxy_dns_query(
                 app_clone,
                 &client_clone,
-                endpoint,
                 &fallback_dns_clone,
                 query_bytes,
             )
             .await
             {
-                if let Err(e) = socket_clone.send_to(&response, client_addr).await {
-                    tracing::warn!("DNS Forwarder send hatası → {}: {}", client_addr, e);
+                Ok(response) => response,
+                Err(error) => {
+                    tracing::warn!(query_id = parsed.metadata.id, error_category = %error, "DNS UDP upstream failed; returning SERVFAIL.");
+                    match build_servfail_response(&parsed) {
+                        Ok(response) => response,
+                        Err(_) => return,
+                    }
                 }
+            };
+            if let Err(e) = socket_clone.send_to(&response, client_addr).await {
+                tracing::warn!("DNS Forwarder send failed for {}: {}", client_addr, e);
             }
         });
     }
@@ -892,16 +927,28 @@ fn build_blocked_response(
     response.to_bytes().unwrap_or_default().into()
 }
 
+fn build_servfail_response(query: &Message) -> Result<bytes::Bytes, String> {
+    let mut response = Message::response(query.metadata.id, query.metadata.op_code);
+    response.metadata.recursion_desired = query.metadata.recursion_desired;
+    response.metadata.recursion_available = true;
+    response.metadata.response_code = ResponseCode::ServFail;
+    for question in &query.queries {
+        response.add_query(question.clone());
+    }
+    response
+        .to_bytes()
+        .map(bytes::Bytes::from)
+        .map_err(|error| error.to_string())
+}
+
 async fn proxy_dns_query(
     app: AppHandle,
-    client: &reqwest::Client,
-    endpoint: DoHEndpoint,
+    client: &DohUpstreamClient,
     fallback_dns: &str,
     query_bytes: bytes::Bytes,
-) -> Option<bytes::Bytes> {
+) -> Result<bytes::Bytes, DnsForwardError> {
     let parsed = Message::from_bytes(&query_bytes)
-        .map_err(|e| tracing::warn!("Geçersiz DNS sorgusu: {}", e))
-        .ok()?;
+        .map_err(|error| DnsForwardError::InvalidQuery(error.to_string()))?;
 
     // Emit live activity for UI graph
     let _ = app.emit("dns_activity", ());
@@ -916,7 +963,7 @@ async fn proxy_dns_query(
 
     if is_local && !crate::engine::manager::kill_switch_enabled() {
         if let Some(resp) = query_fallback_dns(fallback_dns, &query_bytes).await {
-            return Some(resp);
+            return Ok(resp);
         }
     }
 
@@ -936,7 +983,7 @@ async fn proxy_dns_query(
         // 1. AdBlock Filter
         if settings.adblock && is_domain_blocked(&qname_clean) {
             tracing::info!("AdBlock: Engellendi -> {}", qname_clean);
-            return Some(build_blocked_response(&parsed, query));
+            return Ok(build_blocked_response(&parsed, query));
         }
 
         // 2. RAM Cache Lookup
@@ -948,14 +995,16 @@ async fn proxy_dns_query(
                     resp[0] = tx_id[0];
                     resp[1] = tx_id[1];
                 }
-                return Some(bytes::Bytes::from(resp));
+                return Ok(bytes::Bytes::from(resp));
             }
         }
 
         // 3. Resolve via Protocols
         let response_bytes = if settings.protocol == "dot" {
-            let resolver = get_or_create_dot_resolver(endpoint)?;
-            let name = Name::from_utf8(&qname_clean).ok()?;
+            let resolver = get_or_create_dot_resolver(client.endpoint)
+                .ok_or_else(|| DnsForwardError::DotResolution("resolver unavailable".into()))?;
+            let name = Name::from_utf8(&qname_clean)
+                .map_err(|error| DnsForwardError::InvalidQuery(error.to_string()))?;
             let mut response = Message::response(parsed.metadata.id, parsed.metadata.op_code);
             response.metadata.recursion_desired = parsed.metadata.recursion_desired;
             response.metadata.recursion_available = true;
@@ -978,47 +1027,75 @@ async fn proxy_dns_query(
                             response.add_authority((*soa).into_record_of_rdata());
                         }
                     }
-                    _ => return None,
+                    _ => return Err(DnsForwardError::DotResolution(error.to_string())),
                 },
             }
-            response.to_bytes().ok()?
+            response
+                .to_bytes()
+                .map_err(|error| DnsForwardError::Internal(error.to_string()))?
         } else {
             // DoH
             let doh_client = if settings.socks5_proxy.is_empty() {
-                client.clone()
+                client.client.clone()
             } else {
-                PROXY_CLIENT_CACHE.read().ok().and_then(|guard| {
-                    guard
-                        .as_ref()
-                        .filter(|(address, _)| address == &settings.socks5_proxy)
-                        .map(|(_, client)| client.clone())
-                })?
+                PROXY_CLIENT_CACHE
+                    .read()
+                    .ok()
+                    .and_then(|guard| {
+                        guard
+                            .as_ref()
+                            .filter(|(address, _)| address == &settings.socks5_proxy)
+                            .map(|(_, client)| client.clone())
+                    })
+                    .ok_or_else(|| {
+                        DnsForwardError::BootstrapUnavailable("SOCKS5H client unavailable".into())
+                    })?
             };
 
             let response = doh_client
-                .post(endpoint.url())
+                .post(client.endpoint.url())
                 .header("Content-Type", "application/dns-message")
                 .header("Accept", "application/dns-message")
                 .body(query_bytes)
                 .timeout(std::time::Duration::from_secs(5))
                 .send()
                 .await
-                .ok()?;
+                .map_err(|error| DnsForwardError::UpstreamConnect(error.to_string()))?;
 
             if !response.status().is_success() {
-                return None;
+                return Err(DnsForwardError::UpstreamHttpStatus(
+                    response.status().as_u16(),
+                ));
+            }
+            let valid_content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.split(';').next() == Some("application/dns-message"));
+            if !valid_content_type {
+                return Err(DnsForwardError::UpstreamContentType);
             }
             if response
                 .content_length()
                 .is_some_and(|length| length > 65_535)
             {
                 tracing::error!("DNS upstream response exceeded the 65535-byte protocol limit.");
-                return None;
+                return Err(DnsForwardError::UpstreamResponseTooLarge);
             }
-            let bytes = response.bytes().await.ok()?;
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|error| DnsForwardError::UpstreamBody(error.to_string()))?;
             if bytes.len() > 65_535 {
                 tracing::error!("DNS upstream response exceeded the 65535-byte protocol limit.");
-                return None;
+                return Err(DnsForwardError::UpstreamResponseTooLarge);
+            }
+            let upstream = Message::from_bytes(&bytes)
+                .map_err(|error| DnsForwardError::UpstreamMalformedDns(error.to_string()))?;
+            if upstream.metadata.id != parsed.metadata.id {
+                return Err(DnsForwardError::UpstreamMalformedDns(
+                    "transaction ID mismatch".into(),
+                ));
             }
             bytes.to_vec()
         };
@@ -1042,9 +1119,9 @@ async fn proxy_dns_query(
             }
         }
 
-        return Some(bytes::Bytes::from(response_bytes));
+        return Ok(bytes::Bytes::from(response_bytes));
     }
-    None
+    Err(DnsForwardError::UnsupportedQuery)
 }
 
 #[cfg(test)]
@@ -1254,5 +1331,145 @@ mod bind_retry_tests {
         .await
         .unwrap();
         assert_eq!(pair, (true, true));
+    }
+}
+
+#[derive(Clone)]
+struct DohUpstreamClient {
+    endpoint: DoHEndpoint,
+    client: reqwest::Client,
+}
+
+impl DohUpstreamClient {
+    fn direct(endpoint: DoHEndpoint) -> Result<Self, String> {
+        let bootstrap = endpoint.bootstrap_socket_addrs();
+        let client = reqwest::Client::builder()
+            .resolve_to_addrs(endpoint.hostname(), &bootstrap)
+            .timeout(std::time::Duration::from_secs(5))
+            .user_agent("Vane-DNS-Forwarder/1.0")
+            .build()
+            .map_err(|error| format!("DoH bootstrap client build failed: {error}"))?;
+        Ok(Self { endpoint, client })
+    }
+}
+
+#[derive(Debug)]
+enum DnsForwardError {
+    InvalidQuery(String),
+    UnsupportedQuery,
+    BootstrapUnavailable(String),
+    UpstreamConnect(String),
+    UpstreamHttpStatus(u16),
+    UpstreamContentType,
+    UpstreamBody(String),
+    UpstreamMalformedDns(String),
+    UpstreamResponseTooLarge,
+    DotResolution(String),
+    Internal(String),
+}
+
+impl std::fmt::Display for DnsForwardError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidQuery(e) => write!(f, "invalid_query: {e}"),
+            Self::UnsupportedQuery => f.write_str("unsupported_query"),
+            Self::BootstrapUnavailable(e) => write!(f, "bootstrap_unavailable: {e}"),
+            Self::UpstreamConnect(e) => write!(f, "upstream_connect: {e}"),
+            Self::UpstreamHttpStatus(s) => write!(f, "upstream_http_status: {s}"),
+            Self::UpstreamContentType => f.write_str("upstream_content_type"),
+            Self::UpstreamBody(e) => write!(f, "upstream_body: {e}"),
+            Self::UpstreamMalformedDns(e) => write!(f, "upstream_malformed_dns: {e}"),
+            Self::UpstreamResponseTooLarge => f.write_str("upstream_response_too_large"),
+            Self::DotResolution(e) => write!(f, "dot_resolution: {e}"),
+            Self::Internal(e) => write!(f, "internal: {e}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod bootstrap_and_error_response_tests {
+    use super::*;
+    use hickory_resolver::proto::op::{MessageType, OpCode, Query};
+
+    fn query() -> Message {
+        let mut query = Message::new(0x1234, MessageType::Query, OpCode::Query);
+        query.metadata.recursion_desired = true;
+        query.add_query(Query::query(
+            Name::from_ascii("example.com").unwrap(),
+            RecordType::A,
+        ));
+        query
+    }
+
+    #[test]
+    fn cloudflare_direct_client_uses_bootstrap_addresses() {
+        assert_eq!(
+            DoHEndpoint::Cloudflare.bootstrap_socket_addrs(),
+            vec![
+                "1.1.1.1:443".parse().unwrap(),
+                "1.0.0.1:443".parse().unwrap()
+            ]
+        );
+        assert!(DohUpstreamClient::direct(DoHEndpoint::Cloudflare).is_ok());
+    }
+
+    #[test]
+    fn google_direct_client_uses_bootstrap_addresses() {
+        assert_eq!(
+            DoHEndpoint::Google.bootstrap_socket_addrs(),
+            vec![
+                "8.8.8.8:443".parse().unwrap(),
+                "8.8.4.4:443".parse().unwrap()
+            ]
+        );
+        assert!(DohUpstreamClient::direct(DoHEndpoint::Google).is_ok());
+    }
+
+    #[test]
+    fn bootstrap_client_preserves_endpoint_hostname() {
+        assert_eq!(DoHEndpoint::Cloudflare.hostname(), "cloudflare-dns.com");
+        assert!(DoHEndpoint::Cloudflare
+            .url()
+            .starts_with("https://cloudflare-dns.com/"));
+    }
+
+    #[test]
+    fn direct_doh_does_not_require_system_dns_resolution() {
+        for endpoint in [DoHEndpoint::Cloudflare, DoHEndpoint::Google] {
+            assert_eq!(endpoint.bootstrap_socket_addrs().len(), 2);
+            assert!(endpoint
+                .bootstrap_socket_addrs()
+                .iter()
+                .all(|address| address.ip().is_ipv4()));
+        }
+    }
+
+    #[test]
+    fn socks5h_path_does_not_force_local_bootstrap_resolution() {
+        let proxy_url = "socks5h://127.0.0.1:1080";
+        assert!(reqwest::Proxy::all(proxy_url).is_ok());
+        assert!(proxy_url.starts_with("socks5h://"));
+    }
+
+    #[test]
+    fn servfail_preserves_transaction_id() {
+        let query = query();
+        let response = Message::from_bytes(&build_servfail_response(&query).unwrap()).unwrap();
+        assert_eq!(response.metadata.id, query.metadata.id);
+        assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
+    }
+
+    #[test]
+    fn servfail_preserves_question() {
+        let query = query();
+        let response = Message::from_bytes(&build_servfail_response(&query).unwrap()).unwrap();
+        assert_eq!(
+            response.queries[0].query_type(),
+            query.queries[0].query_type()
+        );
+        assert_eq!(
+            response.queries[0].name().to_ascii().trim_end_matches('.'),
+            query.queries[0].name().to_ascii().trim_end_matches('.')
+        );
     }
 }
