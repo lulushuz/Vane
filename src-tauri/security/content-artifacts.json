@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "applicationVersion": "1.0.0-rc.1",
+  "applicationVersion": "1.0.0",
   "artifacts": [
     {
       "id": "builtin-presets",

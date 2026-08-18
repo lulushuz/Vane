@@ -2,13 +2,13 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "vane-dpi-1.0.0-rc.1-SBOM",
-  "documentNamespace": "https://vane.invalid/spdx/1.0.0-rc.1/5714855667fa8e1c62d9a6e6fa32f7bb9bf6daf8",
+  "name": "vane-dpi-1.0.0-SBOM",
+  "documentNamespace": "https://vane.invalid/spdx/1.0.0/d5a9e9040bb73821a2625f6faf9be8ce7c824632",
   "creationInfo": {
     "creators": [
       "Tool: Vane lockfile SBOM generator 2"
     ],
-    "created": "2026-08-02T15:38:43.679Z"
+    "created": "2026-08-18T15:37:04.281Z"
   },
   "documentDescribes": [
     "SPDXRef-Root"
@@ -17,14 +17,14 @@
     {
       "SPDXID": "SPDXRef-Root",
       "name": "vane-dpi",
-      "versionInfo": "1.0.0-rc.1",
+      "versionInfo": "1.0.0",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "NOASSERTION",
       "externalRefs": [
         {
           "referenceCategory": "OTHER",
           "referenceType": "vcs",
-          "referenceLocator": "git+https://github.com/lulushuz/Vane@5714855667fa8e1c62d9a6e6fa32f7bb9bf6daf8"
+          "referenceLocator": "git+https://github.com/lulushuz/Vane@d5a9e9040bb73821a2625f6faf9be8ce7c824632"
         }
       ]
     },
@@ -9109,16 +9109,16 @@
       ]
     },
     {
-      "SPDXID": "SPDXRef-Cargo-vane-dpi-1.0.0-rc.1",
+      "SPDXID": "SPDXRef-Cargo-vane-dpi-1.0.0",
       "name": "vane-dpi",
-      "versionInfo": "1.0.0-rc.1",
+      "versionInfo": "1.0.0",
       "downloadLocation": "NOASSERTION",
       "licenseConcluded": "NOASSERTION",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:cargo/vane-dpi@1.0.0-rc.1"
+          "referenceLocator": "pkg:cargo/vane-dpi@1.0.0"
         }
       ]
     },
@@ -15228,7 +15228,7 @@
     {
       "spdxElementId": "SPDXRef-Root",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Cargo-vane-dpi-1.0.0-rc.1"
+      "relatedSpdxElement": "SPDXRef-Cargo-vane-dpi-1.0.0"
     },
     {
       "spdxElementId": "SPDXRef-Root",
@@ -16365,7 +16365,7 @@
     {
       "annotationType": "OTHER",
       "annotator": "Tool: Vane lockfile SBOM generator 2",
-      "annotationDate": "2026-08-02T15:38:43.680Z",
+      "annotationDate": "2026-08-18T15:37:04.282Z",
       "comment": "Sources: package-lock.json, src-tauri/Cargo.lock, native-artifacts.json"
     }
   ]

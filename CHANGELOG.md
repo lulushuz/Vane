@@ -7,11 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.0-rc.1] - Unreleased
+## [1.0.0] - 2026-08-18
 
-> **Versioning Realignment:** Previous 2.x releases were development-stage builds. This release
-> candidate represents the first version built on the fully hardened P00–P15 production architecture.
-> See [docs/release/legacy-2x-versioning.md](docs/release/legacy-2x-versioning.md) for details.
+> **Production Stable Release:** This release represents the first stable production release
+> built on the fully hardened P00–P15 production architecture.
 
 ### Architecture
 

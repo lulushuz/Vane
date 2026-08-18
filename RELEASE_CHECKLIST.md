@@ -1,4 +1,4 @@
-# Vane 2.0.8 Release Checklist
+# Vane 1.0.0 Release Checklist
 
 GitHub Actions owns release builds. Local verification is limited to focused tests, static checks, and source-level evidence.
 

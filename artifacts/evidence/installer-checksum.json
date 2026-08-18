@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "gate": "installer-checksum",
+  "status": "passed",
+  "command": "generate-checksums --installer",
+  "exitCode": 0,
+  "completedAt": "2026-08-18T15:06:04.765Z",
+  "commit": "d5a9e9040bb73821a2625f6faf9be8ce7c824632",
+  "artifactSha256": "fdfa7e8fb96b34c324723ed95d8a4b2239ac54efa17614192e8363b04091d0cd",
+  "files": [
+    "installer/Vane_1.0.0-rc.1_x64-setup.exe",
+    "release-readiness.json",
+    "sbom-1.0.0-rc.1.spdx.json"
+  ]
+}

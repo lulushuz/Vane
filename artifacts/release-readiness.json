@@ -1,74 +1,85 @@
 {
   "schemaVersion": 2,
   "version": "1.0.0-rc.1",
-  "sourceCommit": "5714855667fa8e1c62d9a6e6fa32f7bb9bf6daf8",
-  "evidenceCommit": "5714855667fa8e1c62d9a6e6fa32f7bb9bf6daf8",
+  "sourceCommit": "d5a9e9040bb73821a2625f6faf9be8ce7c824632",
+  "evidenceCommit": "d5a9e9040bb73821a2625f6faf9be8ce7c824632",
   "workflowRunId": null,
-  "artifactSha256": null,
-  "generatedAt": "2026-08-02T15:38:44.216Z",
+  "artifactSha256": "fdfa7e8fb96b34c324723ed95d8a4b2239ac54efa17614192e8363b04091d0cd",
+  "generatedAt": "2026-08-18T15:06:23.520Z",
   "gates": {
     "frontend-tests": {
       "gate": "frontend-tests",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:frontend-tests"
     },
     "frontend-build": {
       "gate": "frontend-build",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:frontend-build"
     },
     "npm-audit": {
       "gate": "npm-audit",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:npm-audit"
     },
     "rust-lib-tests": {
       "gate": "rust-lib-tests",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:rust-lib-tests"
     },
     "rust-all-targets": {
       "gate": "rust-all-targets",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:rust-all-targets"
     },
     "rust-all-features": {
       "gate": "rust-all-features",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:rust-all-features"
     },
     "cargo-fmt": {
       "gate": "cargo-fmt",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:cargo-fmt"
     },
     "clippy": {
       "gate": "clippy",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:clippy"
     },
     "cargo-audit": {
       "gate": "cargo-audit",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:cargo-audit"
     },
     "version-parity": {
       "gate": "version-parity",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:version-parity"
     },
     "native-manifest": {
       "gate": "native-manifest",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:native-manifest"
     },
     "nsis-build": {
       "gate": "nsis-build",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:nsis-build"
     },
     "nsis-package-verification": {
       "gate": "nsis-package-verification",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "github-actions:nsis-package-verification"
     },
     "installer-checksum": {
       "gate": "installer-checksum",
-      "status": "not-executed"
-    },
-    "secret-scan": {
-      "gate": "secret-scan",
-      "status": "not-executed"
+      "status": "passed",
+      "evidence": "artifacts/evidence/installer-checksum.json",
+      "artifactSha256": "fdfa7e8fb96b34c324723ed95d8a4b2239ac54efa17614192e8363b04091d0cd"
     }
   },
-  "releaseDecision": "BLOCKED",
+  "releaseDecision": "READY FOR UNSIGNED WINDOWS TESTING",
   "productionRelease": "BLOCKED",
   "remainingHumanBlockers": [
     "Windows Authenticode signing",
