@@ -282,29 +282,15 @@ pub async fn start_engine_with_dns_guard(
     let dns_ok = forwarder_active || is_using_trusted_dns();
     if !dns_ok {
         tracing::info!(
-            "DNS Guard: current DNS is unverified; no mutation is performed without explicit opt-in."
+            "DNS Guard: current DNS is unverified; engine runs in pure DPI bypass mode."
         );
-        let apply_res = ApplyDnsResult {
-            success: false,
-            applied_adapters: vec![],
-            error: Some("Explicit encrypted DNS selection required".into()),
-        };
-        if apply_res.success {
-            let _ = app.emit(
-                "log_batch",
-                vec![
-                    "[DNS] 🛡️ ISS varsayılan DNS engellemesi tespit edildi. Sistem DNS'i otomatik olarak Cloudflare (1.1.1.1) olarak ayarlandı.".to_string(),
-                ],
-            );
-        } else {
-            let _ = app.emit(
-                "log_batch",
-                vec![
-                    "[UYARI] ⚠️ Sistem DNS'i otomatik ayarlanamadı: Yönetici yetkisi gerekebilir."
-                        .to_string(),
-                ],
-            );
-        }
+        let _ = app.emit(
+            "log_batch",
+            vec![
+                "[BİLGİ] ℹ️ DPI bypass devrede. Engelli sitelere (Discord, Roblox vb.) erişim için DNS sekmesinden Cloudflare veya Şifreli DNS (DoH) seçmeniz önerilir."
+                    .to_string(),
+            ],
+        );
     }
 
     let preset = {
