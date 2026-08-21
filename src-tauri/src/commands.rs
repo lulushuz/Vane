@@ -851,8 +851,17 @@ pub async fn sync_dns_settings(
         None
     };
 
+    let is_enabled = match enabled {
+        Some(e) => e,
+        None => state
+            .forwarder
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false),
+    };
+
     let candidate = crate::dns::DnsConfigCandidate {
-        enabled: enabled.unwrap_or(true),
+        enabled: is_enabled,
         protocol,
         provider,
         adblock,

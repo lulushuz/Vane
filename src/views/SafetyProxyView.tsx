@@ -23,6 +23,7 @@ export function SafetyProxyView() {
     whitelistDomains,
     blacklistDomains,
     activePresetId,
+    dnsForwarderEnabled,
   } = useEngineStore();
 
   const t = translations[language];
@@ -67,6 +68,7 @@ export function SafetyProxyView() {
         socks5Proxy: verifiedProxy,
         healthCheckTargets,
         emitEvent: false,
+        enabled: dnsForwarderEnabled,
       });
       await invoke('sync_bypass_config', {
         mode: bypassMode,
@@ -102,6 +104,7 @@ export function SafetyProxyView() {
           socks5Proxy: oldSettings.proxySocks5,
           healthCheckTargets,
           emitEvent: false,
+          enabled: dnsForwarderEnabled,
         });
         await invoke('sync_bypass_config', {
           mode: bypassMode,

@@ -288,6 +288,7 @@ export const useEngineStore = create<EngineStore>()(
               socks5Proxy: proxySocks5,
               healthCheckTargets: state.healthCheckTargets,
               emitEvent: false,
+              enabled: state.dnsForwarderEnabled,
             });
             await invoke('sync_bypass_config', {
               mode: state.bypassMode,
@@ -316,6 +317,7 @@ export const useEngineStore = create<EngineStore>()(
                 socks5Proxy: previous,
                 healthCheckTargets: state.healthCheckTargets,
                 emitEvent: false,
+                enabled: state.dnsForwarderEnabled,
               });
               await invoke('sync_bypass_config', {
                 mode: state.bypassMode,
@@ -457,12 +459,12 @@ export const useEngineStore = create<EngineStore>()(
           const protocol = state.dnsProtocol;
           invoke<DnsConfigStatus>('sync_dns_settings', {
             protocol,
-
             adblock: state.dnsAdBlock,
             cache: state.dnsCache,
             socks5Proxy: state.proxySocks5,
             healthCheckTargets: state.healthCheckTargets,
             emitEvent: true,
+            enabled: state.dnsForwarderEnabled,
           }).then((verified) => {
             if (revision !== dnsSyncRevision || verified.stage === 'superseded' || (verified as any).superseded) return;
             pendingDnsRollback = {};
@@ -570,11 +572,11 @@ export const useEngineStore = create<EngineStore>()(
           await invoke<DnsConfigStatus>('sync_dns_settings', {
             protocol: current.dnsProtocol,
             adblock: current.dnsAdBlock,
-
             cache: current.dnsCache,
             socks5Proxy: current.proxySocks5,
             healthCheckTargets: current.healthCheckTargets,
             emitEvent: true,
+            enabled: current.dnsForwarderEnabled,
           });
           pendingDnsRollback = {};
           if (current.killSwitch || current.dnsForwarderEnabled) {
