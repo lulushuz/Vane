@@ -110,7 +110,7 @@ export function useEventListeners(): void {
         dnsAdBlock: config.adblock,
         dnsCache: config.cache,
         proxySocks5: config.socks5Proxy,
-        dnsForwarderEnabled: config.forwarder_active,
+        dnsForwarderEnabled: config.forwarderActive,
       });
     });
 
