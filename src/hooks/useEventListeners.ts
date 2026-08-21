@@ -98,6 +98,11 @@ export function useEventListeners(): void {
       });
     });
 
+    // Keeps DNS forwarder state in sync across windows
+    register<boolean>('sync_dns_forwarder_enabled', (enabled) => {
+      useEngineStore.setState({ dnsForwarderEnabled: enabled });
+    });
+
     register<DnsConfigStatus>('dns_config_synced', (config) => {
       if (!dnsRevisionGate.accept(config.configRevision)) return;
       useEngineStore.setState({
@@ -105,6 +110,7 @@ export function useEventListeners(): void {
         dnsAdBlock: config.adblock,
         dnsCache: config.cache,
         proxySocks5: config.socks5Proxy,
+        dnsForwarderEnabled: config.forwarder_active,
       });
     });
 

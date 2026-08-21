@@ -48,8 +48,8 @@ describe('Test Group E — Engine Launch Sequence Characterization', () => {
     });
   });
 
-  it('E-04: automatically starts DoH forwarder when kill switch is enabled', async () => {
-    useEngineStore.setState({ killSwitch: true });
+  it('E-04: automatically starts DoH forwarder when forwarder is enabled', async () => {
+    useEngineStore.setState({ dnsForwarderEnabled: true });
     mockIpc.registerHandler('get_doh_forwarder_status', () => ({ active: false }));
 
     await useEngineStore.getState().startEngine('default');

@@ -182,53 +182,6 @@ async fn autostart_engine_with_last_preset(app: AppHandle) {
             return;
         }
         tracing::info!("Auto-start: DNS forwarder and its saved runtime settings were restored.");
-    } else if !settings.selected_dns_id.is_empty() {
-        let selected = if settings.selected_dns_id == "custom" {
-            Some((
-                settings.dns_custom_primary.clone(),
-                settings.dns_custom_secondary.clone(),
-            ))
-        } else {
-            crate::dns::builtin_providers()
-                .into_iter()
-                .find(|provider| provider.id == settings.selected_dns_id)
-                .map(|provider| (provider.primary, provider.secondary))
-        };
-        let Some((primary, secondary)) = selected else {
-            tracing::error!(
-                "Auto-start: Saved DNS provider '{}' no longer exists.",
-                settings.selected_dns_id
-            );
-            return;
-        };
-        let provider = match (primary.as_str(), secondary.as_str()) {
-            ("1.1.1.1", "1.0.0.1") => "cloudflare",
-            ("8.8.8.8", "8.8.4.4") => "google",
-            _ => {
-                tracing::error!(
-                    "Auto-start: Custom plaintext DNS cannot bypass DnsTransactionManager."
-                );
-                return;
-            }
-        };
-        let candidate = crate::dns::DnsConfigCandidate {
-            enabled: true,
-            protocol: "doh".into(),
-            provider: Some(provider.into()),
-            adblock: false,
-            cache_enabled: true,
-            socks5: None,
-            kill_switch: settings.kill_switch,
-        };
-        if let Err(error) = state
-            .dns_transaction_manager
-            .apply_candidate(candidate, &app, state.inner())
-            .await
-        {
-            tracing::error!("Auto-start: Saved DNS settings could not be restored: {error}");
-            return;
-        }
-        tracing::info!("Auto-start: Saved system DNS settings were restored and verified.");
     }
 
     match preset {

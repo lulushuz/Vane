@@ -390,7 +390,10 @@ export const useEngineStore = create<EngineStore>()(
             'error',
           ));
       },
-      setDnsForwarderEnabled: (dnsForwarderEnabled) => set({ dnsForwarderEnabled }),
+      setDnsForwarderEnabled: (dnsForwarderEnabled) => {
+        set({ dnsForwarderEnabled });
+        emit('sync_dns_forwarder_enabled', dnsForwarderEnabled).catch(() => {});
+      },
       setHasHydrated: (hasHydrated) => set({ hasHydrated }),
       setLanguage: async (language) => {
         set({ language });
@@ -579,19 +582,10 @@ export const useEngineStore = create<EngineStore>()(
             enabled: current.dnsForwarderEnabled,
           });
           pendingDnsRollback = {};
-          if (current.killSwitch || current.dnsForwarderEnabled) {
+          if (current.dnsForwarderEnabled) {
             const forwarder = await invoke<{ active: boolean }>('get_doh_forwarder_status');
             if (!forwarder.active) {
               await invoke('start_doh_forwarder', { watchdog: current.watchdog });
-              if (!current.dnsForwarderEnabled) {
-                set({ dnsForwarderEnabled: true });
-                get().appendLog(
-                  current.language === 'tr'
-                    ? '[SECURITY] DNS Kill Switch için şifreli yerel DNS yönlendiricisi otomatik başlatıldı.'
-                    : '[SECURITY] The encrypted local DNS forwarder was started automatically for DNS Kill Switch.',
-                  'info',
-                );
-              }
             }
           }
           const result = await invoke<EngineStatus>('start_engine_with_dns_guard', { presetId: id });
@@ -634,7 +628,7 @@ export const useEngineStore = create<EngineStore>()(
             invoke<{ active: boolean }>('get_doh_forwarder_status'),
           ]);
 
-          set({ dnsProviders: provs });
+          set({ dnsProviders: provs, dnsForwarderEnabled: forwarder.active });
           if (forwarder.active) {
             set({ dnsSynced: true });
             return;
