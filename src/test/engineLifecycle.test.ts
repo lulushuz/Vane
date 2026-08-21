@@ -59,8 +59,10 @@ describe('Test Group E — Engine Launch Sequence Characterization', () => {
     expect(commands).toContain('start_doh_forwarder');
   });
 
-  it('E-05: applies saved custom DNS provider settings when forwarder is inactive', async () => {
+  it('E-05: does not start forwarder or call apply_dns_settings when forwarder is disabled', async () => {
     useEngineStore.setState({
+      dnsForwarderEnabled: false,
+      killSwitch: false,
       selectedDnsId: 'custom',
       dnsCustomPrimary: '1.1.1.1',
       dnsCustomSecondary: '1.0.0.1',
@@ -68,11 +70,9 @@ describe('Test Group E — Engine Launch Sequence Characterization', () => {
 
     await useEngineStore.getState().startEngine('default');
 
-    const dnsCall = mockIpc.getCallsForCommand('apply_dns_settings').pop();
-    expect(dnsCall?.payload).toEqual({
-      primary: '1.1.1.1',
-      secondary: '1.0.0.1',
-    });
+    const commands = mockIpc.getCommandNames();
+    expect(commands).not.toContain('start_doh_forwarder');
+    expect(commands).not.toContain('apply_dns_settings');
   });
 
   it('E-06: verifies explicit dnsProtocol in sync_dns_settings during engine start (R-14 resolved)', async () => {

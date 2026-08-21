@@ -593,16 +593,6 @@ export const useEngineStore = create<EngineStore>()(
                 );
               }
             }
-          } else if (current.selectedDnsId) {
-            const provider = current.dnsProviders.find((item) => item.id === current.selectedDnsId);
-            const primary = current.selectedDnsId === 'custom' ? current.dnsCustomPrimary : provider?.primary;
-            const secondary = current.selectedDnsId === 'custom' ? current.dnsCustomSecondary : provider?.secondary;
-            if (!primary) throw new Error('Saved DNS provider is unavailable or incomplete.');
-            const applied = await invoke<{ success: boolean; error?: string }>('apply_dns_settings', {
-              primary,
-              secondary: secondary || primary,
-            });
-            if (!applied.success) throw new Error(applied.error || 'Saved DNS settings could not be restored.');
           }
           const result = await invoke<EngineStatus>('start_engine_with_dns_guard', { presetId: id });
           if (token !== lifecycleToken) return;
