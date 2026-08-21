@@ -505,28 +505,40 @@ pub fn normalize_socks5_proxy(value: &str) -> Result<String, String> {
     if value.contains('@') {
         return Err("SOCKS5 credentials are not stored in application settings; use a credential-free local proxy.".into());
     }
-    let (host, port) = value
+    let (raw_host, port_str) = value
         .rsplit_once(':')
         .ok_or_else(|| "SOCKS5 proxy must use host:port format.".to_string())?;
-    let port = port
+    let port = port_str
         .parse::<u16>()
         .map_err(|_| "SOCKS5 proxy port is invalid.".to_string())?;
-    if port == 0 || host.is_empty() {
+    if port == 0 || raw_host.is_empty() {
         return Err("SOCKS5 proxy host or port is invalid.".into());
     }
-    let valid_host = host.parse::<std::net::IpAddr>().is_ok()
-        || (host.len() <= 253
-            && host.split('.').all(|label| {
-                !label.is_empty()
-                    && label.len() <= 63
-                    && !label.starts_with('-')
-                    && !label.ends_with('-')
-                    && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-            }));
-    if !valid_host {
+
+    let unbracketed_host = raw_host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(raw_host);
+
+    let is_valid_ip = unbracketed_host.parse::<std::net::IpAddr>().is_ok();
+    let is_valid_domain = unbracketed_host.len() <= 253
+        && unbracketed_host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        });
+
+    if !is_valid_ip && !is_valid_domain {
         return Err("SOCKS5 proxy host is invalid.".into());
     }
-    Ok(format!("{host}:{port}"))
+
+    if let Ok(std::net::IpAddr::V6(_)) = unbracketed_host.parse::<std::net::IpAddr>() {
+        Ok(format!("[{unbracketed_host}]:{port}"))
+    } else {
+        Ok(format!("{unbracketed_host}:{port}"))
+    }
 }
 
 pub fn update_dns_settings_cache(mut settings: DnsSettings) -> Result<(), String> {
@@ -1471,5 +1483,34 @@ mod bootstrap_and_error_response_tests {
             response.queries[0].name().to_ascii().trim_end_matches('.'),
             query.queries[0].name().to_ascii().trim_end_matches('.')
         );
+    }
+
+    #[test]
+    fn normalize_socks5_proxy_supports_ipv4_ipv6_and_domains() {
+        assert_eq!(
+            normalize_socks5_proxy("127.0.0.1:1080").unwrap(),
+            "127.0.0.1:1080"
+        );
+        assert_eq!(
+            normalize_socks5_proxy("socks5://127.0.0.1:1080").unwrap(),
+            "127.0.0.1:1080"
+        );
+        assert_eq!(
+            normalize_socks5_proxy("socks5h://[::1]:1080").unwrap(),
+            "[::1]:1080"
+        );
+        assert_eq!(
+            normalize_socks5_proxy("[::1]:9050").unwrap(),
+            "[::1]:9050"
+        );
+        assert_eq!(
+            normalize_socks5_proxy("localhost:1080").unwrap(),
+            "localhost:1080"
+        );
+        assert_eq!(normalize_socks5_proxy("").unwrap(), "");
+
+        assert!(normalize_socks5_proxy("user:pass@127.0.0.1:1080").is_err());
+        assert!(normalize_socks5_proxy("127.0.0.1:0").is_err());
+        assert!(normalize_socks5_proxy("not a valid proxy").is_err());
     }
 }

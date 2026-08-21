@@ -141,8 +141,8 @@ pub async fn apply_optimizer_recommendation(
 }
 
 #[tauri::command]
-pub fn get_last_optimized_preset(_app: AppHandle) -> Option<Preset> {
-    None
+pub fn get_last_optimized_preset(state: State<'_, AppState>) -> Option<Preset> {
+    state.optimizer_manager.last_optimized_preset()
 }
 
 #[tauri::command]
@@ -829,14 +829,17 @@ pub async fn sync_dns_settings(
     const OPERATION: &str = "sync_dns_settings";
 
     let socks_cand = if !socks5_proxy.trim().is_empty() {
-        let parts: Vec<&str> = socks5_proxy.split(':').collect();
-        let host = parts.first().copied().unwrap_or("127.0.0.1").to_string();
-        let port = parts
-            .get(1)
-            .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(1080);
+        let normalized = crate::dns::forwarder::normalize_socks5_proxy(&socks5_proxy)
+            .map_err(|e| IpcError::validation(OPERATION, "SOCKS5_PROXY_INVALID", e))?;
+        let (host, port_str) = normalized
+            .rsplit_once(':')
+            .ok_or_else(|| IpcError::validation(OPERATION, "SOCKS5_PROXY_INVALID", "Invalid format"))?;
+        let port = port_str
+            .parse::<u16>()
+            .map_err(|_| IpcError::validation(OPERATION, "SOCKS5_PROXY_INVALID", "Invalid port"))?;
+        let clean_host = host.trim_start_matches('[').trim_end_matches(']').to_string();
         Some(crate::dns::DnsSocksCandidate {
-            host,
+            host: clean_host,
             port,
             username: None,
             password: None,
@@ -1039,7 +1042,7 @@ pub async fn sync_bypass_config(
 
     let requested_rev = {
         let rc_state = state.engine_manager.runtime_config_state();
-        let mut st = rc_state.lock().unwrap();
+        let mut st = rc_state.lock().unwrap_or_else(|p| p.into_inner());
         let _ = st.advance_requested_revision();
         st.latest_requested_revision()
     };
@@ -1089,7 +1092,7 @@ pub async fn sync_bypass_config(
         .engine_manager
         .runtime_config_state()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|p| p.into_inner())
         .set_desired(verified_config.clone());
 
     crate::engine::manager::update_bypass_config_cache(
@@ -1115,7 +1118,7 @@ pub async fn sync_bypass_config(
         .engine_manager
         .runtime_config_state()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|p| p.into_inner())
         .set_prepared(prepared_config.clone());
 
     let is_running = matches!(
@@ -1200,7 +1203,7 @@ pub async fn sync_bypass_config(
                 .engine_manager
                 .runtime_config_state()
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|p| p.into_inner())
                 .commit_applied(applied_config.clone());
 
             let _ = crate::engine::pattern_transaction::clean_stale_hostlists(
@@ -1294,7 +1297,7 @@ pub async fn sync_bypass_config(
                             .engine_manager
                             .runtime_config_state()
                             .lock()
-                            .unwrap()
+                            .unwrap_or_else(|p| p.into_inner())
                             .restore_applied(restored_applied.clone());
 
                         if let Some(c_fn) = active_filename {
@@ -1339,7 +1342,7 @@ pub async fn sync_bypass_config(
                             .engine_manager
                             .runtime_config_state()
                             .lock()
-                            .unwrap()
+                            .unwrap_or_else(|p| p.into_inner())
                             .clear_applied();
                         return Err(IpcError::runtime(
                             OPERATION,
@@ -1356,7 +1359,7 @@ pub async fn sync_bypass_config(
                 .engine_manager
                 .runtime_config_state()
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|p| p.into_inner())
                 .clear_applied();
 
             Err(IpcError::runtime(

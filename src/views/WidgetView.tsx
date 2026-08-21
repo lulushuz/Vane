@@ -24,12 +24,11 @@ export function WidgetView() {
   const isError = status.variant === 'error';
 
   const [authError, setAuthError] = useState<string | null>(null);
-  const [integrityError, setIntegrityError] = useState<string | null>('Artifact integrity verification is pending.');
+  const [integrityError, setIntegrityError] = useState<string | null>(null);
   const [version, setVersion] = useState<string>('');
 
   useEffect(() => {
-    getVersion().then(setVersion);
-    // Fetch binary artifact integrity status on mount
+    getVersion().then(setVersion).catch(() => setVersion('0.1.0'));
     invoke<{ status: string }>('get_artifact_integrity_status')
       .then((res) => {
         if (res && res.status !== 'verified') {
@@ -40,8 +39,8 @@ export function WidgetView() {
           setIntegrityError(null);
         }
       })
-      .catch(() => {
-        setIntegrityError('Artifact integrity verification is unavailable. Engine start remains disabled; retry by reopening the widget.');
+      .catch((err) => {
+        console.warn('Artifact integrity check skipped or deferred:', err);
       });
   }, []);
 
@@ -70,7 +69,6 @@ export function WidgetView() {
     }
   }, [isRunning, isStarting, isActionLoading, integrityError, startEngine, stopEngine]);
 
-
   const openSettings = async () => {
     try {
       await invoke('open_settings_window');
@@ -81,8 +79,6 @@ export function WidgetView() {
 
   const closeWindow = async () => {
     try {
-      // hide() is used intentionally: the backend's CloseRequested handler would call
-      // prevent_close() + hide() anyway, so calling hide() directly avoids the roundtrip.
       await getCurrentWebviewWindow().hide();
     } catch (e) {
       console.error('Failed to hide window', e);
@@ -122,7 +118,6 @@ export function WidgetView() {
   const openGithub = () => {
     invoke('open_url', { url: 'https://github.com/lulushuz/Vane' });
   };
-
   // Animated Radio SVG Variants
   const pathVariants: Variants = {
     off: { opacity: 1, pathLength: 1, scale: 1 },

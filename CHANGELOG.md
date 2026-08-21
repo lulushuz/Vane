@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.0] - 2026-08-18
+## [0.1.0] - 2026-08-21
 
-> **Production Stable Release:** This release represents the first stable production release
+> **Production Stable Baseline Release:** This release represents the official baseline production release
 > built on the fully hardened P00–P15 production architecture.
 
 ### Architecture

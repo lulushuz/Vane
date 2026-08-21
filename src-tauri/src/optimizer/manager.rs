@@ -55,6 +55,7 @@ impl OptimizerEventSink for NoopOptimizerEventSink {
 pub struct OptimizerSessionManager {
     active_session: Arc<Mutex<Option<OptimizerSessionId>>>,
     cancel_flag: Arc<AtomicBool>,
+    last_optimized_preset: Arc<Mutex<Option<Preset>>>,
 }
 
 impl Default for OptimizerSessionManager {
@@ -69,6 +70,7 @@ impl OptimizerSessionManager {
         Self {
             active_session: Arc::new(Mutex::new(None)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            last_optimized_preset: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -82,6 +84,14 @@ impl OptimizerSessionManager {
         match guard {
             Ok(g) => g.is_some(),
             Err(_) => true,
+        }
+    }
+
+    pub fn last_optimized_preset(&self) -> Option<Preset> {
+        let guard = self.last_optimized_preset.try_lock();
+        match guard {
+            Ok(g) => g.clone(),
+            Err(_) => None,
         }
     }
 
@@ -139,13 +149,19 @@ impl OptimizerSessionManager {
         );
 
         match result {
-            Ok((best_candidate, score)) => Ok(OptimizerResultDto {
-                session_id: session_id.0,
-                best_preset: best_candidate.map(|c| c.preset),
-                recommended_candidate_id: score.as_ref().map(|_| "best".into()),
-                confidence: format!("{:?}", score.as_ref().map(|s| &s.confidence)),
-                original_state_restored: restored_ok,
-            }),
+            Ok((best_candidate, score)) => {
+                let best_p = best_candidate.map(|c| c.preset);
+                if let Ok(mut g) = self.last_optimized_preset.try_lock() {
+                    *g = best_p.clone();
+                }
+                Ok(OptimizerResultDto {
+                    session_id: session_id.0,
+                    best_preset: best_p,
+                    recommended_candidate_id: score.as_ref().map(|_| "best".into()),
+                    confidence: format!("{:?}", score.as_ref().map(|s| &s.confidence)),
+                    original_state_restored: restored_ok,
+                })
+            }
             Err(e) => Err(e),
         }
     }
