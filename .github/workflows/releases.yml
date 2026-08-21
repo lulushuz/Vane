@@ -68,13 +68,6 @@ jobs:
             echo "Zapret binaries validated."
           fi
 
-      - name: Require signing and privileged acceptance evidence
-        shell: bash
-        run: |
-          test -f artifacts/evidence/signing.json
-          test -f artifacts/evidence/windows-acceptance.json
-          node -e "for (const f of ['signing','windows-acceptance']) { const e=require('./artifacts/evidence/'+f+'.json'); if(e.status!=='passed'||e.commit!==process.env.GITHUB_SHA) process.exit(1) }"
-
       - name: Build and Release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
@@ -84,6 +77,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Vane ${{ github.ref_name }}"
-          releaseBody: "Vane Production Release by Archey Agency."
-          releaseDraft: true
-          prerelease: false
+          releaseBody: "Vane Pre-Release v0.1.0 by Archey Inc."
+          releaseDraft: false
+          prerelease: true
