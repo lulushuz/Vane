@@ -281,16 +281,23 @@ pub async fn start_engine_with_dns_guard(
         .unwrap_or(false);
     let dns_ok = forwarder_active || is_using_trusted_dns();
     if !dns_ok {
-        tracing::info!(
-            "DNS Guard: current DNS is unverified; engine runs in pure DPI bypass mode."
-        );
-        let _ = app.emit(
-            "log_batch",
-            vec![
-                "[BİLGİ] ℹ️ DPI bypass devrede. Engelli sitelere (Discord, Roblox vb.) erişim için DNS sekmesinden Cloudflare veya Şifreli DNS (DoH) seçmeniz önerilir."
-                    .to_string(),
-            ],
-        );
+        let apply_res = crate::dns::apply_dns("1.1.1.1", "1.0.0.1");
+        if apply_res.success {
+            let _ = app.emit(
+                "log_batch",
+                vec![
+                    "[DNS] 🛡️ ISS varsayılan DNS engellemesi tespit edildi. Sistem DNS'i otomatik olarak Cloudflare (1.1.1.1) olarak ayarlandı.".to_string(),
+                ],
+            );
+        } else {
+            let _ = app.emit(
+                "log_batch",
+                vec![
+                    "[UYARI] ⚠️ Sistem DNS'i otomatik ayarlanamadı: Yönetici yetkisi gerekebilir."
+                        .to_string(),
+                ],
+            );
+        }
     }
 
     let preset = {
