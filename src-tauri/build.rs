@@ -1,7 +1,9 @@
 fn main() {
     let mut attrs = tauri_build::WindowsAttributes::new();
 
-    let is_release = std::env::var("PROFILE").map(|p| p == "release").unwrap_or(false);
+    let is_release = std::env::var("PROFILE")
+        .map(|p| p == "release")
+        .unwrap_or(false);
     let require_admin = is_release || std::env::var("VANE_REQUIRE_ADMIN_MANIFEST").is_ok();
 
     let manifest = if require_admin {

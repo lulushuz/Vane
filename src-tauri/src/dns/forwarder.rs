@@ -1499,10 +1499,7 @@ mod bootstrap_and_error_response_tests {
             normalize_socks5_proxy("socks5h://[::1]:1080").unwrap(),
             "[::1]:1080"
         );
-        assert_eq!(
-            normalize_socks5_proxy("[::1]:9050").unwrap(),
-            "[::1]:9050"
-        );
+        assert_eq!(normalize_socks5_proxy("[::1]:9050").unwrap(), "[::1]:9050");
         assert_eq!(
             normalize_socks5_proxy("localhost:1080").unwrap(),
             "localhost:1080"

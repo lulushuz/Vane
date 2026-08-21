@@ -831,13 +831,16 @@ pub async fn sync_dns_settings(
     let socks_cand = if !socks5_proxy.trim().is_empty() {
         let normalized = crate::dns::forwarder::normalize_socks5_proxy(&socks5_proxy)
             .map_err(|e| IpcError::validation(OPERATION, "SOCKS5_PROXY_INVALID", e))?;
-        let (host, port_str) = normalized
-            .rsplit_once(':')
-            .ok_or_else(|| IpcError::validation(OPERATION, "SOCKS5_PROXY_INVALID", "Invalid format"))?;
+        let (host, port_str) = normalized.rsplit_once(':').ok_or_else(|| {
+            IpcError::validation(OPERATION, "SOCKS5_PROXY_INVALID", "Invalid format")
+        })?;
         let port = port_str
             .parse::<u16>()
             .map_err(|_| IpcError::validation(OPERATION, "SOCKS5_PROXY_INVALID", "Invalid port"))?;
-        let clean_host = host.trim_start_matches('[').trim_end_matches(']').to_string();
+        let clean_host = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_string();
         Some(crate::dns::DnsSocksCandidate {
             host: clean_host,
             port,
