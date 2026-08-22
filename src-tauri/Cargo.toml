@@ -28,7 +28,7 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hickory-resolver = { version = "0.26.1", default-features = false, features = ["tokio", "tls-ring", "webpki-roots"] }
-windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 minisign-verify = "0.2.5"
 tauri-plugin-dialog = "2.7.0"
 bytes = "1.11.1"
