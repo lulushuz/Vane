@@ -17,14 +17,14 @@
     "framer-motion": "^11",
     "lucide-react": "^1.8.0",
     "react": "^18",
-    "react-dom": "^18",
+    "react-dom": "^19",
     "zustand": "^4"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.0",
     "@types/node": "^25.6.0",
     "@types/react": "^18",
-    "@types/react-dom": "^18",
+    "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.1",
     "typescript": "^5",
     "vite": "^8.0.8",
