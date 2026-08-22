@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
-    "@tauri-apps/plugin-dialog": "^2.7.0",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "framer-motion": "^11",
     "lucide-react": "^1.8.0",
     "react": "^18",
