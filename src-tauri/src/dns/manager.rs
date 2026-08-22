@@ -217,11 +217,15 @@ pub fn builtin_providers() -> Vec<DnsProvider> {
     ]
 }
 
-/// Reads active adapters through PowerShell networking cmdlets. Their object
-/// properties are stable across Windows display languages, unlike netsh text.
+/// Reads network adapters through PowerShell networking cmdlets and Tcpip registry.
+/// Their object properties are stable across Windows display languages.
 #[cfg(target_os = "windows")]
-pub fn get_active_adapters() -> Vec<NetworkAdapter> {
-    let script = r#"$routed = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty InterfaceIndex); @(Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and ($routed -contains $_.ifIndex -or ($routed.Count -eq 0 -and $_.InterfaceDescription -notmatch 'VirtualBox|VMware|Hyper-V|Loopback|Npcap|TAP|Wintun')) } | ForEach-Object { $i = $_; $d = @((Get-DnsClientServerAddress -InterfaceIndex $i.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses); $dhcp = (Get-NetIPInterface -InterfaceIndex $i.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).Dhcp -eq 'Enabled'; [pscustomobject]@{ name = $i.Name; dns = $d; dhcp = $dhcp } }) | ConvertTo-Json -Compress"#;
+fn query_windows_adapters(only_active: bool) -> Vec<NetworkAdapter> {
+    let script = if only_active {
+        r#"$routed = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty InterfaceIndex); @(Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and ($routed -contains $_.ifIndex -or ($routed.Count -eq 0 -and $_.InterfaceDescription -notmatch 'VirtualBox|VMware|Hyper-V|Loopback|Npcap|TAP|Wintun')) } | ForEach-Object { $i = $_; $cfg = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.InterfaceIndex -eq $i.ifIndex }; $guid = $cfg.SettingID; $staticDns = if ($guid) { (Get-ItemProperty -Path ('HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\' + $guid) -ErrorAction SilentlyContinue).NameServer } else { '' }; $isDhcp = [string]::IsNullOrWhiteSpace($staticDns); $d = @((Get-DnsClientServerAddress -InterfaceIndex $i.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses); [pscustomobject]@{ name = $i.Name; dns = $d; dhcp = $isDhcp } }) | ConvertTo-Json -Compress"#
+    } else {
+        r#"@(Get-NetAdapter | ForEach-Object { $i = $_; $cfg = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.InterfaceIndex -eq $i.ifIndex }; $guid = $cfg.SettingID; $staticDns = if ($guid) { (Get-ItemProperty -Path ('HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\' + $guid) -ErrorAction SilentlyContinue).NameServer } else { '' }; $isDhcp = [string]::IsNullOrWhiteSpace($staticDns); $d = @((Get-DnsClientServerAddress -InterfaceIndex $i.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses); [pscustomobject]@{ name = $i.Name; dns = $d; dhcp = $isDhcp } }) | ConvertTo-Json -Compress"#
+    };
     let output = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .creation_flags(CREATE_NO_WINDOW)
@@ -258,17 +262,23 @@ pub fn get_active_adapters() -> Vec<NetworkAdapter> {
                 Some(serde_json::Value::String(value)) => vec![value.clone()],
                 _ => vec![],
             };
+            let is_dhcp = item
+                .get("dhcp")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
             Some(NetworkAdapter {
                 name,
                 current_primary_dns: dns.first().cloned(),
                 current_secondary_dns: dns.get(1).cloned(),
-                is_dhcp: item
-                    .get("dhcp")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(true),
+                is_dhcp,
             })
         })
         .collect()
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_active_adapters() -> Vec<NetworkAdapter> {
+    query_windows_adapters(true)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -595,7 +605,7 @@ pub fn restore_dns_snapshot(adapters: &[NetworkAdapter]) -> ApplyDnsResult {
         }
     }
     if errors.is_empty() {
-        let current = get_active_adapters();
+        let current = query_windows_adapters(false);
         for expected in adapters {
             let verified = current
                 .iter()
@@ -604,8 +614,10 @@ pub fn restore_dns_snapshot(adapters: &[NetworkAdapter]) -> ApplyDnsResult {
                     if expected.is_dhcp || expected.current_primary_dns.is_none() {
                         adapter.is_dhcp
                     } else {
-                        adapter.current_primary_dns == expected.current_primary_dns
-                            && adapter.current_secondary_dns == expected.current_secondary_dns
+                        !adapter.is_dhcp
+                            && adapter.current_primary_dns == expected.current_primary_dns
+                            && (expected.current_secondary_dns.is_none()
+                                || adapter.current_secondary_dns == expected.current_secondary_dns)
                     }
                 });
             if !verified {

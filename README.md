@@ -12,15 +12,15 @@
   <a href="README.tr.md"><img src="https://img.shields.io/badge/lang-tr-blue.svg" alt="tr"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=build" alt="Build Status">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="License">
-  <img src="https://img.shields.io/badge/release-0.1.0-blue?style=flat-square" alt="Release Version">
+  <img src="https://img.shields.io/badge/release-0.1.1-blue?style=flat-square" alt="Release Version">
   <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
 </p>
 
-> **✨ Vane v0.1.0**
+> **✨ Vane v0.1.1**
 >
 > | | |
 > |---|---|
-> | **Current version** | `0.1.0` — Stable Baseline |
+> | **Current version** | `0.1.1` — Stable Release |
 > | **Version scheme** | SemVer (`0.MAJOR_UPDATES.MINOR_BUGFIXES`) |
 > | **Production signing** | Enabled |
 >

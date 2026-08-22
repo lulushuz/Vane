@@ -391,6 +391,10 @@ export const useEngineStore = create<EngineStore>()(
           ));
       },
       setDnsForwarderEnabled: (dnsForwarderEnabled) => {
+        if (dnsSyncTimeout) {
+          clearTimeout(dnsSyncTimeout);
+          dnsSyncTimeout = null;
+        }
         set({ dnsForwarderEnabled });
         emit('sync_dns_forwarder_enabled', dnsForwarderEnabled).catch(() => {});
       },
@@ -622,9 +626,8 @@ export const useEngineStore = create<EngineStore>()(
 
       refreshDnsStatus: async () => {
         try {
-          const [provs, adaps, forwarder] = await Promise.all([
+          const [provs, forwarder] = await Promise.all([
             invoke<DnsProvider[]>('list_dns_providers'),
-            invoke<NetworkAdapter[]>('get_network_adapters'),
             invoke<{ active: boolean }>('get_doh_forwarder_status'),
           ]);
 
@@ -633,6 +636,8 @@ export const useEngineStore = create<EngineStore>()(
             set({ dnsSynced: true });
             return;
           }
+
+          const adaps = await invoke<NetworkAdapter[]>('get_network_adapters').catch(() => []);
 
           // Statik DNS ayarlı adaptörü tercih et, yoksa ilkini al
           const staticAdapter = adaps.find((a) => !a.isDhcp);

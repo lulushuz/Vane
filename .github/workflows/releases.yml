@@ -77,6 +77,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Vane ${{ github.ref_name }}"
-          releaseBody: "Vane Pre-Release v0.1.0 by Archey Inc."
+          releaseBody: "Vane Release ${{ github.ref_name }} by Archey Inc."
           releaseDraft: false
-          prerelease: true
+          prerelease: false

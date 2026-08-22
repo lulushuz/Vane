@@ -28,7 +28,7 @@ export function WidgetView() {
   const [version, setVersion] = useState<string>('');
 
   useEffect(() => {
-    getVersion().then(setVersion).catch(() => setVersion('0.1.0'));
+    getVersion().then(setVersion).catch(() => setVersion('0.1.1'));
     invoke<{ status: string }>('get_artifact_integrity_status')
       .then((res) => {
         if (res && res.status !== 'verified') {

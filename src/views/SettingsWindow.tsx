@@ -15,6 +15,7 @@ type SettingsTab = 'general' | 'connection' | 'dns' | 'advanced' | 'pattern' | '
 
 export function SettingsWindow() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const [visitedTabs, setVisitedTabs] = useState<Set<SettingsTab>>(new Set(['general']));
   const { advancedDirty, language } = useEngineStore();
 
   const appWindow = getCurrentWebviewWindow();
@@ -45,6 +46,12 @@ export function SettingsWindow() {
       );
       if (!confirmed) return;
     }
+    setVisitedTabs((prev) => {
+      if (prev.has(tabId)) return prev;
+      const next = new Set(prev);
+      next.add(tabId);
+      return next;
+    });
     setActiveTab(tabId);
   };
 
@@ -124,12 +131,36 @@ export function SettingsWindow() {
 
         <main className={styles.contentWrapper}>
           <div className={styles.viewWrapper}>
-            {activeTab === 'general' && <HomeView />}
-            {activeTab === 'connection' && <LogView />}
-            {activeTab === 'dns' && <DnsView />}
-            {activeTab === 'advanced' && <AdvancedView />}
-            {activeTab === 'pattern' && <PatternView />}
-            {activeTab === 'feedback' && <FeedbackView />}
+            {visitedTabs.has('general') && (
+              <div style={{ display: activeTab === 'general' ? 'contents' : 'none' }}>
+                <HomeView />
+              </div>
+            )}
+            {visitedTabs.has('connection') && (
+              <div style={{ display: activeTab === 'connection' ? 'contents' : 'none' }}>
+                <LogView />
+              </div>
+            )}
+            {visitedTabs.has('dns') && (
+              <div style={{ display: activeTab === 'dns' ? 'contents' : 'none' }}>
+                <DnsView />
+              </div>
+            )}
+            {visitedTabs.has('advanced') && (
+              <div style={{ display: activeTab === 'advanced' ? 'contents' : 'none' }}>
+                <AdvancedView />
+              </div>
+            )}
+            {visitedTabs.has('pattern') && (
+              <div style={{ display: activeTab === 'pattern' ? 'contents' : 'none' }}>
+                <PatternView />
+              </div>
+            )}
+            {visitedTabs.has('feedback') && (
+              <div style={{ display: activeTab === 'feedback' ? 'contents' : 'none' }}>
+                <FeedbackView />
+              </div>
+            )}
           </div>
         </main>
       </div>

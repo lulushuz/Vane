@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-08-22
+
+### Fixed
+- **DNS Snapshot Restore**: Fixed Windows DNS snapshot restore and verification failure when Ethernet or secondary adapters are in a disconnected or unconfigured state.
+- **DNS Forwarder Toggle Glitch**: Resolved race condition between local forwarder state, debounced backend DNS sync, and transaction rollback gates.
+- **Frontend Tab Switching Performance**: Implemented lazy-mounted keep-alive rendering for settings tabs, completely eliminating UI lag and redundant PowerShell adapter queries on tab navigation.
+
+### Cleaned
+- Removed legacy engine optimizer shims and unused artifacts from the codebase.
+
 ---
 
 ## [0.1.0] - 2026-08-21

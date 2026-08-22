@@ -10,13 +10,11 @@ pub(crate) mod runtime_config;
 pub(crate) mod runtime_state;
 
 pub mod manager;
-pub mod optimizer;
 pub mod process;
 pub mod sanitizer;
 
 pub use error::EngineError;
 pub use manager::{EngineManager, EngineStatus};
-pub use optimizer::{OptimizeError, OptimizePayload, Optimizer};
 pub use sanitizer::validate_preset_args;
 
 #[cfg(target_os = "windows")]

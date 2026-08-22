@@ -89,6 +89,7 @@ export function DnsView() {
     setDnsAdBlock,
     setDnsCache,
     watchdog,
+    dnsForwarderEnabled,
     setDnsForwarderEnabled,
     appendLog,
     language,
@@ -104,10 +105,18 @@ export function DnsView() {
   const [customSecondaryDraft, setCustomSecondaryDraft] = useState(customSecondary);
   const [customEditorOpen, setCustomEditorOpen] = useState(selectedId === 'custom');
 
+  const isForwarderActive = forwarder !== null ? forwarder.active : dnsForwarderEnabled;
+
   useEffect(() => {
     setCustomPrimaryDraft(customPrimary);
     setCustomSecondaryDraft(customSecondary);
   }, [customPrimary, customSecondary]);
+
+  useEffect(() => {
+    if (forwarder !== null && forwarder.active !== dnsForwarderEnabled) {
+      setForwarder((prev) => (prev ? { ...prev, active: dnsForwarderEnabled } : null));
+    }
+  }, [dnsForwarderEnabled, forwarder]);
 
   // Sync with the system once on mount.
   const syncWithSystem = useCallback(async () => {
@@ -117,10 +126,11 @@ export function DnsView() {
     try {
       const st = await invoke<ForwarderStatus>('get_doh_forwarder_status');
       setForwarder(st);
+      setDnsForwarderEnabled(st.active);
     } catch(e) {
       console.error(e);
     }
-  }, [dnsSynced, refreshDnsStatus]);
+  }, [dnsSynced, refreshDnsStatus, setDnsForwarderEnabled]);
 
   useEffect(() => {
     syncWithSystem();
@@ -130,23 +140,32 @@ export function DnsView() {
     if (!transactionGate.current.tryEnter()) return;
     setIsForwarderLoading(true);
     try {
-      if (forwarder?.active) {
-        await invoke('stop_doh_forwarder');
+      if (isForwarderActive) {
         setDnsForwarderEnabled(false);
+        setForwarder((prev) => (prev ? { ...prev, active: false } : null));
+        await invoke('stop_doh_forwarder');
         const verified = await invoke<ForwarderStatus>('get_doh_forwarder_status');
         setForwarder(verified);
+        setDnsForwarderEnabled(verified.active);
         appendLog(language === 'tr'
           ? '[DNS] DNS yönlendiricisinin durduğu ve sistem DNS ayarının geri yüklendiği doğrulandı.'
           : '[DNS] Verified that the DNS forwarder stopped and the system DNS setting was restored.', 'info');
       } else {
-        const st = await invoke<ForwarderStatus>('start_doh_forwarder', { watchdog });
         setDnsForwarderEnabled(true);
+        setForwarder((prev) => (prev ? { ...prev, active: true } : null));
+        const st = await invoke<ForwarderStatus>('start_doh_forwarder', { watchdog });
         setForwarder(st);
+        setDnsForwarderEnabled(st.active);
         appendLog(language === 'tr'
           ? `[DNS] DNS yönlendiricisi doğrulandı: ${st.protocol.toUpperCase()}, önbellek ${st.cache ? 'açık' : 'kapalı'}, reklam filtresi ${st.adblock ? 'açık' : 'kapalı'}, bağlantı gözlemcisi ${st.watchdogEnabled ? 'çalışıyor' : 'kapalı'}.`
           : `[DNS] DNS forwarder verified: ${st.protocol.toUpperCase()}, cache ${st.cache ? 'on' : 'off'}, ad filter ${st.adblock ? 'on' : 'off'}, connection watchdog ${st.watchdogEnabled ? 'running' : 'off'}.`, 'info');
       }
     } catch (e: any) {
+      const verified = await invoke<ForwarderStatus>('get_doh_forwarder_status').catch(() => null);
+      if (verified) {
+        setForwarder(verified);
+        setDnsForwarderEnabled(verified.active);
+      }
       appendLog(language === 'tr' ? `[ERROR] DNS yönlendiricisi işlemi başarısız: ${e}` : `[ERROR] DNS forwarder operation failed: ${e}`, 'error');
     } finally {
       setIsForwarderLoading(false);
@@ -202,11 +221,14 @@ export function DnsView() {
 
   const handleSelect = async (id: string) => {
     if (id === selectedId && id !== 'custom') return;
-    if (forwarder?.active) {
+    if (isForwarderActive) {
       try {
-        await invoke('stop_doh_forwarder');
         setDnsForwarderEnabled(false);
-        setForwarder(await invoke<ForwarderStatus>('get_doh_forwarder_status'));
+        setForwarder((prev) => (prev ? { ...prev, active: false } : null));
+        await invoke('stop_doh_forwarder');
+        const verified = await invoke<ForwarderStatus>('get_doh_forwarder_status');
+        setForwarder(verified);
+        setDnsForwarderEnabled(verified.active);
         appendLog(language === 'tr'
           ? '[DNS] Sistem DNS sağlayıcısı değiştirilmeden önce yerel yönlendirici durduruldu ve önceki DNS geri yüklendi.'
           : '[DNS] The local forwarder was stopped and the previous DNS restored before changing the system DNS provider.', 'info');
@@ -244,18 +266,18 @@ export function DnsView() {
       {/* F8: DoH Forwarder Banner */}
       <div className={styles.forwarderBanner}>
         <div className={styles.fwInfo}>
-          <ShieldCheck size={18} color={forwarder?.active ? "#4ade80" : "#a1a1aa"} />
+          <ShieldCheck size={18} color={isForwarderActive ? "#4ade80" : "#a1a1aa"} />
           <div>
             <strong>{t.localDnsForwarder}</strong>
-            <span>{forwarder?.active ? t.forwarderActiveDesc.replace('{protocol}', dnsProtocol.toUpperCase()) : t.forwarderInactiveDesc}</span>
+            <span>{isForwarderActive ? t.forwarderActiveDesc.replace('{protocol}', dnsProtocol.toUpperCase()) : t.forwarderInactiveDesc}</span>
           </div>
         </div>
         <button 
-          className={`${styles.fwToggle} ${forwarder?.active ? styles.fwActive : ""}`} 
+          className={`${styles.fwToggle} ${isForwarderActive ? styles.fwActive : ""}`} 
           onClick={toggleForwarder}
           disabled={isForwarderLoading || isProviderLoading}
         >
-          {isForwarderLoading || isProviderLoading ? "..." : forwarder?.active ? t.stopForwarder : t.startForwarder}
+          {isForwarderLoading || isProviderLoading ? "..." : isForwarderActive ? t.stopForwarder : t.startForwarder}
         </button>
       </div>
 

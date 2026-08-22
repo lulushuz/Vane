@@ -281,22 +281,36 @@ pub async fn start_engine_with_dns_guard(
         .unwrap_or(false);
     let dns_ok = forwarder_active || is_using_trusted_dns();
     if !dns_ok {
-        let apply_res = crate::dns::apply_dns("1.1.1.1", "1.0.0.1");
-        if apply_res.success {
-            let _ = app.emit(
-                "log_batch",
-                vec![
-                    "[DNS] 🛡️ ISS varsayılan DNS engellemesi tespit edildi. Sistem DNS'i otomatik olarak Cloudflare (1.1.1.1) olarak ayarlandı.".to_string(),
-                ],
-            );
-        } else {
-            let _ = app.emit(
-                "log_batch",
-                vec![
-                    "[UYARI] ⚠️ Sistem DNS'i otomatik ayarlanamadı: Yönetici yetkisi gerekebilir."
-                        .to_string(),
-                ],
-            );
+        let candidate = crate::dns::DnsConfigCandidate {
+            enabled: true,
+            protocol: "doh".into(),
+            provider: Some("cloudflare".into()),
+            adblock: false,
+            cache_enabled: true,
+            socks5: None,
+            kill_switch: false,
+        };
+        match state
+            .dns_transaction_manager
+            .apply_candidate(candidate, &app, state.inner())
+            .await
+        {
+            Ok(_) => {
+                let _ = app.emit(
+                    "log_batch",
+                    vec![
+                        "[DNS] 🛡️ ISS varsayılan DNS engellemesi tespit edildi. Sistem DNS'i otomatik olarak Cloudflare (1.1.1.1) olarak ayarlandı.".to_string(),
+                    ],
+                );
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "log_batch",
+                    vec![format!(
+                        "[UYARI] ⚠️ Sistem DNS'i otomatik ayarlanamadı: {e}"
+                    )],
+                );
+            }
         }
     }
 

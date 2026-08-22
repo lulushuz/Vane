@@ -12,15 +12,15 @@
   <a href="README.md"><img src="https://img.shields.io/badge/lang-en-red.svg" alt="en"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=derleme" alt="Derleme Durumu">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="Lisans">
-  <img src="https://img.shields.io/badge/sürüm-0.1.0-blue?style=flat-square" alt="Sürüm">
+  <img src="https://img.shields.io/badge/sürüm-0.1.1-blue?style=flat-square" alt="Sürüm">
   <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
 </p>
 
-> **✨ Vane v0.1.0**
+> **✨ Vane v0.1.1**
 >
 > | | |
 > |---|---|
-> | **Mevcut sürüm** | `0.1.0` — Kararlı Başlangıç Sürümü |
+> | **Mevcut sürüm** | `0.1.1` — Kararlı Sürüm |
 > | **Sürümleme şeması** | SemVer (`0.GENEL_GÜNCELLEME.KÜÇÜK_DÜZELTME`) |
 > | **Production imzalama** | Aktif |
 >

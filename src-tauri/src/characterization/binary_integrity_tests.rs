@@ -31,7 +31,7 @@ mod tests {
     fn group_a01_valid_embedded_manifest() {
         let manifest = NativeArtifactManifest::load_embedded().unwrap();
         assert_eq!(manifest.schema_version, 1);
-        assert_eq!(manifest.application_version, "0.1.0");
+        assert_eq!(manifest.application_version, "0.1.1");
         assert!(!manifest.artifacts.is_empty());
     }
 
