@@ -109,7 +109,7 @@ jobs:
           $manifest | ConvertTo-Json -Depth 6 | Out-File acceptance-output/manifest.json -Encoding utf8
 
       - name: Upload private acceptance artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vane-acceptance-${{ steps.metadata.outputs.version }}-${{ steps.metadata.outputs.sha_short }}
           path: acceptance-output/
