@@ -402,6 +402,7 @@ pub fn check_is_elevated() -> bool {
 
 #[tauri::command]
 pub fn set_autostart(enabled: bool, _app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
     if !is_elevated() {
         return Err(
             "Administrator privileges are required for task scheduler registration.".into(),

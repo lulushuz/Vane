@@ -182,21 +182,49 @@ impl FirewallCommandRunner for SystemFirewallCommandRunner {
         &self,
         command: &FirewallCommandSpec,
     ) -> Result<FirewallCommandOutput, FirewallCommandRunError> {
-        let mut process = Command::new(&command.program);
-        process.args(&command.args);
-        #[cfg(target_os = "windows")]
+        #[cfg(target_os = "linux")]
         {
-            use std::os::windows::process::CommandExt;
-            process.creation_flags(0x08000000);
+            let is_root = unsafe { libc::geteuid() == 0 };
+            let mut process = if !is_root
+                && matches!(
+                    command.program.as_str(),
+                    "iptables" | "ip6tables" | "nft" | "netsh"
+                ) {
+                let mut cmd = Command::new("pkexec");
+                cmd.arg(&command.program).args(&command.args);
+                cmd
+            } else {
+                let mut cmd = Command::new(&command.program);
+                cmd.args(&command.args);
+                cmd
+            };
+            let output = process
+                .output()
+                .map_err(|error| FirewallCommandRunError::Io(error.to_string()))?;
+            Ok(FirewallCommandOutput {
+                exit_code: output.status.code(),
+                stdout: output.stdout,
+                stderr: output.stderr,
+            })
         }
-        let output = process
-            .output()
-            .map_err(|error| FirewallCommandRunError::Io(error.to_string()))?;
-        Ok(FirewallCommandOutput {
-            exit_code: output.status.code(),
-            stdout: output.stdout,
-            stderr: output.stderr,
-        })
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut process = Command::new(&command.program);
+            process.args(&command.args);
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                process.creation_flags(0x08000000);
+            }
+            let output = process
+                .output()
+                .map_err(|error| FirewallCommandRunError::Io(error.to_string()))?;
+            Ok(FirewallCommandOutput {
+                exit_code: output.status.code(),
+                stdout: output.stdout,
+                stderr: output.stderr,
+            })
+        }
     }
 }
 
@@ -279,6 +307,10 @@ fn command_for(
             ]);
             if let Some(ip) = &spec.remote_ip {
                 args.push(format!("remoteip={ip}"));
+            } else if spec.action == "block" {
+                // In Windows Firewall, 'block' overrides 'allow'. Restrict block to non-loopback
+                // IPv4 and IPv6 ranges so outbound queries to the local 127.0.0.1:53 and [::1]:53 forwarders remain permitted.
+                args.push("remoteip=1.0.0.0-126.255.255.255,128.0.0.0-255.255.255.255,::-::0,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".into());
             }
             Ok(FirewallCommandSpec {
                 program: "netsh".into(),

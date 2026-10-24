@@ -35,5 +35,16 @@ pub fn is_elevated() -> bool {
 
 #[cfg(not(target_os = "windows"))]
 pub fn is_elevated() -> bool {
-    unsafe { libc::getuid() == 0 }
+    if unsafe { libc::getuid() == 0 } {
+        return true;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(caps) = crate::platform::linux::probe_linux_capabilities() {
+            if caps.has_required_privileges {
+                return true;
+            }
+        }
+    }
+    false
 }

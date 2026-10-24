@@ -52,9 +52,13 @@ impl LinuxFilterGuard {
     ) -> Result<Self, LinuxPlatformError> {
         let executor: Arc<dyn LinuxFirewallExecutor> =
             Arc::new(SystemLinuxFirewallExecutor::default());
-        let capabilities = executor.probe()?;
+        let mut capabilities = executor.probe()?;
         if !capabilities.has_required_privileges {
-            return Err(LinuxPlatformError::InsufficientPrivileges);
+            let _ = crate::platform::linux::capabilities::ensure_linux_capabilities(app);
+            capabilities = executor.probe()?;
+            if !capabilities.has_required_privileges {
+                return Err(LinuxPlatformError::InsufficientPrivileges);
+            }
         }
         if !capabilities.nfqueue_available {
             return Err(LinuxPlatformError::MissingNfqueue);

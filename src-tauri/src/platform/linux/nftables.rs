@@ -7,6 +7,14 @@ pub fn render_nftables_batch(plan: &LinuxFilterPlan) -> String {
         "add chain ip {} {} {{ type filter hook output priority mangle; policy accept; }}\n",
         plan.ownership.table_name, plan.ownership.chain_name
     ));
+    batch.push_str(&format!(
+        "add rule ip {} {} oifname \"lo\" return\n",
+        plan.ownership.table_name, plan.ownership.chain_name
+    ));
+    batch.push_str(&format!(
+        "add rule ip {} {} meta mark & 0x40000000 != 0 accept\n",
+        plan.ownership.table_name, plan.ownership.chain_name
+    ));
 
     for rule in &plan.ipv4_rules {
         let ports_str = rule
@@ -23,7 +31,7 @@ pub fn render_nftables_batch(plan: &LinuxFilterPlan) -> String {
             .join(", ");
 
         batch.push_str(&format!(
-            "add rule ip {} {} {} dport {{ {} }} queue num {}\n",
+            "add rule ip {} {} {} dport {{ {} }} queue num {} bypass\n",
             plan.ownership.table_name,
             plan.ownership.chain_name,
             rule.protocol,

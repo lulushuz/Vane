@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::engine::owned_process::{EngineGeneration, EngineOperationId};
 use crate::engine::runtime_config::{ConfigFingerprint, ConfigRevision};
 
-pub(crate) const ENGINE_STARTUP_GRACE_PERIOD: Duration = Duration::from_millis(500);
+pub(crate) const ENGINE_STARTUP_GRACE_PERIOD: Duration = Duration::from_millis(2500);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]

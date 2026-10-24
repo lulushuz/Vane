@@ -34,11 +34,22 @@ pub struct SystemLinuxCommandRunner;
 
 impl LinuxCommandRunner for SystemLinuxCommandRunner {
     fn run(&self, command: &LinuxCommandSpec) -> Result<LinuxCommandOutput, LinuxCommandRunError> {
-        let mut process = Command::new(&command.program);
-        process
-            .args(&command.args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        let is_root = unsafe { libc::geteuid() == 0 };
+        let requires_elevation = !is_root
+            && matches!(
+                command.program.as_str(),
+                "nft" | "iptables" | "ip6tables" | "sysctl"
+            );
+        let mut process = if requires_elevation {
+            let mut cmd = Command::new("pkexec");
+            cmd.arg(&command.program).args(&command.args);
+            cmd
+        } else {
+            let mut cmd = Command::new(&command.program);
+            cmd.args(&command.args);
+            cmd
+        };
+        process.stdout(Stdio::piped()).stderr(Stdio::piped());
         if command.stdin.is_some() {
             process.stdin(Stdio::piped());
         } else {

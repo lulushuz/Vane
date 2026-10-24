@@ -173,7 +173,7 @@ impl EngineManager {
     }
 
     // Safely resolves binary path from Resource using binary integrity verifier
-    fn resolve_binary_path(
+    pub(crate) fn resolve_binary_path(
         dispatcher: &impl EngineEventDispatcher,
     ) -> Result<std::path::PathBuf, EngineError> {
         use crate::security::{ArtifactIntegrityVerifier, Sha256ArtifactIntegrityVerifier};
@@ -756,12 +756,27 @@ async fn spawn_and_run_prepared(
                 "Linux filter ownership verification failed".into(),
             ));
         }
-        let mut args = prepared_args
+        let mut args: Vec<String> = prepared_args
             .iter()
-            .filter(|arg| !arg.starts_with("--qnum="))
+            .filter(|arg| {
+                !arg.starts_with("--qnum=")
+                    && !arg.starts_with("--wf-")
+                    && !arg.starts_with("--windivert")
+                    && !arg.starts_with("tcp.")
+                    && !arg.starts_with("udp.")
+                    && !arg.starts_with("icmp.")
+            })
             .cloned()
-            .collect::<Vec<_>>();
+            .collect();
         args.insert(0, format!("--qnum={}", filter_guard.queue_number()));
+
+        if !args
+            .iter()
+            .any(|arg| arg.starts_with("--dpi-desync-fwmark="))
+        {
+            args.push("--dpi-desync-fwmark=0x40000000".to_string());
+        }
+
         let mut command = tokio::process::Command::new(&winws_path);
         command
             .args(args)
@@ -1150,7 +1165,12 @@ fn is_process_alive(pid: u32) -> bool {
 
 #[cfg(not(target_os = "windows"))]
 fn is_process_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    if let Ok(safe_pid) = libc::pid_t::try_from(pid) {
+        if safe_pid > 0 {
+            return unsafe { libc::kill(safe_pid, 0) == 0 };
+        }
+    }
+    false
 }
 
 #[cfg(test)]

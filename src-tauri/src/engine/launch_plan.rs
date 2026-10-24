@@ -70,8 +70,8 @@ pub(crate) enum KillSwitchRequirement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LinuxFirewallBehavior {
-    pub tcp_ports: Vec<u16>,
-    pub udp_ports: Vec<u16>,
+    pub tcp_ports: Vec<crate::platform::linux::filter_intent::PortRange>,
+    pub udp_ports: Vec<crate::platform::linux::filter_intent::PortRange>,
     pub uses_nftables_fallback: bool,
     pub performs_global_process_cleanup: bool,
 }
@@ -173,6 +173,12 @@ pub(crate) fn build_engine_launch_plan(
                 }
                 prepared_args.push(arg.clone());
             }
+            if !prepared_args
+                .iter()
+                .any(|arg| arg.starts_with("--dpi-desync-fwmark="))
+            {
+                prepared_args.push("--dpi-desync-fwmark=0x40000000".to_string());
+            }
         }
     }
 
@@ -251,20 +257,14 @@ pub(crate) fn build_engine_launch_plan(
             .effective_linux_tcp_spec
             .as_deref()
             .unwrap_or("80,443"),
-    )
-    .into_iter()
-    .map(|r| r.start)
-    .collect();
+    );
 
     let parsed_udp_ports = crate::platform::linux::filter_intent::parse_port_spec(
         traffic_filter
             .effective_linux_udp_spec
             .as_deref()
             .unwrap_or(""),
-    )
-    .into_iter()
-    .map(|r| r.start)
-    .collect();
+    );
 
     // 8. Platform Launch Plan
     let platform_launch = match input.platform {
