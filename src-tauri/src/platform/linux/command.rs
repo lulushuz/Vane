@@ -34,7 +34,11 @@ pub struct SystemLinuxCommandRunner;
 
 impl LinuxCommandRunner for SystemLinuxCommandRunner {
     fn run(&self, command: &LinuxCommandSpec) -> Result<LinuxCommandOutput, LinuxCommandRunError> {
+        #[cfg(unix)]
         let is_root = unsafe { libc::geteuid() == 0 };
+        #[cfg(not(unix))]
+        let is_root = false;
+
         let requires_elevation = !is_root
             && matches!(
                 command.program.as_str(),
