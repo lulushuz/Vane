@@ -122,3 +122,35 @@ pub fn probe_linux_capabilities() -> Result<LinuxPlatformCapabilities, LinuxPlat
         })
     }
 }
+
+#[cfg(target_os = "linux")]
+pub fn ensure_linux_capabilities(app: &tauri::AppHandle) -> Result<(), LinuxPlatformError> {
+    use std::process::Command;
+
+    let nfqws_path = crate::engine::EngineManager::resolve_binary_path(app).map_err(|e| {
+        LinuxPlatformError::CapabilityProbeFailed(format!("Failed to resolve nfqws path: {e}"))
+    })?;
+
+    // Only assign capabilities to the isolated nfqws helper binary.
+    // The main Tauri/WebKitGTK GUI executable must NEVER receive file capabilities,
+    // as that triggers AT_SECURE in ld.so, breaks LD_* variables, and compromises
+    // WebKitGTK bubblewrap sandboxing.
+    let status = Command::new("pkexec")
+        .args(["setcap", "cap_net_admin,cap_net_raw+eip"])
+        .arg(&nfqws_path)
+        .status()
+        .map_err(|e| {
+            LinuxPlatformError::CapabilityProbeFailed(format!("pkexec execution failed: {e}"))
+        })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(LinuxPlatformError::InsufficientPrivileges)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn ensure_linux_capabilities(_app: &tauri::AppHandle) -> Result<(), LinuxPlatformError> {
+    Ok(())
+}

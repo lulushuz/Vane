@@ -256,17 +256,28 @@ pub(crate) fn restore_store_snapshot(
 
 pub fn atomic_replace_bytes(target: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
-    let temp = target.with_extension("tmp");
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = std::process::id();
+    let file_name = target
+        .file_name()
+        .and_then(|v| v.to_str())
+        .unwrap_or("file");
+    let temp = target.with_file_name(format!(".{file_name}.tmp-{pid}-{seq}"));
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
         .write(true)
         .open(&temp)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Failed to create temporary file {}: {e}", temp.display()))?;
     file.write_all(bytes).map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())?;
     drop(file);
-    replace_file(&temp, target)
+    let res = replace_file(&temp, target);
+    if res.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    res
 }
 
 pub fn get_value(app: &AppHandle, key: &str) -> Result<Option<String>, String> {

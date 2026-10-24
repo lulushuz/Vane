@@ -25,7 +25,10 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "--dpi-desync-split-http-req=",
     "--dpi-desync-split-tls=",
     "--dpi-desync-badseq-increment=",
+    "--dpi-desync-fwmark=",
     "--wssize=",
+    "--hostlist=",
+    "--hostlist-exclude=",
 ];
 
 const ALLOWED_EXACT_ARGS: &[&str] = &[
@@ -38,6 +41,11 @@ const ALLOWED_EXACT_ARGS: &[&str] = &[
 
 const FORBIDDEN_CHARS: &[char] = &[
     '&', ';', '|', '`', '$', '<', '>', '\'', '"', '\\', '/', '\n', '\r', '\0',
+];
+
+const MAX_HOSTLIST_ARG_LEN: usize = 512;
+const FORBIDDEN_HOSTLIST_CHARS: &[char] = &[
+    '&', ';', '|', '`', '$', '<', '>', '\'', '"', '\n', '\r', '\0',
 ];
 
 pub fn validate_preset_args(args: &[String]) -> Result<(), EngineError> {
@@ -56,7 +64,69 @@ pub fn validate_preset_args(args: &[String]) -> Result<(), EngineError> {
     Ok(())
 }
 
+fn is_allowed_hostlist_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase().replace('\\', "/");
+    // Whitelist check: Must end with .txt
+    if !lower.ends_with(".txt") {
+        return false;
+    }
+    // Must not contain path traversal
+    if lower.contains("..") {
+        return false;
+    }
+    // Whitelist check: Must be a bare .txt filename or reside within a recognized Vane application data directory
+    let is_bare_file = !lower.contains('/');
+    let is_vane_app_path = lower.contains("/vane/") || lower.starts_with("vane/");
+    is_bare_file || is_vane_app_path
+}
+
 fn validate_single_arg(arg: &str) -> Result<(), EngineError> {
+    if arg.is_empty() {
+        return Err(EngineError::InvalidPreset(
+            "Boş argüman kabul edilmiyor.".into(),
+        ));
+    }
+
+    if let Some(path) = arg
+        .strip_prefix("--hostlist=")
+        .or_else(|| arg.strip_prefix("--hostlist-exclude="))
+    {
+        if arg.len() > MAX_HOSTLIST_ARG_LEN {
+            return Err(EngineError::InvalidPreset(format!(
+                "Hostlist argümanı çok uzun ({} > {} limit)",
+                arg.len(),
+                MAX_HOSTLIST_ARG_LEN
+            )));
+        }
+        if path.is_empty() {
+            return Err(EngineError::InvalidPreset(
+                "Hostlist dosya yolu boş olamaz.".into(),
+            ));
+        }
+        for &ch in FORBIDDEN_HOSTLIST_CHARS {
+            if path.contains(ch) {
+                return Err(EngineError::InvalidPreset(format!(
+                    "Güvenli olmayan karakter '{:?}' hostlist yolunda tespit edildi: \"{}\"",
+                    ch,
+                    sanitize_for_log(arg)
+                )));
+            }
+        }
+        if path.contains("..") {
+            return Err(EngineError::InvalidPreset(format!(
+                "Path traversal tespit edildi: \"{}\"",
+                sanitize_for_log(arg)
+            )));
+        }
+        if !is_allowed_hostlist_path(path) {
+            return Err(EngineError::InvalidPreset(format!(
+                "Yalnızca Vane uygulama veri klasörü altındaki .txt hostlist dosyalarına izin verilir: \"{}\"",
+                sanitize_for_log(arg)
+            )));
+        }
+        return Ok(());
+    }
+
     if arg.len() > MAX_ARG_LEN {
         return Err(EngineError::InvalidPreset(format!(
             "Argüman çok uzun ({} karakter > {} limit): \"{}…\"",
@@ -64,12 +134,6 @@ fn validate_single_arg(arg: &str) -> Result<(), EngineError> {
             MAX_ARG_LEN,
             arg.chars().take(32).collect::<String>()
         )));
-    }
-
-    if arg.is_empty() {
-        return Err(EngineError::InvalidPreset(
-            "Boş argüman kabul edilmiyor.".into(),
-        ));
     }
 
     for &ch in FORBIDDEN_CHARS {
@@ -122,8 +186,25 @@ fn validate_single_arg(arg: &str) -> Result<(), EngineError> {
         validate_number(value, 1, 16_777_216, "TCP window")?;
     } else if let Some(value) = arg.strip_prefix("--qnum=") {
         validate_number(value, 0, 65_535, "queue number")?;
+    } else if let Some(value) = arg.strip_prefix("--dpi-desync-fwmark=") {
+        validate_fwmark(value)?;
     }
 
+    Ok(())
+}
+
+fn validate_fwmark(value: &str) -> Result<(), EngineError> {
+    if value.is_empty() {
+        return Err(EngineError::InvalidPreset("fwmark cannot be empty.".into()));
+    }
+    let (radix, clean) = if let Some(hex) = value.strip_prefix("0x") {
+        (16, hex)
+    } else {
+        (10, value)
+    };
+    u32::from_str_radix(clean, radix).map_err(|_| {
+        EngineError::InvalidPreset("fwmark must be a valid 32-bit integer or hex.".into())
+    })?;
     Ok(())
 }
 
@@ -405,7 +486,6 @@ mod tests {
         let payloads = vec![
             "../../../etc/passwd",
             "--hostlist=../../../etc/passwd",
-            "--hostlist=C:/Windows/win.ini",
             "--hostlist=..\\..\\Windows\\win.ini",
         ];
         for payload in payloads {
@@ -416,6 +496,12 @@ mod tests {
                 payload
             );
         }
+
+        let blocked_system_hostlist = vec!["--hostlist=C:/Windows/win.ini".to_string()];
+        assert!(validate_preset_args(&blocked_system_hostlist).is_err());
+        let valid_app_hostlist =
+            vec!["--hostlist=/home/user/.local/share/vane/whitelist.txt".to_string()];
+        assert!(validate_preset_args(&valid_app_hostlist).is_ok());
     }
 
     #[test]
@@ -437,12 +523,19 @@ mod tests {
     }
 
     #[test]
-    fn preset_hostlist_args_are_rejected_so_pattern_remains_authoritative() {
-        let args = vec![
-            "--hostlist=list.txt".to_string(),
+    fn test_fwmark_arg_passes() {
+        assert!(validate_preset_args(&["--dpi-desync-fwmark=0x40000000".to_string()]).is_ok());
+        assert!(validate_preset_args(&["--dpi-desync-fwmark=1073741824".to_string()]).is_ok());
+        assert!(validate_preset_args(&["--dpi-desync-fwmark=invalid".to_string()]).is_err());
+    }
+
+    #[test]
+    fn preset_hostlist_args_with_traversal_or_unknown_are_rejected() {
+        let bad_args = vec![
+            "--hostlist=../list.txt".to_string(),
             "--wl=example.com".to_string(),
         ];
-        assert!(validate_preset_args(&args).is_err());
+        assert!(validate_preset_args(&bad_args).is_err());
     }
 
     #[test]
@@ -459,10 +552,10 @@ mod tests {
 
     proptest! {
         #[test]
-        fn preset_hostlist_is_always_rejected(s in ".*") {
+        fn preset_hostlist_with_traversal_is_always_rejected(s in "[a-zA-Z0-9_/\\\\]{0,10}\\.\\.[a-zA-Z0-9_/\\\\]{0,10}") {
             let arg = format!("--hostlist={}", s);
             let result = validate_single_arg(&arg);
-            assert!(result.is_err(), "Preset hostlist unexpectedly passed: {}", s);
+            assert!(result.is_err(), "Preset hostlist traversal unexpectedly passed: {}", s);
         }
 
         #[test]

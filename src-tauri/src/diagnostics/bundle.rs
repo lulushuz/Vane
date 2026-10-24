@@ -2,7 +2,6 @@ use crate::diagnostics::event::DiagnosticEvent;
 use crate::diagnostics::health::SystemHealthSnapshot;
 use crate::diagnostics::redaction::DiagnosticRedactor;
 use serde::{Deserialize, Serialize};
-use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
@@ -97,9 +96,22 @@ pub fn export_bundle_to_file(bundle: &DiagnosticsBundle, target_path: &Path) -> 
         return Err("Serialized diagnostics bundle exceeds the 5 MiB limit".into());
     }
 
-    let temp_path = target_path.with_extension("tmp");
+    let file_name = target_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("bundle.vane-diag.json");
+    let nonce: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or_default();
+    let temp_path =
+        target_path.with_file_name(format!(".{file_name}.tmp-{}-{nonce}", std::process::id()));
     {
-        let mut file = File::create(&temp_path)
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temp_path)
             .map_err(|e| format!("Failed to create temporary bundle file: {e}"))?;
         file.write_all(&json_bytes)
             .map_err(|e| format!("Failed to write bundle file: {e}"))?;
@@ -107,8 +119,11 @@ pub fn export_bundle_to_file(bundle: &DiagnosticsBundle, target_path: &Path) -> 
             .map_err(|e| format!("Failed to sync bundle file: {e}"))?;
     }
 
-    std::fs::rename(&temp_path, target_path)
-        .map_err(|e| format!("Failed to rename temporary bundle file: {e}"))?;
+    let rename_res = std::fs::rename(&temp_path, target_path);
+    if rename_res.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    rename_res.map_err(|e| format!("Failed to rename temporary bundle file: {e}"))?;
 
     Ok(())
 }

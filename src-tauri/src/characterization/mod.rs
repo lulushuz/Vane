@@ -75,4 +75,6 @@ pub mod reproducers;
 #[cfg(test)]
 pub mod runtime_config_tests;
 #[cfg(test)]
+pub mod sanitizer_tests;
+#[cfg(test)]
 pub mod settings_tests;

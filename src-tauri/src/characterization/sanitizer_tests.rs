@@ -70,7 +70,7 @@ mod tests {
         for c in chars {
             let arg = format!("--dpi-desync=fake{c}");
             assert!(
-                validate_preset_args(&[arg.clone()]).is_err(),
+                validate_preset_args(std::slice::from_ref(&arg)).is_err(),
                 "Forbidden char '{}' was accepted in {}",
                 c,
                 arg
@@ -225,6 +225,46 @@ mod tests {
             let arg = format!("{prefix}{inject_char}{suffix}");
             let res = validate_preset_args(&[arg]);
             prop_assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn b16_hostlist_valid_app_paths_accepted() {
+        let valid_paths = [
+            "--hostlist=/home/user/.local/share/vane/whitelist.txt",
+            "--hostlist-exclude=/home/user/.local/share/vane/exclude.txt",
+            "--hostlist=C:\\Users\\app\\AppData\\Local\\Vane\\hostlist.txt",
+            "--hostlist=/var/lib/vane/whitelist.txt",
+            "--hostlist=whitelist.txt",
+        ];
+        for arg in valid_paths {
+            assert!(
+                validate_preset_args(&[arg.to_string()]).is_ok(),
+                "Valid hostlist path was rejected: {arg}"
+            );
+        }
+    }
+
+    #[test]
+    fn b17_hostlist_dangerous_inputs_rejected() {
+        let dangerous_paths = [
+            "--hostlist=../etc/passwd",
+            "--hostlist=../../evil.txt",
+            "--hostlist=/home/user/../../etc/shadow",
+            "--hostlist=/etc/passwd;rm -rf /",
+            "--hostlist=/tmp/test|cat /etc/passwd",
+            "--hostlist=/tmp/test`id`",
+            "--hostlist=/tmp/test$HOME",
+            "--hostlist=/tmp/test'--evil",
+            "--hostlist=/tmp/test\"--evil",
+            "--hostlist=",
+            "--hostlist-exclude=",
+        ];
+        for arg in dangerous_paths {
+            assert!(
+                validate_preset_args(&[arg.to_string()]).is_err(),
+                "Dangerous hostlist was accepted: {arg}"
+            );
         }
     }
 }

@@ -83,25 +83,77 @@ pub fn clear_linux_filter_metadata(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(any(test, target_os = "linux"))]
-fn recovery_command(
+fn is_safe_firewall_identifier(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn recovery_commands(
     meta: &PersistedLinuxFilterMetadata,
-) -> Result<LinuxCommandSpec, LinuxPlatformError> {
+) -> Result<Vec<LinuxCommandSpec>, LinuxPlatformError> {
+    if !is_safe_firewall_identifier(&meta.table_name) {
+        return Err(LinuxPlatformError::RecoveryFailed(format!(
+            "Unsafe table identifier in metadata: {:?}",
+            meta.table_name
+        )));
+    }
+    if !is_safe_firewall_identifier(&meta.chain_name) {
+        return Err(LinuxPlatformError::RecoveryFailed(format!(
+            "Unsafe chain identifier in metadata: {:?}",
+            meta.chain_name
+        )));
+    }
     match meta.backend.as_str() {
-        "nftables" => Ok(LinuxCommandSpec {
+        "nftables" => Ok(vec![LinuxCommandSpec {
             program: "nft".into(),
             args: vec!["-f".into(), "-".into()],
             stdin: Some(format!("delete table ip {}\n", meta.table_name).into_bytes()),
-        }),
-        "iptables" => Ok(LinuxCommandSpec {
-            program: "iptables".into(),
-            args: vec![
-                "-t".into(),
-                meta.table_name.clone(),
-                "-F".into(),
-                meta.chain_name.clone(),
-            ],
-            stdin: None,
-        }),
+        }]),
+        "iptables" => {
+            let table = if meta.table_name.starts_with("vane_tbl_") {
+                "mangle"
+            } else {
+                &meta.table_name
+            };
+            Ok(vec![
+                LinuxCommandSpec {
+                    program: "iptables".into(),
+                    args: vec![
+                        "-t".into(),
+                        table.into(),
+                        "-D".into(),
+                        "OUTPUT".into(),
+                        "-j".into(),
+                        meta.chain_name.clone(),
+                    ],
+                    stdin: None,
+                },
+                LinuxCommandSpec {
+                    program: "iptables".into(),
+                    args: vec![
+                        "-t".into(),
+                        table.into(),
+                        "-F".into(),
+                        meta.chain_name.clone(),
+                    ],
+                    stdin: None,
+                },
+                LinuxCommandSpec {
+                    program: "iptables".into(),
+                    args: vec![
+                        "-t".into(),
+                        table.into(),
+                        "-X".into(),
+                        meta.chain_name.clone(),
+                    ],
+                    stdin: None,
+                },
+            ])
+        }
         backend => Err(LinuxPlatformError::RecoveryFailed(format!(
             "Unsupported persisted firewall backend: {backend}"
         ))),
@@ -147,27 +199,32 @@ fn recover_orphan_at_path(
         });
     }
 
-    let command = recovery_command(&meta)?;
-    let context = format!(
-        "backend={} program={} args={:?}",
-        meta.backend, command.program, command.args
-    );
-    let output = runner.run(&command).map_err(|error| {
-        LinuxPlatformError::RecoveryFailed(format!("{context} io_error={error}"))
-    })?;
-    match output.exit_code {
-        Some(0) => {}
-        Some(code) => {
-            return Err(LinuxPlatformError::RecoveryFailed(format!(
-                "{context} exit_code={code} stderr={:?}",
-                summarize(&output.stderr)
-            )))
-        }
-        None => {
-            return Err(LinuxPlatformError::RecoveryFailed(format!(
-                "{context} exit_code=signal stderr={:?}",
-                summarize(&output.stderr)
-            )))
+    let commands = recovery_commands(&meta)?;
+    for command in &commands {
+        let context = format!(
+            "backend={} program={} args={:?}",
+            meta.backend, command.program, command.args
+        );
+        let output = runner.run(command).map_err(|error| {
+            LinuxPlatformError::RecoveryFailed(format!("{context} io_error={error}"))
+        })?;
+        match output.exit_code {
+            Some(0) => {}
+            Some(code) => {
+                // If iptables unlink/flush fails during orphan recovery, continue trying to delete
+                if meta.backend != "iptables" {
+                    return Err(LinuxPlatformError::RecoveryFailed(format!(
+                        "{context} exit_code={code} stderr={:?}",
+                        summarize(&output.stderr)
+                    )));
+                }
+            }
+            None => {
+                return Err(LinuxPlatformError::RecoveryFailed(format!(
+                    "{context} exit_code=signal stderr={:?}",
+                    summarize(&output.stderr)
+                )));
+            }
         }
     }
 
@@ -301,6 +358,22 @@ mod tests {
         assert!(matches!(
             recover_orphan_at_path(&path, "foreign-installation", &runner),
             Err(LinuxPlatformError::OwnershipMismatch { .. })
+        ));
+        assert!(runner.commands().is_empty());
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn orphan_recovery_rejects_unsafe_identifiers() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join(LINUX_FILTER_METADATA_FILE);
+        let mut meta = metadata();
+        meta.table_name = "owned; rm -rf /".into();
+        std::fs::write(&path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        let runner = FakeLinuxCommandRunner::success(0);
+        assert!(matches!(
+            recover_orphan_at_path(&path, "owned-installation", &runner),
+            Err(LinuxPlatformError::RecoveryFailed(_))
         ));
         assert!(runner.commands().is_empty());
         assert!(path.exists());
