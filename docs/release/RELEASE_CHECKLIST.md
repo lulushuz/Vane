@@ -65,7 +65,7 @@ artifacts. This workflow never creates a tag or public GitHub Release.
 
 ## Documentation and release decision
 
-- [x] Canonical configuration ownership and IPC stages documented in `CONFIG_SCHEMA.md`.
+- [x] Canonical configuration ownership and IPC stages documented in `docs/CONFIG_SCHEMA.md`.
 - [x] Advanced/Pattern/DNS wiring documented in `FEATURE_WIRING_MATRIX.md`.
 - [x] Automated versus manual reproduction evidence documented in `REPRODUCTION_MATRIX.md`.
 - [ ] Complete packaged Windows smoke tests.
