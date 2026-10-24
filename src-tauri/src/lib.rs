@@ -57,6 +57,7 @@ pub struct AppState {
     pub dns_transaction_manager: std::sync::Arc<crate::dns::DnsTransactionManager>,
     pub optimizer_manager: std::sync::Arc<crate::optimizer::OptimizerSessionManager>,
     pub exclusive_operations: std::sync::Arc<crate::operation::ExclusiveOperationCoordinator>,
+    pub traffic_probe_runner: std::sync::Arc<crate::diagnostics::TrafficProbeRunner>,
 }
 
 fn build_app_state(loader: ConfigLoader, http_client: reqwest::Client) -> AppState {
@@ -74,6 +75,7 @@ fn build_app_state(loader: ConfigLoader, http_client: reqwest::Client) -> AppSta
         exclusive_operations: std::sync::Arc::new(
             crate::operation::ExclusiveOperationCoordinator::default(),
         ),
+        traffic_probe_runner: std::sync::Arc::new(crate::diagnostics::TrafficProbeRunner::new()),
     }
 }
 

@@ -185,7 +185,7 @@ fn parse_public_https_target(
     Ok((url, hostname))
 }
 
-fn is_public_ip(address: IpAddr) -> bool {
+pub(crate) fn is_public_ip(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(address) => is_public_ipv4(address),
         IpAddr::V6(address) => is_public_ipv6(address),

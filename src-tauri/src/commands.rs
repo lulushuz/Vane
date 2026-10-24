@@ -32,7 +32,13 @@ pub async fn start_engine(
             .find_preset(&preset_id)
             .ok_or(EngineError::InvalidPreset(preset_id))?
     };
-    state.engine_manager.start(&preset, &app).await?;
+    match state.engine_manager.start(&preset, &app).await {
+        Ok(()) => {}
+        Err(EngineError::AlreadyRunning) => {
+            tracing::info!("Engine already running, returning current status idempotently.");
+        }
+        Err(e) => return Err(e),
+    }
     Ok(state.engine_manager.current_status())
 }
 
@@ -320,7 +326,14 @@ pub async fn start_engine_with_dns_guard(
             .find_preset(&preset_id)
             .ok_or(EngineError::InvalidPreset(preset_id))?
     };
-    state.engine_manager.start(&preset, &app).await?;
+    let start_res = state.engine_manager.start(&preset, &app).await;
+    match start_res {
+        Ok(()) => {}
+        Err(EngineError::AlreadyRunning) => {
+            tracing::info!("Engine already running with active configuration, returning current status idempotently.");
+        }
+        Err(e) => return Err(e),
+    }
 
     let status = state.engine_manager.current_status();
     if let EngineStatus::Ready { pid, .. } = status {
@@ -372,16 +385,85 @@ pub fn get_system_info() -> serde_json::Value {
     })
 }
 
-#[tauri::command]
-pub fn export_preset(file_path: String, content: String) -> Result<(), String> {
-    let path = std::path::Path::new(&file_path);
-    let ext = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("");
-    if !ext.eq_ignore_ascii_case("vane") {
-        return Err("Preset exports must use the .vane extension.".into());
+pub fn resolve_safe_export_path<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    raw_path: &str,
+    allowed_ext: &str,
+) -> Result<std::path::PathBuf, String> {
+    if raw_path.contains("..") {
+        return Err("Path traversal detected in export path.".into());
     }
+
+    let input_path = std::path::Path::new(raw_path);
+
+    let ext = input_path
+        .extension()
+        .and_then(|v| v.to_str())
+        .unwrap_or("");
+    let expected_dot_ext = format!(".{allowed_ext}");
+    let valid_extension =
+        ext.eq_ignore_ascii_case(allowed_ext) || raw_path.ends_with(&expected_dot_ext);
+    if !valid_extension {
+        return Err(format!("Export must use the .{allowed_ext} extension."));
+    }
+
+    let file_name = input_path
+        .file_name()
+        .ok_or_else(|| "Invalid file path: missing file name.".to_string())?;
+
+    let file_name_str = file_name.to_string_lossy();
+    if file_name_str.contains('/') || file_name_str.contains('\\') || file_name_str.contains('\0') {
+        return Err("Invalid characters in file name.".into());
+    }
+
+    let parent = input_path.parent();
+    if parent.is_none() || parent == Some(std::path::Path::new("")) {
+        let base_dir = app
+            .path()
+            .download_dir()
+            .or_else(|_| app.path().app_data_dir())
+            .unwrap_or_else(|_| std::env::temp_dir());
+        return Ok(base_dir.join(file_name));
+    }
+
+    let target_parent = parent.unwrap();
+    let target_parent_canonical = target_parent
+        .canonicalize()
+        .map_err(|e| format!("Invalid export path: parent directory must exist: {e}"))?;
+
+    let mut safe_roots = Vec::new();
+    if let Ok(p) = app.path().download_dir() {
+        safe_roots.push(p);
+    }
+    if let Ok(p) = app.path().document_dir() {
+        safe_roots.push(p);
+    }
+    if let Ok(p) = app.path().desktop_dir() {
+        safe_roots.push(p);
+    }
+    if let Ok(p) = app.path().app_data_dir() {
+        safe_roots.push(p);
+    }
+    safe_roots.push(std::env::temp_dir());
+
+    let is_safe = safe_roots.iter().any(|root| {
+        if let Ok(root_canonical) = root.canonicalize() {
+            target_parent_canonical.starts_with(&root_canonical)
+        } else {
+            target_parent_canonical.starts_with(root)
+        }
+    });
+
+    if !is_safe {
+        return Err("Unauthorized export path: path must reside within user downloads, documents, desktop, app data, or temporary directories.".into());
+    }
+
+    Ok(target_parent_canonical.join(file_name))
+}
+
+#[tauri::command]
+pub fn export_preset(app: AppHandle, file_path: String, content: String) -> Result<(), String> {
+    let path = resolve_safe_export_path(&app, &file_path, "vane")?;
 
     if content.len() > 1024 * 1024 {
         return Err("Preset export exceeds the 1 MiB safety limit.".into());
@@ -391,7 +473,7 @@ pub fn export_preset(file_path: String, content: String) -> Result<(), String> {
     if !parsed.is_object() {
         return Err("Preset export must contain a JSON object.".into());
     }
-    crate::settings::atomic_replace_bytes(path, content.as_bytes())
+    crate::settings::atomic_replace_bytes(&path, content.as_bytes())
         .map_err(|error| format!("Could not export preset: {error}"))
 }
 
@@ -603,12 +685,19 @@ pub struct HealthStatus {
     pub target: String,
 }
 
+const MAX_HEALTH_TARGETS: usize = 16;
+
 #[tauri::command]
 pub async fn get_engine_health(
     targets: Option<Vec<String>>,
     _state: State<'_, AppState>,
 ) -> Result<HealthStatus, String> {
     let raw_targets = targets.unwrap_or_default();
+    if raw_targets.len() > MAX_HEALTH_TARGETS {
+        return Err(format!(
+            "Too many health targets (maximum {MAX_HEALTH_TARGETS} allowed)."
+        ));
+    }
     let mut cleaned_targets = Vec::new();
 
     for t in &raw_targets {
@@ -637,14 +726,23 @@ pub async fn get_engine_health(
 
     let mut tasks = Vec::new();
 
-    for target in &actual_targets {
+    for target in actual_targets.iter().take(MAX_HEALTH_TARGETS) {
         let host = target.clone();
         tasks.push(async move {
+            // SSRF / internal IP guard: verify that resolved addresses are public internet IPs
+            let lookup = tokio::net::lookup_host(format!("{host}:443")).await;
+            let public_addr = match lookup {
+                Ok(mut addrs) => addrs.find(|addr| crate::http::is_public_ip(addr.ip())),
+                Err(_) => None,
+            };
+            let Some(safe_addr) = public_addr else {
+                return (false, 0);
+            };
+
             let start = std::time::Instant::now();
-            let addr_str = format!("{}:443", host);
             let res = tokio::time::timeout(
                 Duration::from_millis(1500),
-                tokio::net::TcpStream::connect(&addr_str),
+                tokio::net::TcpStream::connect(safe_addr),
             )
             .await;
 
@@ -701,9 +799,19 @@ pub async fn get_engine_health(
 pub async fn resolve_via_doh(
     domain: String,
     state: State<'_, AppState>,
-) -> Result<Vec<DohResult>, ()> {
-    let cloudflare = resolve_doh(&state.http_client, DOH_CLOUDFLARE, &domain).await;
-    let google = resolve_doh(&state.http_client, DOH_GOOGLE, &domain).await;
+) -> Result<Vec<DohResult>, String> {
+    let clean = domain.trim().trim_end_matches('.');
+    if clean.is_empty() || clean.len() > 253 {
+        return Err("Invalid domain length".to_string());
+    }
+    if !clean
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return Err("Invalid domain format".to_string());
+    }
+    let cloudflare = resolve_doh(&state.http_client, DOH_CLOUDFLARE, clean).await;
+    let google = resolve_doh(&state.http_client, DOH_GOOGLE, clean).await;
     Ok(vec![cloudflare, google])
 }
 
@@ -1537,9 +1645,6 @@ pub async fn run_local_diagnostics(
     Ok(snapshot)
 }
 
-static TRAFFIC_PROBE_RUNNER: std::sync::LazyLock<crate::diagnostics::TrafficProbeRunner> =
-    std::sync::LazyLock::new(crate::diagnostics::TrafficProbeRunner::new);
-
 #[tauri::command]
 pub async fn run_traffic_diagnostics(
     targets: Option<Vec<String>>,
@@ -1553,15 +1658,16 @@ pub async fn run_traffic_diagnostics(
         )))
         .map_err(|owner| EngineError::IoError(format!("Runtime is busy with {owner:?}")))?;
     let target_list = targets.unwrap_or_default();
-    TRAFFIC_PROBE_RUNNER
+    state
+        .traffic_probe_runner
         .run_probes(&target_list)
         .await
         .map_err(EngineError::IoError)
 }
 
 #[tauri::command]
-pub fn cancel_traffic_diagnostics() -> bool {
-    TRAFFIC_PROBE_RUNNER.cancel()
+pub fn cancel_traffic_diagnostics(state: State<'_, AppState>) -> bool {
+    state.traffic_probe_runner.cancel()
 }
 
 #[tauri::command]
@@ -1570,12 +1676,13 @@ pub async fn export_diagnostics_bundle(
     export_path: String,
     state: State<'_, AppState>,
 ) -> Result<String, EngineError> {
+    let target_path = resolve_safe_export_path(&app, &export_path, "vane-diag.json")
+        .map_err(EngineError::IoError)?;
     let health = run_local_diagnostics(app.clone(), state).await?;
     let events = crate::diagnostics::DIAGNOSTIC_STORE.get_events(None).await;
     let dropped = crate::diagnostics::DIAGNOSTIC_STORE.dropped_count();
     let bundle = crate::diagnostics::create_diagnostics_bundle(health, events, dropped);
 
-    let target_path = std::path::PathBuf::from(export_path);
     crate::diagnostics::export_bundle_to_file(&bundle, &target_path)
         .map_err(EngineError::IoError)?;
 
@@ -1600,4 +1707,37 @@ pub async fn clear_diagnostic_events() {
 pub async fn get_diagnostic_event_stats() -> serde_json::Value {
     let events = crate::diagnostics::DIAGNOSTIC_STORE.get_events(None).await;
     serde_json::json!({ "eventCount": events.len(), "droppedEventCount": crate::diagnostics::DIAGNOSTIC_STORE.dropped_count(), "lastSequence": events.last().map(|event| event.sequence) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_safe_export_path_prevents_path_traversal() {
+        let app = tauri::test::mock_app();
+        let handle = app.handle();
+
+        // Relative path traversal
+        assert!(resolve_safe_export_path(handle, "../evil.vane", "vane").is_err());
+        assert!(resolve_safe_export_path(handle, "foo/../../evil.vane", "vane").is_err());
+
+        // Absolute path outside allowed user directories
+        assert!(resolve_safe_export_path(handle, "/etc/passwd.vane", "vane").is_err());
+        assert!(resolve_safe_export_path(handle, "/etc/shadow", "vane").is_err());
+        assert!(resolve_safe_export_path(handle, "/bin/sh.vane", "vane").is_err());
+
+        // Wrong extension
+        assert!(resolve_safe_export_path(handle, "preset.json", "vane").is_err());
+
+        // Safe bare filename resolves inside safe directory
+        let safe = resolve_safe_export_path(handle, "my-preset.vane", "vane").unwrap();
+        assert!(safe.ends_with("my-preset.vane"));
+
+        // Safe path in temp directory
+        let temp_file = std::env::temp_dir().join("safe-test.vane");
+        let safe_temp =
+            resolve_safe_export_path(handle, temp_file.to_str().unwrap(), "vane").unwrap();
+        assert_eq!(safe_temp.file_name().unwrap(), "safe-test.vane");
+    }
 }

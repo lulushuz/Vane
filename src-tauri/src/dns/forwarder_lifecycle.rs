@@ -84,11 +84,11 @@ fn readiness_query(target: &str) -> Result<(Message, Vec<u8>), String> {
 fn validate_readiness_response(query: &Message, wire: &[u8]) -> Result<usize, String> {
     let response =
         Message::from_bytes(wire).map_err(|error| format!("malformed DNS response: {error}"))?;
-    if response.metadata.message_type != MessageType::Response {
-        return Err("packet is not a DNS response".into());
-    }
     if response.metadata.id != query.metadata.id {
         return Err("transaction ID mismatch".into());
+    }
+    if response.metadata.message_type != MessageType::Response {
+        return Err("packet is not a DNS response".into());
     }
     let questions_match = response.queries.len() == query.queries.len()
         && response
@@ -142,16 +142,30 @@ pub async fn verify_forwarder_functional_readiness(
                     .await
                     .map_err(|e| ("bind", e.to_string()))?;
                 socket
-                    .send_to(&wire, endpoint)
+                    .connect(endpoint)
+                    .await
+                    .map_err(|e| ("connect", e.to_string()))?;
+                socket
+                    .send(&wire)
                     .await
                     .map_err(|e| ("send", e.to_string()))?;
                 let mut response = vec![0u8; 65_535];
-                let (length, _) = socket
-                    .recv_from(&mut response)
-                    .await
-                    .map_err(|e| ("receive", e.to_string()))?;
-                validate_readiness_response(&query, &response[..length])
-                    .map_err(|e| ("validate", e))
+                loop {
+                    let length = socket
+                        .recv(&mut response)
+                        .await
+                        .map_err(|e| ("receive", e.to_string()))?;
+                    match validate_readiness_response(&query, &response[..length]) {
+                        Ok(answers) => break Ok(answers),
+                        Err(e)
+                            if e == "transaction ID mismatch"
+                                || e == "packet is not a DNS response" =>
+                        {
+                            continue;
+                        }
+                        Err(e) => break Err(("validate", e)),
+                    }
+                }
             }
             ReadinessProtocol::Tcp => {
                 let mut stream = tokio::net::TcpStream::connect(endpoint)
@@ -231,13 +245,15 @@ mod tests {
         response.metadata.recursion_desired = query.metadata.recursion_desired;
         response.metadata.recursion_available = true;
         response.metadata.response_code = code;
-        response.add_query(query.queries[0].clone());
-        if code == ResponseCode::NoError {
-            response.add_answer(Record::from_rdata(
-                query.queries[0].name().clone(),
-                30,
-                RData::A(A(Ipv4Addr::new(192, 0, 2, 1))),
-            ));
+        if let Some(first_query) = query.queries.first() {
+            response.add_query(first_query.clone());
+            if code == ResponseCode::NoError {
+                response.add_answer(Record::from_rdata(
+                    first_query.name().clone(),
+                    30,
+                    RData::A(A(Ipv4Addr::new(192, 0, 2, 1))),
+                ));
+            }
         }
         response.to_bytes().unwrap()
     }
@@ -247,17 +263,29 @@ mod tests {
         let address = socket.local_addr().unwrap();
         tokio::spawn(async move {
             let mut buffer = [0u8; 512];
-            let (length, peer) = socket.recv_from(&mut buffer).await.unwrap();
-            if mode == "silent" {
-                return;
+            loop {
+                let Ok((length, peer)) = socket.recv_from(&mut buffer).await else {
+                    return;
+                };
+                if mode == "silent" {
+                    return;
+                }
+                // Skip stray packets from other local listeners that are not valid DNS queries
+                let Ok(query) = Message::from_bytes(&buffer[..length]) else {
+                    continue;
+                };
+                if query.queries.is_empty() {
+                    continue;
+                }
+                let response = match mode {
+                    "valid" => response_for(&buffer[..length], ResponseCode::NoError, false),
+                    "wrong_id" => response_for(&buffer[..length], ResponseCode::NoError, true),
+                    "servfail" => response_for(&buffer[..length], ResponseCode::ServFail, false),
+                    _ => vec![0, 1, 2],
+                };
+                let _ = socket.send_to(&response, peer).await;
+                break;
             }
-            let response = match mode {
-                "valid" => response_for(&buffer[..length], ResponseCode::NoError, false),
-                "wrong_id" => response_for(&buffer[..length], ResponseCode::NoError, true),
-                "servfail" => response_for(&buffer[..length], ResponseCode::ServFail, false),
-                _ => vec![0, 1, 2],
-            };
-            socket.send_to(&response, peer).await.unwrap();
         });
         address
     }
@@ -297,7 +325,7 @@ mod tests {
             address,
             protocol,
             "example.com",
-            Duration::from_millis(150),
+            Duration::from_millis(500),
         )
         .await
     }

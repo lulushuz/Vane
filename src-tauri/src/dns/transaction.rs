@@ -303,7 +303,7 @@ impl DnsTransactionManager {
         let _guard = self.lock.lock().await;
 
         {
-            let mut st = self.state.lock().unwrap();
+            let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
             if verified.revision < st.latest_requested_revision {
                 return Ok(DnsTransactionOutcome {
                     stage: DnsApplyStage::Superseded,
@@ -325,7 +325,12 @@ impl DnsTransactionManager {
             st.set_desired(verified.clone());
         }
 
-        let previous_applied = self.state.lock().unwrap().applied().cloned();
+        let previous_applied = self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .applied()
+            .cloned();
         let forwarder_owned = app_state
             .forwarder
             .lock()
@@ -429,18 +434,24 @@ impl DnsTransactionManager {
                         &executor,
                         &prev_plan,
                         || clear_kill_switch_metadata(app),
-                        || self.state.lock().unwrap().clear_applied(),
+                        || self.state.lock().unwrap_or_else(|e| e.into_inner()).clear_applied(),
                     )
                     .map_err(|error| format!(
                         "DNS was restored and the forwarder was stopped, but Kill Switch disable failed; metadata and applied state were preserved: {error}"
                     ))?;
                 } else {
                     clear_kill_switch_metadata(app)?;
-                    self.state.lock().unwrap().clear_applied();
+                    self.state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clear_applied();
                 }
             } else {
                 clear_kill_switch_metadata(app)?;
-                self.state.lock().unwrap().clear_applied();
+                self.state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clear_applied();
             }
 
             return Ok(DnsTransactionOutcome {
@@ -466,7 +477,11 @@ impl DnsTransactionManager {
             crate::dns::runtime_config::DnsProvider::Google => crate::dns::DoHEndpoint::Google,
         };
 
-        let gen = self.state.lock().unwrap().next_generation();
+        let gen = self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .next_generation();
 
         let spawn_res = crate::dns::spawn_doh_forwarder(
             app.clone(),
@@ -592,13 +607,16 @@ impl DnsTransactionManager {
                 };
 
                 {
-                    let mut f_guard = app_state.forwarder.lock().unwrap();
+                    let mut f_guard = app_state
+                        .forwarder
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
                     *f_guard = Some(handle);
                 }
 
                 self.state
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .commit_applied(applied_config.clone());
 
                 Ok(DnsTransactionOutcome {
@@ -653,7 +671,11 @@ impl DnsTransactionManager {
                 crate::dns::runtime_config::DnsProvider::Google => crate::dns::DoHEndpoint::Google,
             };
 
-            let gen = self.state.lock().unwrap().next_generation();
+            let gen = self
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .next_generation();
 
             if let Ok(handle) = crate::dns::spawn_doh_forwarder(
                 app.clone(),
@@ -688,7 +710,10 @@ impl DnsTransactionManager {
                                 "previous Kill Switch firewall/metadata restore failed: {error}"
                             );
                             handle.stop().await;
-                            self.state.lock().unwrap().clear_applied();
+                            self.state
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .clear_applied();
                             if let Some(snapshot) = crate::dns::load_dns_restore_snapshot(app)? {
                                 restore_snapshot_verified(
                                     || {
@@ -780,7 +805,10 @@ impl DnsTransactionManager {
             }
         }
 
-        self.state.lock().unwrap().clear_applied();
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear_applied();
         if let Some(snapshot) = crate::dns::load_dns_restore_snapshot(app)? {
             restore_snapshot_verified(
                 || {
