@@ -16,6 +16,7 @@
 </p>
 
 <p align="center">
+  <img src="../assets/archey-badge.svg" alt="Made By Archey">
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=derleme&labelColor=black" alt="Derleme Durumu">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue&labelColor=black" alt="Lisans">
   <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=sürüm&labelColor=black" alt="Sürüm">

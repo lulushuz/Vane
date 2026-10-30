@@ -8,8 +8,8 @@ Only the latest stable release of Vane is supported with security updates. We re
 
 | Version | Supported |
 | ------- | --------- |
-| v1.1.4+ | ✅ |
-| < v1.1.4| ❌ |
+| v0.2.0+ | ✅ |
+| < v0.2.0| ❌ |
 
 ## Reporting a Vulnerability
 
@@ -20,7 +20,7 @@ If you identify a security vulnerability in Vane, please report it privately thr
 | Channel | Contact |
 |---------|---------|
 | 📧 Email | **alp@archey.com.tr** |
-| 💬 Discord | **[luppux](https://discord.com/users/852103749228036136)** (ID: 852103749228036136) |
+| 💬 Discord | **[lulushu](https://discord.com/users/852103749228036136)** (ID: 852103749228036136) |
 | 🔒 GitHub | Security → Advisories → New private advisory |
 
 ### Reporting Guidelines
