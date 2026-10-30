@@ -4,7 +4,7 @@ import * as path from 'path';
 
 describe('Test Group DOC — Documentation Capability Claims Alignment (P05-C)', () => {
   const readmePath = path.resolve(__dirname, '../../README.md');
-  const readmeTrPath = path.resolve(__dirname, '../../README.tr.md');
+  const readmeTrPath = path.resolve(__dirname, '../../docs/translations/README.tr.md');
 
   const readme = fs.readFileSync(readmePath, 'utf-8');
   const readmeTr = fs.readFileSync(readmeTrPath, 'utf-8');

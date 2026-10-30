@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="160" alt="Vane Logo">
+  <img src="../../src-tauri/icons/icon.png" width="160" alt="Vane Logo">
 </p>
 
 <h1 align="center">Vane DPI</h1>
@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="../assets/archey-badge.svg" alt="Made By Archey">
+  <a href="https://archey.com.tr"><img src="../assets/archey-badge.svg" alt="Made By Archey"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=сборка&labelColor=black" alt="Статус сборки">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue&labelColor=black" alt="Лицензия">
   <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=релиз&labelColor=black" alt="Версия">
@@ -151,7 +151,7 @@ DNS Guard содержит встроенный список [StevenBlack hosts]
 | `discord-voip` | **Discord & VoIP** | UDP 50000-65535 | UDP Fake Packet Injection | Голосовые каналы Discord и онлайн-игры |
 
 > [!TIP]
-> Полное техническое описание параметров Zapret и режимов сбивания DPI (`badseq`, `badsum`, `md5sig`) смотрите в руководстве [DPI and Zapret Internals Guide](docs/DPI_AND_ZAPRET_INTERNALS.md).
+> Полное техническое описание параметров Zapret и режимов сбивания DPI (`badseq`, `badsum`, `md5sig`) смотрите в руководстве [DPI and Zapret Internals Guide](../DPI_AND_ZAPRET_INTERNALS.md).
 
 ---
 
@@ -215,7 +215,7 @@ npm run tauri dev
 - **[Tauri](https://tauri.app)**: Фреймворк для настольных приложений.
 - **[StevenBlack/hosts](https://github.com/StevenBlack/hosts)**: База хостов блокировки рекламы.
 
-Проект распространяется под лицензией **GNU General Public License v3.0** (`GPL-3.0`). Подробности в файле [LICENSE](LICENSE).
+Проект распространяется под лицензией **GNU General Public License v3.0** (`GPL-3.0`). Подробности в файле [LICENSE](../../LICENSE).
 
 - **Связь в Discord:** [lulushu (Discord ID: 852103749228036136)](https://discord.com/users/852103749228036136)
 - **Баг-трекер:** [GitHub Issues](https://github.com/lulushuz/Vane/issues)

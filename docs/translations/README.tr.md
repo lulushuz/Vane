@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="160" alt="Vane Logo">
+  <img src="../../src-tauri/icons/icon.png" width="160" alt="Vane Logo">
 </p>
 
 <h1 align="center">Vane DPI</h1>
@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="../assets/archey-badge.svg" alt="Made By Archey">
+  <a href="https://archey.com.tr"><img src="../assets/archey-badge.svg" alt="Made By Archey"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=derleme&labelColor=black" alt="Derleme Durumu">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue&labelColor=black" alt="Lisans">
   <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=sürüm&labelColor=black" alt="Sürüm">
@@ -234,7 +234,7 @@ Vane, farklı engel türlerine göre optimize edilmiş hazır presetlerle gelir:
 | `discord-voip` | **Discord & VoIP**| UDP 50000-65535 | UDP sahte paket enjeksiyonu | Discord sesli sohbet ve oyun ses trafiği |
 
 > [!TIP]
-> **Ayrıntılı Teknik Başvuru:** Paket akış şemaları, TCP segmentasyon yöntemleri, yanıltma modları (`badsum`, `badseq`, `md5sig`) ve tam parametre listesi için [DPI ve Zapret Dahili Protokol Referansı](docs/DPI_AND_ZAPRET_INTERNALS.tr.md) kılavuzunu inceleyebilirsiniz.
+> **Ayrıntılı Teknik Başvuru:** Paket akış şemaları, TCP segmentasyon yöntemleri, yanıltma modları (`badsum`, `badseq`, `md5sig`) ve tam parametre listesi için [DPI ve Zapret Dahili Protokol Referansı](../DPI_AND_ZAPRET_INTERNALS.tr.md) kılavuzunu inceleyebilirsiniz.
 
 ---
 
@@ -390,10 +390,10 @@ Paket manipülasyonu mantıksal ağ sınırları dahilinde çalışır:
 - **[StevenBlack/hosts](https://github.com/StevenBlack/hosts)**: Reklam ve izleyici engelleme listesi.
 - **[Minisign](https://jedisct1.github.io/minisign/)**: Kriptografik imza doğrulama kütüphanesi.
 
-Bu proje **GNU General Public License v3.0** (`GPL-3.0`) ile lisanslanmıştır. Detaylar için [LICENSE](LICENSE) dosyasına bakabilirsiniz.
+Bu proje **GNU General Public License v3.0** (`GPL-3.0`) ile lisanslanmıştır. Detaylar için [LICENSE](../../LICENSE) dosyasına bakabilirsiniz.
 
 ### 7.4. Topluluk ve Destek
 
 - **Hata Bildirimi ve Tartışmalar:** [GitHub Issues](https://github.com/lulushuz/Vane/issues)
 - **Discord İletişim:** [lulushu (Discord ID: 852103749228036136)](https://discord.com/users/852103749228036136)
-- **Güvenlik Bildirimleri:** Güvenlik açıkları için [SECURITY.md](SECURITY.md) dosyasındaki prosedürü izleyiniz.
+- **Güvenlik Bildirimleri:** Güvenlik açıkları için [SECURITY.md](../../SECURITY.md) dosyasındaki prosedürü izleyiniz.

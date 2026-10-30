@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="160" alt="Vane Logo">
+  <img src="../../src-tauri/icons/icon.png" width="160" alt="Vane Logo">
 </p>
 
 <h1 align="center">Vane DPI</h1>
@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="../assets/archey-badge.svg" alt="Made By Archey">
+  <a href="https://archey.com.tr"><img src="../assets/archey-badge.svg" alt="Made By Archey"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=构建状态&labelColor=black" alt="Build Status">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue&labelColor=black" alt="License">
   <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=版本&labelColor=black" alt="Release Version">
@@ -190,5 +190,5 @@ npm run tauri dev
 
 - **Windows 引擎启动失败:** 请检查并完全退出 GoodbyeDPI 或其它正在占用 WinDivert 驱动的软件。
 - **DNS 无法解析:** 若上游 DoH IP 遭到运营商阻断，请在设置中开启 SOCKS5 代理中继。
-- **开源许可:** 本项目基于 **GNU General Public License v3.0** (`GPL-3.0`) 授权。详情参见 [LICENSE](LICENSE)。
+- **开源许可:** 本项目基于 **GNU General Public License v3.0** (`GPL-3.0`) 授权。详情参见 [LICENSE](../../LICENSE)。
 - **Discord 联络:** [lulushu (Discord ID: 852103749228036136)](https://discord.com/users/852103749228036136)

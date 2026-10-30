@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="160" alt="Vane Logo">
+  <img src="../../src-tauri/icons/icon.png" width="160" alt="Vane Logo">
 </p>
 
 <h1 align="center">Vane DPI</h1>
@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="../assets/archey-badge.svg" alt="Made By Archey">
+  <a href="https://archey.com.tr"><img src="../assets/archey-badge.svg" alt="Made By Archey"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=ساخت&labelColor=black" alt="Build Status">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue&labelColor=black" alt="License">
   <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=نسخه&labelColor=black" alt="Release Version">
