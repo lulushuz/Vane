@@ -9,18 +9,21 @@
 </p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/English-EN-blue.svg" alt="en"></a>
-  <a href="README.tr.md"><img src="https://img.shields.io/badge/Türkçe-TR-red.svg" alt="tr"></a>
-  <a href="README.ru.md"><img src="https://img.shields.io/badge/Русский-RU-blue.svg" alt="ru"></a>
-  <a href="README.fa.md"><img src="https://img.shields.io/badge/فارسی-FA-green.svg" alt="fa"></a>
-  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=构建状态" alt="Build Status">
-  <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="License">
-  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=版本" alt="Release Version">
-  <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
+  <a href="README.md"><img src="https://img.shields.io/badge/English-EN-blue?style=flat-square&labelColor=black" alt="English"></a>
+  <a href="README.tr.md"><img src="https://img.shields.io/badge/Türkçe-TR-red?style=flat-square&labelColor=black" alt="Türkçe"></a>
+  <a href="README.ru.md"><img src="https://img.shields.io/badge/Русский-RU-blue?style=flat-square&labelColor=black" alt="Русский"></a>
+  <a href="README.fa.md"><img src="https://img.shields.io/badge/فارسی-FA-green?style=flat-square&labelColor=black" alt="فارسی"></a>
 </p>
 
 <p align="center">
-  <img src="docs/assets/preview.png" width="720" alt="Vane 桌面客户端预览">
+  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=构建状态" alt="Build Status">
+  <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="License">
+  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=版本" alt="Release Version">
+  <a href="https://discord.com/users/852103749228036136"><img src="https://img.shields.io/badge/Discord-lulushu-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/preview.png" width="580" alt="Vane 桌面客户端预览">
 </p>
 
 ---
@@ -187,4 +190,4 @@ npm run tauri dev
 - **Windows 引擎启动失败:** 请检查并完全退出 GoodbyeDPI 或其它正在占用 WinDivert 驱动的软件。
 - **DNS 无法解析:** 若上游 DoH IP 遭到运营商阻断，请在设置中开启 SOCKS5 代理中继。
 - **开源许可:** 本项目基于 **GNU General Public License v3.0** (`GPL-3.0`) 授权。详情参见 [LICENSE](LICENSE)。
-- **社区交流:** [Discord 讨论组](https://discord.gg/luppux) | [GitHub Issues](https://github.com/lulushuz/Vane/issues)
+- **Discord 联络:** [lulushu (Discord ID: 852103749228036136)](https://discord.com/users/852103749228036136)
