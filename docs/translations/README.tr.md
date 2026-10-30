@@ -9,21 +9,21 @@
 </p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/English-EN-blue?style=flat-square&labelColor=black" alt="English"></a>
+  <a href="../../README.md"><img src="https://img.shields.io/badge/English-EN-blue?style=flat-square&labelColor=black" alt="English"></a>
   <a href="README.ru.md"><img src="https://img.shields.io/badge/Русский-RU-blue?style=flat-square&labelColor=black" alt="Русский"></a>
   <a href="README.zh.md"><img src="https://img.shields.io/badge/简体中文-ZH-yellow?style=flat-square&labelColor=black" alt="简体中文"></a>
   <a href="README.fa.md"><img src="https://img.shields.io/badge/فارسی-FA-green?style=flat-square&labelColor=black" alt="فارسی"></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=derleme" alt="Derleme Durumu">
-  <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="Lisans">
-  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=sürüm" alt="Sürüm">
-  <a href="https://discord.com/users/852103749228036136"><img src="https://img.shields.io/badge/Discord-lulushu-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=derleme&labelColor=black" alt="Derleme Durumu">
+  <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue&labelColor=black" alt="Lisans">
+  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=sürüm&labelColor=black" alt="Sürüm">
+  <a href="https://discord.com/users/852103749228036136"><img src="https://img.shields.io/badge/Discord-lulushu-5865F2?style=flat-square&logo=discord&logoColor=white&labelColor=black" alt="Discord"></a>
 </p>
 
 <p align="center">
-  <img src="docs/assets/preview.png" width="580" alt="Vane Masaüstü Arayüzü Önizlemesi">
+  <img src="../assets/VanePre.png" width="580" alt="Vane Masaüstü Arayüzü Önizlemesi">
 </p>
 
 ---

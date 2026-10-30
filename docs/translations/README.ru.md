@@ -9,21 +9,21 @@
 </p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/English-EN-blue?style=flat-square&labelColor=black" alt="English"></a>
+  <a href="../../README.md"><img src="https://img.shields.io/badge/English-EN-blue?style=flat-square&labelColor=black" alt="English"></a>
   <a href="README.tr.md"><img src="https://img.shields.io/badge/Türkçe-TR-red?style=flat-square&labelColor=black" alt="Türkçe"></a>
   <a href="README.zh.md"><img src="https://img.shields.io/badge/简体中文-ZH-yellow?style=flat-square&labelColor=black" alt="简体中文"></a>
   <a href="README.fa.md"><img src="https://img.shields.io/badge/فارسی-FA-green?style=flat-square&labelColor=black" alt="فارسی"></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=сборка" alt="Статус сборки">
-  <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="Лицензия">
-  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=релиз" alt="Версия">
-  <a href="https://discord.com/users/852103749228036136"><img src="https://img.shields.io/badge/Discord-lulushu-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=сборка&labelColor=black" alt="Статус сборки">
+  <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue&labelColor=black" alt="Лицензия">
+  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=релиз&labelColor=black" alt="Версия">
+  <a href="https://discord.com/users/852103749228036136"><img src="https://img.shields.io/badge/Discord-lulushu-5865F2?style=flat-square&logo=discord&logoColor=white&labelColor=black" alt="Discord"></a>
 </p>
 
 <p align="center">
-  <img src="docs/assets/preview.png" width="580" alt="Интерфейс Vane">
+  <img src="../assets/VanePre.png" width="580" alt="Интерфейс Vane">
 </p>
 
 ---
