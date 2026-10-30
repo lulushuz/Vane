@@ -9,26 +9,19 @@
 </p>
 
 <p align="center">
-  <a href="README.tr.md"><img src="https://img.shields.io/badge/lang-tr-blue.svg" alt="tr"></a>
+  <a href="README.tr.md"><img src="https://img.shields.io/badge/Türkçe-TR-red.svg" alt="tr"></a>
+  <a href="README.ru.md"><img src="https://img.shields.io/badge/Русский-RU-blue.svg" alt="ru"></a>
+  <a href="README.zh.md"><img src="https://img.shields.io/badge/简体中文-ZH-yellow.svg" alt="zh"></a>
+  <a href="README.fa.md"><img src="https://img.shields.io/badge/فارسی-FA-green.svg" alt="fa"></a>
   <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=build" alt="Build Status">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="License">
-  <img src="https://img.shields.io/badge/release-0.1.1-blue?style=flat-square" alt="Release Version">
+  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=release" alt="Release Version">
   <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
 </p>
 
 <p align="center">
   <img src="docs/assets/preview.png" width="720" alt="Vane Desktop Interface Preview">
 </p>
-
-> **✨ Vane v0.1.1**
->
-> | Property | Specification |
-> |---|---|
-> | **Current version** | `0.1.1` (Stable Release) |
-> | **Version scheme** | Semantic Versioning (`MAJOR.MINOR.PATCH`) |
-> | **Production signing** | Minisign verification active |
->
-> Official production releases build on the hardened cross-platform architecture with verified binary integrity.
 
 ---
 
@@ -314,16 +307,16 @@ If Vane or the system experiences a power loss while firewall rules are active, 
 ### 6.2. Installation Packages
 
 Pre-compiled production binaries are available on the [GitHub Releases](https://github.com/lulushuz/Vane/releases) page:
-- **Windows:** Download and execute `Vane_0.1.1_x64-setup.exe` or the `.msi` package.
-- **Linux:** Download `vane_0.1.1_amd64.deb` or the portable `.AppImage` build.
+- **Windows:** Download and execute `Vane_0.2.0_x64-setup.exe` or the `.msi` package.
+- **Linux:** Download `vane_0.2.0_amd64.deb` or the portable `.AppImage` build.
 
 ```bash
 # Debian / Ubuntu installation
-sudo dpkg -i vane_0.1.1_amd64.deb
+sudo dpkg -i vane_0.2.0_amd64.deb
 
 # AppImage execution
-chmod +x Vane_0.1.1_amd64.AppImage
-./Vane_0.1.1_amd64.AppImage
+chmod +x Vane_0.2.0_amd64.AppImage
+./Vane_0.2.0_amd64.AppImage
 ```
 
 ### 6.3. Compilation Steps

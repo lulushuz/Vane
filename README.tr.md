@@ -9,26 +9,19 @@
 </p>
 
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/lang-en-blue.svg" alt="en"></a>
-  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=build" alt="Derleme Durumu">
+  <a href="README.md"><img src="https://img.shields.io/badge/English-EN-blue.svg" alt="en"></a>
+  <a href="README.ru.md"><img src="https://img.shields.io/badge/Русский-RU-blue.svg" alt="ru"></a>
+  <a href="README.zh.md"><img src="https://img.shields.io/badge/简体中文-ZH-yellow.svg" alt="zh"></a>
+  <a href="README.fa.md"><img src="https://img.shields.io/badge/فارسی-FA-green.svg" alt="fa"></a>
+  <img src="https://img.shields.io/github/actions/workflow/status/lulushuz/Vane/releases.yml?style=flat-square&label=derleme" alt="Derleme Durumu">
   <img src="https://img.shields.io/github/license/lulushuz/Vane?style=flat-square&color=blue" alt="Lisans">
-  <img src="https://img.shields.io/badge/release-0.1.1-blue?style=flat-square" alt="Sürüm">
+  <img src="https://img.shields.io/github/v/release/lulushuz/Vane?style=flat-square&color=blue&label=sürüm" alt="Sürüm">
   <img src="https://img.shields.io/discord/luppux?style=flat-square&logo=discord&color=5865F2" alt="Discord">
 </p>
 
 <p align="center">
   <img src="docs/assets/preview.png" width="720" alt="Vane Masaüstü Arayüzü Önizlemesi">
 </p>
-
-> **✨ Vane v0.1.1**
->
-> | Özellik | Detay |
-> |---|---|
-> | **Mevcut Sürüm** | `0.1.1` — Kararlı Sürüm |
-> | **Sürümleme Şeması** | Standart SemVer (`MAJOR.MINOR.PATCH`) |
-> | **Üretim İmzası** | Minisign doğrulaması devrede |
->
-> Resmi sürümler, doğrulanmış ikili bütünlüğüne ve sertleştirilmiş çapraz platform mimarisine dayanmaktadır.
 
 ---
 
@@ -312,16 +305,16 @@ Uygulama çalışırken elektrik kesintisi veya sistem çökmesi yaşanırsa:
 ### 6.2. Kurulum Paketleri
 
 Resmi derlemeleri [GitHub Releases](https://github.com/lulushuz/Vane/releases) sayfasından edinebilirsiniz:
-- **Windows:** `Vane_0.1.1_x64-setup.exe` veya `.msi` kurulum paketini çalıştırın.
-- **Linux:** `vane_0.1.1_amd64.deb` paketini yükleyin veya `.AppImage` dosyasını çalıştırın:
+- **Windows:** `Vane_0.2.0_x64-setup.exe` veya `.msi` kurulum paketini çalıştırın.
+- **Linux:** `vane_0.2.0_amd64.deb` paketini yükleyin veya `.AppImage` dosyasını çalıştırın:
 
 ```bash
 # Debian / Ubuntu kurulumu
-sudo dpkg -i vane_0.1.1_amd64.deb
+sudo dpkg -i vane_0.2.0_amd64.deb
 
 # AppImage çalıştırma
-chmod +x Vane_0.1.1_amd64.AppImage
-./Vane_0.1.1_amd64.AppImage
+chmod +x Vane_0.2.0_amd64.AppImage
+./Vane_0.2.0_amd64.AppImage
 ```
 
 ### 6.3. Derleme Adımları
