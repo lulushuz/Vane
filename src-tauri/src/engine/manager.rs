@@ -142,7 +142,10 @@ impl EngineManager {
     }
 
     #[allow(dead_code)]
-    fn verify_binary_hash(path: &std::path::Path, expected_hex: &str) -> Result<(), EngineError> {
+    pub(crate) fn verify_binary_hash(
+        path: &std::path::Path,
+        expected_hex: &str,
+    ) -> Result<(), EngineError> {
         use sha2::{Digest, Sha256};
         use std::fs::File;
         use std::io::Read;
@@ -172,10 +175,9 @@ impl EngineManager {
         }
     }
 
-    // Safely resolves binary path from Resource using binary integrity verifier
-    pub(crate) fn resolve_binary_path(
+    pub(crate) fn resolve_verified_resource_binary(
         dispatcher: &impl EngineEventDispatcher,
-    ) -> Result<std::path::PathBuf, EngineError> {
+    ) -> Result<(std::path::PathBuf, String), EngineError> {
         use crate::security::{ArtifactIntegrityVerifier, Sha256ArtifactIntegrityVerifier};
 
         let resource_root = dispatcher
@@ -185,7 +187,42 @@ impl EngineManager {
         let verifier = Sha256ArtifactIntegrityVerifier::from_embedded()?;
         let verified_group = verifier.verify_current_platform_group(&resource_root)?;
 
-        Ok(verified_group.executable.canonical_path)
+        Ok((
+            verified_group.executable.canonical_path,
+            verified_group.executable.sha256.0,
+        ))
+    }
+
+    // Safely resolves binary path from Resource using binary integrity verifier
+    pub(crate) fn resolve_binary_path(
+        dispatcher: &impl EngineEventDispatcher,
+    ) -> Result<std::path::PathBuf, EngineError> {
+        let (canonical_path, _expected_sha256) =
+            Self::resolve_verified_resource_binary(dispatcher)?;
+
+        #[cfg(target_os = "linux")]
+        {
+            use crate::platform::linux::capabilities::{
+                has_nfqws_file_capabilities, is_readonly_or_fuse_bundle_path,
+                LINUX_STAGED_NFQWS_PATH,
+            };
+            if is_readonly_or_fuse_bundle_path(&canonical_path)
+                || !has_nfqws_file_capabilities(&canonical_path)
+            {
+                let staged_path = std::path::Path::new(LINUX_STAGED_NFQWS_PATH);
+                if let Ok(meta) = std::fs::symlink_metadata(staged_path) {
+                    if meta.file_type().is_file()
+                        && !meta.file_type().is_symlink()
+                        && Self::verify_binary_hash(staged_path, &_expected_sha256).is_ok()
+                        && has_nfqws_file_capabilities(staged_path)
+                    {
+                        return Ok(staged_path.to_path_buf());
+                    }
+                }
+            }
+        }
+
+        Ok(canonical_path)
     }
 
     #[allow(dead_code)]
@@ -688,7 +725,9 @@ async fn spawn_and_run_prepared(
     ),
     EngineError,
 > {
-    let winws_path = EngineManager::resolve_binary_path(app)?;
+    let _winws_initial_path = EngineManager::resolve_binary_path(app)?;
+    #[cfg(target_os = "windows")]
+    let winws_path = _winws_initial_path;
     #[cfg(target_os = "windows")]
     let working_dir = winws_path.parent().ok_or_else(|| {
         EngineError::BinaryNotFound(format!(
@@ -777,6 +816,7 @@ async fn spawn_and_run_prepared(
             args.push("--dpi-desync-fwmark=0x40000000".to_string());
         }
 
+        let winws_path = EngineManager::resolve_binary_path(app)?;
         let mut command = tokio::process::Command::new(&winws_path);
         command
             .args(args)

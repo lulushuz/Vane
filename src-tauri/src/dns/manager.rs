@@ -282,15 +282,27 @@ pub fn get_active_adapters() -> Vec<NetworkAdapter> {
 }
 
 #[cfg(not(target_os = "windows"))]
+fn is_ignored_linux_adapter(conn_type: &str, device: &str) -> bool {
+    matches!(
+        conn_type,
+        "loopback" | "bridge" | "tun" | "wireguard" | "veth" | "dummy"
+    ) || device == "lo"
+        || device.starts_with("docker")
+        || device.starts_with("br-")
+        || device.starts_with("veth")
+        || device.starts_with("virbr")
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn get_active_adapters() -> Vec<NetworkAdapter> {
     let mut adapters = vec![];
 
-    // nmcli -t -f NAME,DEVICE,STATE connection show --active
+    // nmcli -t -f NAME,TYPE,DEVICE,STATE connection show --active
     let output = std::process::Command::new("nmcli")
         .args([
             "-t",
             "-f",
-            "NAME,DEVICE,STATE",
+            "NAME,TYPE,DEVICE,STATE",
             "connection",
             "show",
             "--active",
@@ -300,13 +312,20 @@ pub fn get_active_adapters() -> Vec<NetworkAdapter> {
     if let Ok(out) = output {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
-            let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() >= 3 && parts[2] == "activated" {
-                let name = parts[0].to_string();
-                let device = parts[1].to_string();
+            let parts: Vec<&str> = line.rsplitn(4, ':').collect();
+            // rsplitn(4, ':') yields [STATE, DEVICE, TYPE, NAME]
+            if parts.len() == 4 && parts[0] == "activated" {
+                let state = parts[0];
+                let device = parts[1];
+                let conn_type = parts[2];
+                let name = parts[3].replace("\\:", ":");
+
+                if state != "activated" || is_ignored_linux_adapter(conn_type, device) {
+                    continue;
+                }
 
                 let dns_out = std::process::Command::new("nmcli")
-                    .args(["-t", "-f", "IP4.DNS", "device", "show", &device])
+                    .args(["-t", "-f", "IP4.DNS", "device", "show", device])
                     .output();
 
                 let mut primary = None;
@@ -315,22 +334,41 @@ pub fn get_active_adapters() -> Vec<NetworkAdapter> {
                 if let Ok(d_out) = dns_out {
                     let d_text = String::from_utf8_lossy(&d_out.stdout);
                     for d_line in d_text.lines() {
-                        let d_parts: Vec<&str> = d_line.split(':').collect();
-                        if d_parts.len() == 2 {
-                            if primary.is_none() {
-                                primary = Some(d_parts[1].to_string());
-                            } else if secondary.is_none() {
-                                secondary = Some(d_parts[1].to_string());
+                        if let Some((_, val)) = d_line.split_once(':') {
+                            let val = val.trim();
+                            if !val.is_empty() {
+                                if primary.is_none() {
+                                    primary = Some(val.to_string());
+                                } else if secondary.is_none() {
+                                    secondary = Some(val.to_string());
+                                }
                             }
                         }
                     }
                 }
 
+                let is_dhcp = std::process::Command::new("nmcli")
+                    .args([
+                        "-t",
+                        "-f",
+                        "ipv4.ignore-auto-dns",
+                        "connection",
+                        "show",
+                        &name,
+                    ])
+                    .output()
+                    .ok()
+                    .map(|o| {
+                        let s = String::from_utf8_lossy(&o.stdout);
+                        !s.trim().ends_with(":yes")
+                    })
+                    .unwrap_or(true);
+
                 adapters.push(NetworkAdapter {
                     name,
                     current_primary_dns: primary,
                     current_secondary_dns: secondary,
-                    is_dhcp: false,
+                    is_dhcp,
                 });
             }
         }
@@ -636,8 +674,57 @@ pub fn restore_dns_snapshot(adapters: &[NetworkAdapter]) -> ApplyDnsResult {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn restore_dns_snapshot(_adapters: &[NetworkAdapter]) -> ApplyDnsResult {
-    reset_dns_to_dhcp()
+pub fn restore_dns_snapshot(adapters: &[NetworkAdapter]) -> ApplyDnsResult {
+    if adapters.is_empty() {
+        return reset_dns_to_dhcp();
+    }
+    let mut applied = Vec::new();
+    let mut errors = Vec::new();
+
+    for adapter in adapters {
+        let (dns_arg, ignore_auto) = match (
+            adapter.is_dhcp,
+            adapter.current_primary_dns.as_deref(),
+            adapter.current_secondary_dns.as_deref(),
+        ) {
+            (true, _, _) | (false, None, _) => (String::new(), "no"),
+            (false, Some(p), Some(s)) if !s.is_empty() && s != p => (format!("{p} {s}"), "yes"),
+            (false, Some(p), _) => (p.to_string(), "yes"),
+        };
+
+        let mod_res = std::process::Command::new("nmcli")
+            .args([
+                "con",
+                "mod",
+                &adapter.name,
+                "ipv4.dns",
+                &dns_arg,
+                "ipv4.ignore-auto-dns",
+                ignore_auto,
+            ])
+            .output();
+
+        match mod_res {
+            Ok(o) if o.status.success() => {
+                let _ = std::process::Command::new("nmcli")
+                    .args(["con", "up", &adapter.name])
+                    .output();
+                applied.push(adapter.name.clone());
+            }
+            Ok(o) => errors.push(format!(
+                "DNS restore failed for '{}': {}",
+                adapter.name,
+                String::from_utf8_lossy(&o.stderr).trim()
+            )),
+            Err(e) => errors.push(format!("DNS restore failed for '{}': {e}", adapter.name)),
+        }
+    }
+
+    ApplyDnsResult {
+        success: !applied.is_empty() && errors.is_empty(),
+        applied_adapters: applied,
+        error: (!errors.is_empty()).then(|| errors.join(" ")),
+    }
 }
 
 #[cfg(not(target_os = "windows"))]

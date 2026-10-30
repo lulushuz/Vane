@@ -160,8 +160,10 @@ export function HomeView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const canManageAutostart = sysInfo.os !== 'windows' || isElevated;
+
   const handleAutostartToggle = async () => {
-    if (!isElevated || autostartLoading) return;
+    if (!canManageAutostart || autostartLoading) return;
     setAutostartLoading(true);
     setAutostartError(null);
     try {
@@ -325,33 +327,33 @@ export function HomeView() {
 
         <div className={styles.infoRow} style={{ justifyContent: 'space-between' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            {!isElevated && <Shield size={12} style={{ color: '#f59e0b' }} />}
+            {!canManageAutostart && <Shield size={12} style={{ color: '#f59e0b' }} />}
             {t.launchAtStartup}
           </span>
           <button
             onClick={handleAutostartToggle}
-            disabled={!isElevated || autostartLoading}
+            disabled={!canManageAutostart || autostartLoading}
             style={{
               padding: '2px 10px',
               fontSize: 11,
               fontWeight: 600,
               borderRadius: 5,
               border: 'none',
-              cursor: isElevated ? 'pointer' : 'not-allowed',
+              cursor: canManageAutostart ? 'pointer' : 'not-allowed',
               background: autostartEnabled
                 ? 'rgba(59,130,246,0.25)'
                 : 'rgba(255,255,255,0.08)',
               color: autostartEnabled ? '#60a5fa' : 'rgba(255,255,255,0.5)',
               transition: 'all 0.15s',
-              opacity: !isElevated ? 0.5 : 1,
+              opacity: !canManageAutostart ? 0.5 : 1,
             }}
-            title={!isElevated ? (language === 'tr' ? 'Yönetici yetkileri gerektirir' : 'Requires administrator privileges') : undefined}
+            title={!canManageAutostart ? (language === 'tr' ? 'Yönetici yetkileri gerektirir' : 'Requires administrator privileges') : undefined}
           >
             {autostartLoading ? '...' : autostartEnabled ? (language === 'tr' ? 'Etkin' : 'Enabled') : (language === 'tr' ? 'Devre Dışı' : 'Disabled')}
           </button>
         </div>
 
-        {!isElevated && (
+        {!canManageAutostart && (
           <p style={{ fontSize: 10, color: '#f59e0b', margin: '4px 0 0', lineHeight: 1.4 }}>
             {t.requiresAdmin}
           </p>

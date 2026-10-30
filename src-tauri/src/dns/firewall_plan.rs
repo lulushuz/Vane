@@ -185,16 +185,25 @@ impl FirewallCommandRunner for SystemFirewallCommandRunner {
         #[cfg(target_os = "linux")]
         {
             let is_root = unsafe { libc::geteuid() == 0 };
+            let resolved_program = [
+                format!("/usr/sbin/{}", command.program),
+                format!("/sbin/{}", command.program),
+                format!("/usr/bin/{}", command.program),
+            ]
+            .into_iter()
+            .find(|candidate| std::path::Path::new(candidate).exists())
+            .unwrap_or_else(|| command.program.clone());
+
             let mut process = if !is_root
                 && matches!(
                     command.program.as_str(),
                     "iptables" | "ip6tables" | "nft" | "netsh"
                 ) {
                 let mut cmd = Command::new("pkexec");
-                cmd.arg(&command.program).args(&command.args);
+                cmd.arg(&resolved_program).args(&command.args);
                 cmd
             } else {
-                let mut cmd = Command::new(&command.program);
+                let mut cmd = Command::new(&resolved_program);
                 cmd.args(&command.args);
                 cmd
             };

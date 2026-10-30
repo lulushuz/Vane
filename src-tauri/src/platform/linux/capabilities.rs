@@ -69,19 +69,25 @@ pub fn probe_linux_capabilities() -> Result<LinuxPlatformCapabilities, LinuxPlat
             .arg("--version")
             .output()
             .map(|o| o.status.success())
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || std::path::Path::new("/usr/sbin/nft").exists()
+            || std::path::Path::new("/sbin/nft").exists();
 
         let iptables_available = Command::new("iptables")
             .arg("--version")
             .output()
             .map(|o| o.status.success())
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || std::path::Path::new("/usr/sbin/iptables").exists()
+            || std::path::Path::new("/sbin/iptables").exists();
 
         let ip6tables_available = Command::new("ip6tables")
             .arg("--version")
             .output()
             .map(|o| o.status.success())
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || std::path::Path::new("/usr/sbin/ip6tables").exists()
+            || std::path::Path::new("/sbin/ip6tables").exists();
 
         let has_required_privileges = effective_uid == 0
             || Command::new("iptables")
@@ -124,26 +130,103 @@ pub fn probe_linux_capabilities() -> Result<LinuxPlatformCapabilities, LinuxPlat
 }
 
 #[cfg(target_os = "linux")]
+pub const LINUX_STAGED_NFQWS_PATH: &str = "/var/lib/vane/nfqws-x86_64-unknown-linux-gnu";
+
+#[cfg(target_os = "linux")]
+pub fn is_readonly_or_fuse_bundle_path(path: &std::path::Path) -> bool {
+    let path_str = path.to_string_lossy();
+    path_str.contains("/.mount_")
+        || path_str.starts_with("/tmp/")
+        || path_str.starts_with("/run/")
+        || std::env::var_os("APPIMAGE").is_some()
+}
+
+#[cfg(target_os = "linux")]
+pub fn has_nfqws_file_capabilities(nfqws_path: &std::path::Path) -> bool {
+    if unsafe { libc::geteuid() == 0 } {
+        return true;
+    }
+    for getcap_bin in ["/usr/sbin/getcap", "/sbin/getcap", "getcap"] {
+        if let Ok(output) = std::process::Command::new(getcap_bin)
+            .arg(nfqws_path)
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+                if stdout.contains("cap_net_admin") && stdout.contains("cap_net_raw") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "linux")]
 pub fn ensure_linux_capabilities(app: &tauri::AppHandle) -> Result<(), LinuxPlatformError> {
+    use std::path::Path;
     use std::process::Command;
 
-    let nfqws_path = crate::engine::EngineManager::resolve_binary_path(app).map_err(|e| {
-        LinuxPlatformError::CapabilityProbeFailed(format!("Failed to resolve nfqws path: {e}"))
-    })?;
-
-    // Only assign capabilities to the isolated nfqws helper binary.
-    // The main Tauri/WebKitGTK GUI executable must NEVER receive file capabilities,
-    // as that triggers AT_SECURE in ld.so, breaks LD_* variables, and compromises
-    // WebKitGTK bubblewrap sandboxing.
-    let status = Command::new("pkexec")
-        .args(["setcap", "cap_net_admin,cap_net_raw+eip"])
-        .arg(&nfqws_path)
-        .status()
-        .map_err(|e| {
-            LinuxPlatformError::CapabilityProbeFailed(format!("pkexec execution failed: {e}"))
+    let (nfqws_path, expected_sha256) =
+        crate::engine::EngineManager::resolve_verified_resource_binary(app).map_err(|e| {
+            LinuxPlatformError::CapabilityProbeFailed(format!("Failed to resolve nfqws path: {e}"))
         })?;
 
-    if status.success() {
+    let staged_path = Path::new(LINUX_STAGED_NFQWS_PATH);
+
+    if !is_readonly_or_fuse_bundle_path(&nfqws_path) && has_nfqws_file_capabilities(&nfqws_path) {
+        return Ok(());
+    }
+
+    if staged_path.is_file()
+        && crate::engine::EngineManager::verify_binary_hash(staged_path, &expected_sha256).is_ok()
+        && has_nfqws_file_capabilities(staged_path)
+    {
+        return Ok(());
+    }
+
+    let setcap_bin = ["/usr/sbin/setcap", "/sbin/setcap", "setcap"]
+        .into_iter()
+        .find(|candidate| Path::new(candidate).exists())
+        .unwrap_or("setcap");
+
+    let temp_stage = std::env::temp_dir().join(format!("vane-nfqws-stage-{}", std::process::id()));
+    let _ = std::fs::copy(&nfqws_path, &temp_stage);
+
+    // Assign capabilities only to the isolated nfqws helper binary.
+    // If the bundle path is on a writable root filesystem (.deb/.rpm), set capabilities in place;
+    // if it is on a read-only/FUSE mount (AppImage or immutable distro), install the SHA-256
+    // verified binary into /var/lib/vane and assign file capabilities there.
+    let script = if is_readonly_or_fuse_bundle_path(&nfqws_path) {
+        "install -d -m 0755 /var/lib/vane && install -o 0 -g 0 -m 0755 \"$2\" \"$4\" && \"$3\" cap_net_admin,cap_net_raw+eip \"$4\""
+    } else {
+        "(chmod 0755 \"$1\" && \"$3\" cap_net_admin,cap_net_raw+eip \"$1\") || (install -d -m 0755 /var/lib/vane && install -o 0 -g 0 -m 0755 \"$2\" \"$4\" && \"$3\" cap_net_admin,cap_net_raw+eip \"$4\")"
+    };
+
+    let status_res = Command::new("pkexec")
+        .arg("/bin/sh")
+        .arg("-c")
+        .arg(script)
+        .arg("vane-setcap")
+        .arg(&nfqws_path)
+        .arg(&temp_stage)
+        .arg(setcap_bin)
+        .arg(LINUX_STAGED_NFQWS_PATH)
+        .status();
+
+    let _ = std::fs::remove_file(&temp_stage);
+
+    let status = status_res.map_err(|e| {
+        LinuxPlatformError::CapabilityProbeFailed(format!("pkexec execution failed: {e}"))
+    })?;
+
+    let in_place_ready =
+        !is_readonly_or_fuse_bundle_path(&nfqws_path) && has_nfqws_file_capabilities(&nfqws_path);
+    let staged_ready = staged_path.is_file()
+        && crate::engine::EngineManager::verify_binary_hash(staged_path, &expected_sha256).is_ok()
+        && has_nfqws_file_capabilities(staged_path);
+
+    if status.success() && (in_place_ready || staged_ready) {
         Ok(())
     } else {
         Err(LinuxPlatformError::InsufficientPrivileges)

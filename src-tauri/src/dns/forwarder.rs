@@ -135,7 +135,7 @@ async fn bind_forwarder_sockets_with_retry(
     address: SocketAddr,
     retry_policy: ForwarderBindRetryPolicy,
 ) -> Result<BoundForwarderSockets, ForwarderBindError> {
-    bind_forwarder_sockets_with_retry_by(address, retry_policy, |address| async move {
+    let bind_once = |address: SocketAddr| async move {
         let udp = UdpSocket::bind(address)
             .await
             .map_err(|source| ForwarderBindAttemptError {
@@ -149,8 +149,33 @@ async fn bind_forwarder_sockets_with_retry(
                 source,
             })?;
         Ok(BoundForwarderSockets { udp, tcp })
-    })
-    .await
+    };
+
+    match bind_forwarder_sockets_with_retry_by(address, retry_policy, bind_once).await {
+        Ok(sockets) => Ok(sockets),
+        #[cfg(target_os = "linux")]
+        Err(err) if err.kind == io::ErrorKind::PermissionDenied && address.port() < 1024 => {
+            use crate::platform::linux::{
+                LinuxCommandRunner, LinuxCommandSpec, SystemLinuxCommandRunner,
+            };
+            let spec = LinuxCommandSpec {
+                program: "sysctl".into(),
+                args: vec![
+                    "-w".into(),
+                    format!("net.ipv4.ip_unprivileged_port_start={}", address.port()),
+                ],
+                stdin: None,
+            };
+            if let Ok(output) = SystemLinuxCommandRunner.run(&spec) {
+                if output.exit_code == Some(0) {
+                    return bind_forwarder_sockets_with_retry_by(address, retry_policy, bind_once)
+                        .await;
+                }
+            }
+            Err(err)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 // Endpoint options for the DoH/DoT upstream resolver.

@@ -377,7 +377,25 @@ pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn get_system_info() -> serde_json::Value {
     let os = std::env::consts::OS;
-    let device_model = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows Desktop".into());
+    let default_model = if cfg!(target_os = "windows") {
+        "Windows Desktop"
+    } else {
+        "Linux Desktop"
+    };
+    let device_model = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .or_else(|_| {
+            std::fs::read_to_string("/etc/hostname")
+                .map(|s| s.trim().to_string())
+                .and_then(|s| {
+                    if s.is_empty() {
+                        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "empty"))
+                    } else {
+                        Ok(s)
+                    }
+                })
+        })
+        .unwrap_or_else(|_| default_model.into());
 
     serde_json::json!({
         "os": os,

@@ -36,7 +36,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "deb", "rpm", "appimage"],
     "createUpdaterArtifacts": true,
     "publisher": "Archey Inc",
     "icon": [
@@ -57,6 +57,26 @@
       "nsis": {
         "displayLanguageSelector": false,
         "installMode": "perMachine"
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "nftables",
+          "iptables",
+          "polkitd | policykit-1",
+          "libcap2-bin",
+          "network-manager"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "nftables",
+          "iptables",
+          "polkit",
+          "libcap",
+          "NetworkManager"
+        ]
       }
     }
   },

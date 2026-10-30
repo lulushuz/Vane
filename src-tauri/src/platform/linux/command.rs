@@ -44,12 +44,27 @@ impl LinuxCommandRunner for SystemLinuxCommandRunner {
                 command.program.as_str(),
                 "nft" | "iptables" | "ip6tables" | "sysctl"
             );
+        let resolved_program = if matches!(
+            command.program.as_str(),
+            "nft" | "iptables" | "ip6tables" | "sysctl"
+        ) {
+            [
+                format!("/usr/sbin/{}", command.program),
+                format!("/sbin/{}", command.program),
+                format!("/usr/bin/{}", command.program),
+            ]
+            .into_iter()
+            .find(|candidate| std::path::Path::new(candidate).exists())
+            .unwrap_or_else(|| command.program.clone())
+        } else {
+            command.program.clone()
+        };
         let mut process = if requires_elevation {
             let mut cmd = Command::new("pkexec");
-            cmd.arg(&command.program).args(&command.args);
+            cmd.arg(&resolved_program).args(&command.args);
             cmd
         } else {
-            let mut cmd = Command::new(&command.program);
+            let mut cmd = Command::new(&resolved_program);
             cmd.args(&command.args);
             cmd
         };

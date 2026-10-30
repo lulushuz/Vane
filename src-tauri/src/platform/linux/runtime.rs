@@ -52,13 +52,9 @@ impl LinuxFilterGuard {
     ) -> Result<Self, LinuxPlatformError> {
         let executor: Arc<dyn LinuxFirewallExecutor> =
             Arc::new(SystemLinuxFirewallExecutor::default());
-        let mut capabilities = executor.probe()?;
+        let capabilities = executor.probe()?;
         if !capabilities.has_required_privileges {
-            let _ = crate::platform::linux::capabilities::ensure_linux_capabilities(app);
-            capabilities = executor.probe()?;
-            if !capabilities.has_required_privileges {
-                return Err(LinuxPlatformError::InsufficientPrivileges);
-            }
+            crate::platform::linux::capabilities::ensure_linux_capabilities(app)?;
         }
         if !capabilities.nfqueue_available {
             return Err(LinuxPlatformError::MissingNfqueue);
@@ -141,6 +137,16 @@ pub fn deterministic_queue(installation_id: &str, instance_id: &str, generation:
 fn queue_in_use(_queue: u16) -> bool {
     #[cfg(target_os = "linux")]
     {
+        if let Ok(content) = std::fs::read_to_string("/proc/net/netfilter/nfnetlink_queue") {
+            let queue_str = _queue.to_string();
+            if content.lines().any(|line| {
+                line.split_whitespace()
+                    .next()
+                    .is_some_and(|col| col == queue_str)
+            }) {
+                return true;
+            }
+        }
         let needles = [
             format!("queue num {_queue}"),
             format!("--queue-num {_queue}"),

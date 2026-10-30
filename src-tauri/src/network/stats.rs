@@ -28,14 +28,27 @@ pub fn get_total_network_bytes() -> (u64, u64) {
 #[cfg(not(target_os = "windows"))]
 pub fn get_total_network_bytes() -> (u64, u64) {
     if let Ok(content) = std::fs::read_to_string("/proc/net/dev") {
-        let mut total_rx = 0;
-        let mut total_tx = 0;
+        let mut total_rx = 0u64;
+        let mut total_tx = 0u64;
         for line in content.lines().skip(2) {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 10 {
-                if let (Ok(rx), Ok(tx)) = (parts[1].parse::<u64>(), parts[9].parse::<u64>()) {
-                    total_rx += rx;
-                    total_tx += tx;
+            let Some((iface_raw, stats_raw)) = line.split_once(':') else {
+                continue;
+            };
+            let iface = iface_raw.trim();
+            if iface == "lo"
+                || iface.starts_with("docker")
+                || iface.starts_with("br-")
+                || iface.starts_with("veth")
+                || iface.starts_with("virbr")
+                || iface.starts_with("tun")
+            {
+                continue;
+            }
+            let fields: Vec<&str> = stats_raw.split_whitespace().collect();
+            if fields.len() >= 9 {
+                if let (Ok(rx), Ok(tx)) = (fields[0].parse::<u64>(), fields[8].parse::<u64>()) {
+                    total_rx = total_rx.saturating_add(rx);
+                    total_tx = total_tx.saturating_add(tx);
                 }
             }
         }

@@ -70,10 +70,16 @@ impl ProcessHandle {
             let _ = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.pid) };
         }
 
-        // Closing stdin asks the Linux wrapper to run its EXIT cleanup trap.
+        // Send SIGTERM on Unix so nfqws unbinds NFQUEUE and exits cleanly without waiting 2s for SIGKILL.
         #[cfg(not(target_os = "windows"))]
         {
             drop(child.stdin.take());
+            #[cfg(unix)]
+            if let Ok(safe_pid) = libc::pid_t::try_from(self.pid) {
+                if safe_pid > 0 {
+                    let _ = unsafe { libc::kill(safe_pid, libc::SIGTERM) };
+                }
+            }
         }
 
         let graceful_timeout = if cfg!(target_os = "windows") {

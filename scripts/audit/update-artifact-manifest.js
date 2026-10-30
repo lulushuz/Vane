@@ -26,8 +26,15 @@ function hashFile(filePath) {
 console.log('=== Vane Artifact Integrity Manifest Audit ===\n');
 
 // 1. Audit Native Artifacts
+const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const nativeManifest = JSON.parse(fs.readFileSync(NATIVE_MANIFEST_PATH, 'utf8'));
 let nativeModified = false;
+
+if (nativeManifest.applicationVersion !== pkgVersion) {
+  console.log(`[DIFF] native-artifacts.json applicationVersion: expected ${pkgVersion}, actual ${nativeManifest.applicationVersion}`);
+  nativeManifest.applicationVersion = pkgVersion;
+  nativeModified = true;
+}
 
 for (const artifact of nativeManifest.artifacts) {
   const fullPath = path.join(ROOT, 'src-tauri', artifact.relativePath);
@@ -53,6 +60,12 @@ for (const artifact of nativeManifest.artifacts) {
 // 2. Audit Content Artifacts
 const contentManifest = JSON.parse(fs.readFileSync(CONTENT_MANIFEST_PATH, 'utf8'));
 let contentModified = false;
+
+if (contentManifest.applicationVersion !== pkgVersion) {
+  console.log(`[DIFF] content-artifacts.json applicationVersion: expected ${pkgVersion}, actual ${contentManifest.applicationVersion}`);
+  contentManifest.applicationVersion = pkgVersion;
+  contentModified = true;
+}
 
 for (const artifact of contentManifest.artifacts) {
   const fullPath = path.join(ROOT, artifact.relativePath);
